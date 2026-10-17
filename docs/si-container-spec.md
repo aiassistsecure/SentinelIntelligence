@@ -58,7 +58,10 @@ identity hash is computed over this canonical form.
     "blob": "sha256:9f2c…a1",
     "bytes": 17179869184,
     "dtype": "bf16",
-    "format": "safetensors"
+    "format": "safetensors",
+    "checkpoint_config": { "model_type": "llama", "…": "…" },
+    "checkpoint_config_sha256": "sha256:…",
+    "arch_source": "checkpoint-config"
   },
 
   "deltas": [
@@ -105,6 +108,18 @@ Field notes:
   `head` points at the tip. Rollback = move `head` back (see self-write loop).
 - `deltas[].norm` — Frobenius norm of the delta, recorded by the gate.
   Norm caps are enforced pre-write (see gate checklist).
+- `base.checkpoint_config` (optional) — the checkpoint's `config.json`,
+  captured by `si seed` when it sits beside the weights, plus its
+  `checkpoint_config_sha256`. `si export` derives real GGUF architecture
+  KV entries (`<arch>.block_count`, `<arch>.embedding_length`,
+  `<arch>.attention.head_count`, …) from it.
+- `base.arch_source` — how export labels the GGUF's architecture:
+  `"checkpoint-config"` (values from the author's config.json),
+  `"tensor-shape-inference"` (conservative inference from tensor
+  names/shapes when no config was captured; export fails closed on
+  ambiguity), or `"demo-unknown"` (demo seed data — not a model;
+  the GGUF keeps `general.architecture = "unknown"`). Unknown values
+  are omitted from the GGUF, never invented.
 - `deltas[].self_edit_id` — foreign key into the NEDB journal's `self_edits`
   collection. Every delta traces to the exact self-write that proposed it.
 - `journal.last_seq` / `last_seq_hash` — the journal's logical clock and a

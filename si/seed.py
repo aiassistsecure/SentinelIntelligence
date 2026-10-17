@@ -18,6 +18,10 @@ Safety story (this is the whole point of the format check):
 - The import is journaled (provenance ``seeded_from``) and the manifest is
   re-anchored to the new journal tip, so ``load_bundle`` verifies cleanly
   afterwards.
+- When a ``config.json`` sits beside the weights, it is stored in the
+  manifest (``base.checkpoint_config`` + ``arch_source="checkpoint-config"``)
+  so ``si export`` can write real GGUF architecture metadata. Without it,
+  export falls back to conservative tensor-shape inference.
 """
 from __future__ import annotations
 
@@ -89,6 +93,37 @@ def _resolve_source_files(source: str) -> tuple[str, list[str]]:
     raise FileNotFoundError(f"seed source not found: {src_abs}")
 
 
+def _capture_checkpoint_config(src_abs: str, files: list[str]) -> dict | None:
+    """Capture the checkpoint's config.json when one sits beside the weights.
+
+    Looks for ``config.json`` in the source directory (or next to a
+    single-file source). Returns the parsed dict, or None when absent.
+    A present-but-unparseable config is a ValueError: ``si export``
+    derives GGUF architecture metadata from this file, and a corrupt
+    config must fail closed at seed time rather than mislabel an export
+    later.
+    """
+    import json
+
+    if os.path.isdir(src_abs):
+        cfg_path = os.path.join(src_abs, "config.json")
+    else:
+        cfg_path = os.path.join(os.path.dirname(src_abs), "config.json")
+    if not os.path.isfile(cfg_path):
+        return None
+    with open(cfg_path, "rb") as f:
+        raw = f.read()
+    try:
+        cfg = json.loads(raw.decode("utf-8"))
+    except Exception as err:
+        raise ValueError(f"invalid config.json at {cfg_path}: {err}") from err
+    if not isinstance(cfg, dict):
+        raise ValueError(
+            f"config.json at {cfg_path} is not a JSON object; refusing to seed"
+        )
+    return {"config": cfg, "sha256": sha256_hex(raw)}
+
+
 def _store_blob(bundle_dir: str, data: bytes) -> str:
     """Store immutable content-addressed bytes; return the hex digest.
 
@@ -155,6 +190,10 @@ def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> di
 
     # 4. Rewrite the base. "blob" keeps pointing at the FIRST part so
     #    existing single-blob loaders (DemoMind, LoopContext) keep working.
+    #    When the checkpoint ships a config.json beside the weights, store
+    #    it: `si export` derives real GGUF architecture metadata from it
+    #    (arch_source="checkpoint-config"). No config -> export falls back
+    #    to conservative tensor-shape inference.
     utc = utc_now()
     manifest["base"] = {
         "source": f"seed:{src_abs} (imported {utc})",
@@ -166,6 +205,13 @@ def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> di
         "importer": importer,
         "imported_at": utc,
     }
+    ckpt_cfg = _capture_checkpoint_config(src_abs, files)
+    if ckpt_cfg is not None:
+        manifest["base"]["checkpoint_config"] = ckpt_cfg["config"]
+        manifest["base"]["checkpoint_config_sha256"] = (
+            "sha256:" + ckpt_cfg["sha256"]
+        )
+        manifest["base"]["arch_source"] = "checkpoint-config"
 
     # 5. Provenance + re-anchor: the checkpoint must be the journal tip so
     #    the manifest anchor matches on the next load.

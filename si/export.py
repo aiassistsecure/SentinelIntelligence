@@ -3,7 +3,9 @@
 The mind's learned weights are exportable, not just inspectable: the
 frozen base plus every active LoRA-style delta (W = W + scale*(B@A))
 materialized into full float32 tensors, then written as F16 GGUF with
-``si.*`` metadata (bundle id, head, base source). An optional quant step
+``si.*`` metadata (bundle id, head, base source, arch source) plus real
+``<arch>.*`` architecture KV entries when the base came from a genuine
+transformer checkpoint (see ``si.arch``). An optional quant step
 delegates to a REAL ``llama-quantize`` binary — never faked.
 
 Determinism is a hard requirement: the same head produces a
@@ -205,12 +207,29 @@ def _write_f16_gguf(out_path: str, tensors: dict, manifest: dict) -> None:
 
     Tensors sorted by name; fixed KV insertion order; no timestamps. The
     same head must produce a byte-identical file.
+
+    Architecture metadata comes from ``si.arch.derive_arch``: a real
+    checkpoint base yields real ``<arch>.*`` KV entries (arch name, block
+    count, head counts, embedding length, vocab size, ...); a demo base
+    keeps ``general.architecture = "unknown"`` with
+    ``si.arch_source = "demo-unknown"``. Unknown values are omitted,
+    never invented.
     """
     import numpy as np
     import gguf
 
-    writer = gguf.GGUFWriter(out_path, "unknown")
+    from si.arch import ARCH_FIELD_ORDER, derive_arch
+
+    shapes = {name: tuple(tensors[name].shape) for name in tensors}
+    arch = derive_arch(manifest, shapes)
+
+    writer = gguf.GGUFWriter(out_path, arch["arch"])
     writer.add_name(str(manifest.get("name", "sentinel")))
+    # Arch KVs in fixed order: derive_arch is a pure function of the
+    # manifest + shapes, so this stays deterministic.
+    _add_arch_kvs(writer, arch)
+    writer.add_key_value("si.arch_source", str(arch["arch_source"]),
+                         gguf.GGUFValueType.STRING)
     writer.add_key_value("si.bundle_id",
                          _bundle_id_for_head(manifest, tensors),
                          gguf.GGUFValueType.STRING)
@@ -226,6 +245,37 @@ def _write_f16_gguf(out_path: str, tensors: dict, manifest: dict) -> None:
     writer.write_kv_data_to_file()
     writer.write_tensors_to_file()
     writer.close()
+
+
+def _add_arch_kvs(writer, arch: dict) -> None:
+    """Write derived arch fields as real llama.cpp KV entries.
+
+    Each value was read from the checkpoint's own config.json or
+    conservatively inferred from tensor shapes; None means unknown and
+    is omitted rather than fabricated.
+    """
+    from si.arch import ARCH_FIELD_ORDER
+
+    for field in ARCH_FIELD_ORDER:
+        value = arch.get(field)
+        if value is None:
+            continue
+        if field == "block_count":
+            writer.add_block_count(value)
+        elif field == "embedding_length":
+            writer.add_embedding_length(value)
+        elif field == "context_length":
+            writer.add_context_length(value)
+        elif field == "head_count":
+            writer.add_head_count(value)
+        elif field == "head_count_kv":
+            writer.add_head_count_kv(value)
+        elif field == "layer_norm_rms_eps":
+            writer.add_layer_norm_rms_eps(value)
+        elif field == "rope_dimension_count":
+            writer.add_rope_dimension_count(value)
+        elif field == "vocab_size":
+            writer.add_vocab_size(value)
 
 
 # -- quant -------------------------------------------------------------------
