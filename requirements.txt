@@ -1,0 +1,4 @@
+# SI-0 reference runtime dependencies (pinned from the build venv, 2026-10-16)
+numpy==2.5.4
+safetensors==0.8.0
+pytest==9.1.1
