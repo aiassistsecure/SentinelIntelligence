@@ -8,6 +8,7 @@
     si log <path> [--rollbacks] [--limit N]
     si diff <path> <a>..<b>
     si why <path> <delta-id>
+    si export <path> --out FILE [--quant Q4_K_M]
 
 <path> is the bundle directory (conventionally <name>.si).
 """
@@ -205,6 +206,17 @@ def cmd_why(args) -> int:
     return 0
 
 
+def cmd_export(args) -> int:
+    from si.export import export_bundle
+    res = export_bundle(args.path, args.out, quant=args.quant)
+    print(f"head:   {res['head']}")
+    print(f"out:    {res['out_path']}")
+    print(f"bytes:  {res['bytes']}")
+    print(f"sha256: {res['sha256']}")
+    print(f"quant:  {res['quant']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="si", description="SI-0 reference runtime: the self-writing loop.")
@@ -264,6 +276,15 @@ def build_parser() -> argparse.ArgumentParser:
     pw.add_argument("path", help="bundle directory")
     pw.add_argument("delta_id")
     pw.set_defaults(func=cmd_why)
+
+    pe = sub.add_parser("export", help="materialize the head and write it "
+                                       "as a GGUF file")
+    pe.add_argument("path", help="bundle directory")
+    pe.add_argument("--out", required=True, help="output GGUF file path")
+    pe.add_argument("--quant", default=None,
+                    help="quantize via a real llama-quantize binary "
+                         "(e.g. Q4_K_M); requires hearth runtime llama")
+    pe.set_defaults(func=cmd_export)
     return p
 
 
