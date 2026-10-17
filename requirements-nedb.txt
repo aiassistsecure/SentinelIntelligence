@@ -1,0 +1,18 @@
+# Optional: the REAL NEDB journal backend (si.backends.nedb).
+#
+# Enables `si init --journal-backend nedb`: the mind's journal lives in the
+# actual NEDB engine over its pgwire endpoint (schemaless collections,
+# native _seq logical clock, _hash chain entries, real causal edges, time
+# travel available over raw SQL) instead of the embedded sqlite default.
+#
+# The nedb-engine wheel ships a prebuilt nedbd-v2 daemon binary -- no Rust
+# toolchain needed. The backend autostarts the daemon on bundle-derived
+# ports (55433+h%1000 pgwire, 17070+h%1000 HTTP) with its data dir inside
+# the bundle (<bundle>/journal/nedb-data), and stops only daemons it
+# started itself.
+#
+# Operational notes: NEDB's pgwire implements the simple-query protocol
+# only (psycopg2 works; psycopg3 / prepared statements do not). pgwire is
+# cleartext -- the backend binds loopback only.
+nedb-engine==12.15.16
+psycopg2-binary

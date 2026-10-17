@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel-si0"
+version = "0.1.0"
+description = "SI-0 reference runtime: the self-writing loop for .si bundles (demo)"
+requires-python = ">=3.10"
+dependencies = ["numpy", "safetensors"]
+
+[project.scripts]
+si = "si.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["si*"]
