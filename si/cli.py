@@ -1,7 +1,9 @@
 """Command-line interface for the SI-0 reference runtime.
 
     si init <path> [--name NAME]        create a new .si bundle
+    si seed <path> <safetensors>        import a real checkpoint as the frozen base
     si cycle <path> [--mind demo|mock]  run one self-write cycle
+    si run <path> --cycles N [--mind demo|mock]  autonomous multi-cycle run
     si rollback <path> --to <id|base> [--reason R] [--mind demo|mock]
     si log <path> [--rollbacks] [--limit N]
     si diff <path> <a>..<b>
@@ -30,10 +32,40 @@ def cmd_init(args) -> int:
     print(f"bundle: {bundle_dir}")
     print(f"journal backend: {args.journal_backend}")
     print("note: demo seed is RANDOM DATA, not a trained model "
-          "(see base.source in manifest.json)")
+          "(see base.source in manifest.json); use `si seed` to import a "
+          "real safetensors checkpoint as the frozen base")
     if args.journal_backend == "embedded":
-        print("note: journal backend is EMBEDDED SQLITE; use "
-              "--journal-backend nedb for the real NEDB engine")
+        print("note: journal backend is EMBEDDED SQLITE (fallback); the "
+              "default is the real NEDB engine")
+    return 0
+
+
+def cmd_seed(args) -> int:
+    from si.seed import seed_bundle
+    res = seed_bundle(args.path, args.safetensors, importer="cli")
+    base = res["base"]
+    print(f"seeded base: {base['blob']}")
+    print(f"parts: {res['parts']}  bytes: {res['bytes']}  head: {res['head']}")
+    print(f"source: {base['source']}")
+    for name, info in sorted(base["tensors"].items()):
+        print(f"  tensor {name}: shape={info['shape']} dtype={info['dtype']}")
+    return 0
+
+
+def cmd_run(args) -> int:
+    from si.run import run_cycles
+    bundle_dir = _bundle(args.path)
+    mind = _make_mind(args.mind, bundle_dir)
+    s = run_cycles(bundle_dir, mind, args.cycles)
+    print(f"cycles:    {s['cycles_completed']}/{s['cycles_requested']}")
+    print(f"admitted:  {s['admitted']}")
+    print(f"rejected:  {s['rejected']}")
+    print(f"escalated: {s['escalated']}")
+    print(f"halted:    {s['halted']}"
+          + (f" ({s['halt_verdict']}, edit {s['halt_edit_id']})"
+             if s["halted"] else ""))
+    print(f"head:      {s['head']}")
+    print(f"delta stack depth: {s['delta_stack_depth']}")
     return 0
 
 
@@ -181,12 +213,29 @@ def build_parser() -> argparse.ArgumentParser:
     pi = sub.add_parser("init", help="create a new .si bundle")
     pi.add_argument("path", help="bundle directory to create (e.g. ./sentinel-001.si)")
     pi.add_argument("--name", default="sentinel-001")
-    pi.add_argument("--journal-backend", choices=["embedded", "nedb"],
-                    default="embedded",
-                    help="journal store: embedded sqlite (default, zero "
-                         "services) or the real NEDB engine over pgwire "
-                         "(requires: pip install -r requirements-nedb.txt)")
+    pi.add_argument("--journal-backend", choices=["nedb", "embedded"],
+                    default="nedb",
+                    help="journal store: the real NEDB engine over pgwire "
+                         "(default; requires: pip install -r "
+                         "requirements-nedb.txt) or embedded sqlite "
+                         "(zero-service fallback)")
     pi.set_defaults(func=cmd_init)
+
+    ps = sub.add_parser("seed", help="import a real safetensors checkpoint "
+                                     "as the bundle's frozen base")
+    ps.add_argument("path", help="bundle directory")
+    ps.add_argument("safetensors", help=".safetensors file or directory of "
+                                        ".safetensors files")
+    ps.set_defaults(func=cmd_seed)
+
+    prun = sub.add_parser("run", help="autonomous serial multi-cycle "
+                                      "self-write run")
+    prun.add_argument("path", help="bundle directory")
+    prun.add_argument("--cycles", type=int, default=3,
+                      help="self-write cycles to attempt (halts early on "
+                           "REJECT or ESCALATE)")
+    prun.add_argument("--mind", choices=["demo", "mock"], default="demo")
+    prun.set_defaults(func=cmd_run)
 
     pc = sub.add_parser("cycle", help="run one self-write cycle")
     pc.add_argument("path", help="bundle directory")

@@ -10,7 +10,7 @@ import os
 import pytest
 
 from si.bundle import (TamperError, canonical_json, init_bundle, load_bundle)
-from si.journal import EmbeddedBackend
+from si.journal import open_journal
 
 
 def _init(tmp_path, name):
@@ -21,7 +21,8 @@ def test_fresh_init_loads_clean(tmp_path):
     manifest = load_bundle(_init(tmp_path, "fresh"))
     assert manifest["head"] == "base"
     assert manifest["deltas"] == []
-    assert manifest["journal"]["backend"] == "embedded"
+    # SI-1: the dogfood directive made the real NEDB engine the default.
+    assert manifest["journal"]["backend"] == "nedb"
     assert manifest["si_version"].split(".")[0] == "0"
 
 
@@ -36,15 +37,18 @@ def test_constitution_tamper_fails_closed(tmp_path):
 
 def test_journal_doc_tamper_fails_closed(tmp_path):
     bundle_dir = _init(tmp_path, "journal-tamper")
-    load_bundle(bundle_dir)  # clean before the tamper
-    backend = EmbeddedBackend(os.path.join(bundle_dir, "journal"))
-    rows = backend.find("checkpoints")
-    assert rows, "expected the genesis checkpoint"
-    row = rows[0]
-    row_id = row.pop("_id")
-    row["note"] = "genesis (edited by an attacker)"
-    backend.update("checkpoints", row_id, row)
-    backend.close()
+    manifest = load_bundle(bundle_dir)  # clean before the tamper
+    journal = open_journal(bundle_dir, manifest)
+    try:
+        backend = journal.backend
+        rows = backend.find("checkpoints")
+        assert rows, "expected the genesis checkpoint"
+        row = rows[0]
+        row_id = row.pop("_id")
+        row["note"] = "genesis (edited by an attacker)"
+        backend.update("checkpoints", row_id, row)
+    finally:
+        journal.close()
     with pytest.raises(TamperError):
         load_bundle(bundle_dir)
 
