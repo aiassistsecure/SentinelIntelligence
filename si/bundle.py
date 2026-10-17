@@ -6,10 +6,10 @@ Honesty notes (also visible to users, not just code comments):
 - ``init_bundle`` seeds the bundle with RANDOM full-precision weights
   (an 8x8 float32 matrix). ``base.source`` is labeled
   ``"demo:random-seed (not a real model)"`` in the manifest itself.
-- The default journal backend is ``"embedded"`` (sqlite, zero services).
-  Pass ``journal_backend="nedb"`` for the REAL NEDB engine over pgwire
-  (see ``si.backends.nedb``); the choice is recorded in the manifest and
-  honored on every load.
+- The default journal backend is ``"nedb"`` — the REAL NEDB engine over
+  pgwire (see ``si.backends.nedb``); the dogfood directive. Pass
+  ``journal_backend="embedded"`` for the zero-service sqlite fallback; the
+  choice is recorded in the manifest and honored on every load.
 """
 from __future__ import annotations
 
@@ -71,8 +71,9 @@ CONSTITUTION_TEXT = """\
 
 - The demo seed bundled by `si init` is RANDOM DATA, not a trained model.
   It exists so the self-write loop can be exercised end to end on CPU.
-- The default journal backend is EMBEDDED SQLITE, not NEDB. NEDB
-  integration (pgwire, time travel) is a separate track.
+- The default journal backend is the REAL NEDB engine (the dogfood
+  directive). Embedded sqlite is the zero-service fallback
+  (`--journal-backend embedded`).
 - No encryption at rest in SI-0. No cross-bundle delta sharing yet.
 
 ## Gate policy
@@ -136,12 +137,13 @@ def _write_manifest(bundle_dir: str, manifest: dict) -> None:
 
 
 def init_bundle(path: str, name: str = "sentinel-001", seed: int = DEMO_SEED,
-                journal_backend: str = "embedded") -> str:
+                journal_backend: str = "nedb") -> str:
     """Create a new .si bundle directory at ``path``.
 
     ``path`` is the bundle directory itself (conventionally ``<name>.si``);
-    it must not exist or must be empty. ``journal_backend`` is ``"embedded"``
-    (default, sqlite) or ``"nedb"`` (the real NEDB engine over pgwire).
+    it must not exist or must be empty. ``journal_backend`` is ``"nedb"``
+    (default, the real NEDB engine over pgwire) or ``"embedded"``
+    (sqlite, zero-service fallback).
     Returns the absolute bundle dir.
     """
     from si.journal import open_journal  # local import: no cycle
@@ -193,8 +195,9 @@ def init_bundle(path: str, name: str = "sentinel-001", seed: int = DEMO_SEED,
         "deltas": [],
         "head": "base",
         "journal": {
-            # HONEST: "embedded" = sqlite (default); "nedb" = the real NEDB
-            # engine over pgwire. Recorded here, honored on every load.
+            # HONEST: "nedb" = the real NEDB engine over pgwire (default,
+            # the dogfood directive); "embedded" = sqlite fallback.
+            # Recorded here, honored on every load.
             "backend": journal_backend,
             "last_seq": 0,
             "last_seq_hash": "",

@@ -46,31 +46,33 @@ serial), `minds` (a scripted `MockMind` and a real CPU `DemoMind` that
 learns rank-2 LoRA-style adapters), and `cli` (the `si` command).
 
 Two honesty labels, stated in code and in user-visible strings: the demo
-seed created by `si init` is **random data, not a trained model**, and the
-default journal backend is **embedded sqlite**. The real NEDB engine is
-available as an optional backend (`si/backends/nedb.py`, dogfooding actual
-NEDB over pgwire) — see below.
+seed created by `si init` is **random data, not a trained model** (use
+`si seed` to import a real safetensors checkpoint as the frozen base), and
+the default journal backend is **the real NEDB engine** (`si/backends/nedb.py`,
+dogfooding actual NEDB over pgwire). Embedded sqlite remains as the
+zero-service fallback (`--journal-backend embedded`).
 
 ```bash
 python3 -m venv /tmp/prfactory-si0/venv
 /tmp/prfactory-si0/venv/bin/pip install -r requirements.txt
 /tmp/prfactory-si0/venv/bin/pip install -e .
 
-si init ./sentinel-001.si --name sentinel-001
+si init ./sentinel-001.si --name sentinel-001   # journal: real NEDB (default)
+si seed ./sentinel-001.si ./my-checkpoint/   # real safetensors base (or skip: demo random seed)
 si cycle ./sentinel-001.si --mind demo     # one self-write: trains a real adapter, gates it, journals it
+si run ./sentinel-001.si --cycles 5        # autonomous multi-cycle run (halts on REJECT/ESCALATE)
 si log ./sentinel-001.si
 si why ./sentinel-001.si d0001             # why does this delta exist?
 si diff ./sentinel-001.si base..d0001
 si rollback ./sentinel-001.si --to base --reason "operator: trim stack"
 ```
 
-Real NEDB backend (optional, dogfooding the actual NEDB engine):
+Embedded sqlite fallback (zero services, no daemon):
 
 ```bash
-/tmp/prfactory-si0/venv/bin/pip install -r requirements-nedb.txt
-si init ./sentinel-nedb.si --name sentinel-nedb --journal-backend nedb
-si cycle ./sentinel-nedb.si --mind demo   # same loop, journal in real NEDB
-si log ./sentinel-nedb.si
+si init ./sentinel-embedded.si --name sentinel-embedded --journal-backend embedded
+si cycle ./sentinel-embedded.si --mind demo   # same loop, journal in sqlite
+si log ./sentinel-embedded.si
 ```
 
 The NEDB backend autostarts the `nedbd-v2` daemon (prebuilt binary in the

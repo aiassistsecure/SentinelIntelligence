@@ -18,10 +18,10 @@ gate verdict/report — is chain-protected and immutable. This is documented
 here and not hidden: mutating a result does not rewrite history, it only
 updates bookkeeping.
 
-HONEST: the default backend is EMBEDDED SQLITE -- zero services, always
-testable. ``si.backends.nedb`` is the REAL NEDB alternative (same protocol
-over pgwire, dogfooding the actual NEDB engine); select it with
-``si init --journal-backend nedb``. The backend name is recorded in the
+HONEST: the default backend is the REAL NEDB engine over pgwire
+(``si.backends.nedb``) -- the dogfood directive: the mind's journal lives
+in the actual NEDB engine. ``si init --journal-backend embedded`` selects
+the zero-service sqlite fallback. The backend name is recorded in the
 manifest and honored on every load.
 """
 from __future__ import annotations
@@ -50,11 +50,11 @@ _NATIVE_KEYS = frozenset({"_seq", "_hash"})
 _TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def make_backend(bundle_dir: str, backend_name: str = "embedded") -> JournalBackend:
+def make_backend(bundle_dir: str, backend_name: str = "nedb") -> JournalBackend:
     """Instantiate the journal backend recorded in the manifest.
 
-    ``embedded`` (default): sqlite file under the bundle's journal dir.
-    ``nedb``: the real NEDB engine over pgwire (si.backends.nedb).
+    ``nedb`` (default): the real NEDB engine over pgwire (si.backends.nedb).
+    ``embedded``: sqlite file under the bundle's journal dir (fallback).
     Unknown names raise ValueError -- the caller (load_bundle) fails closed.
     """
     journal_dir = os.path.join(os.path.abspath(bundle_dir), "journal")
@@ -81,8 +81,9 @@ def open_journal(bundle_dir: str, manifest: dict | None = None) -> "Journal":
 
 
 class JournalBackend(Protocol):
-    """Storage protocol for the journal. The embedded sqlite backend is the
-    SI-0 default; a real NEDB backend implements this protocol later."""
+    """Storage protocol for the journal. The real NEDB backend
+    (si.backends.nedb) is the default; the embedded sqlite backend is the
+    zero-service fallback."""
 
     def insert(self, collection: str, doc: dict) -> str:
         """Store doc (a JSON-able dict), return the row id as str."""
