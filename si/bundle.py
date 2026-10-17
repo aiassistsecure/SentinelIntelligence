@@ -191,6 +191,8 @@ def init_bundle(path: str, name: str = "sentinel-001", seed: int = DEMO_SEED,
             "bytes": len(seed_bytes),
             "dtype": "float32",
             "format": "safetensors",
+            # Honest export label: there is no architecture to describe.
+            "arch_source": "demo-unknown",
         },
         "deltas": [],
         "head": "base",

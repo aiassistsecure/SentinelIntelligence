@@ -49,6 +49,13 @@ def cmd_seed(args) -> int:
     print(f"seeded base: {base['blob']}")
     print(f"parts: {res['parts']}  bytes: {res['bytes']}  head: {res['head']}")
     print(f"source: {base['source']}")
+    if base.get("checkpoint_config") is not None:
+        print(f"arch: config.json captured "
+              f"(arch_source=checkpoint-config, "
+              f"sha256={base.get('checkpoint_config_sha256', '')[:19]}...)")
+    else:
+        print("arch: no config.json found; export will use "
+              "tensor-shape inference (arch_source=tensor-shape-inference)")
     for name, info in sorted(base["tensors"].items()):
         print(f"  tensor {name}: shape={info['shape']} dtype={info['dtype']}")
     return 0
