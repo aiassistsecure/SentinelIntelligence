@@ -19,6 +19,7 @@ from safetensors import safe_open
 
 from si.bundle import (
     TamperError,
+    _active_chain,
     load_bundle,
     load_policy,
     sha256_hex,
@@ -76,10 +77,15 @@ def _load_base_W(bundle_dir: str, manifest: dict):
 
 
 def _load_stack(bundle_dir: str, manifest: dict) -> list:
-    """Active delta stack: manifest deltas up to and including head."""
+    """Active delta stack: manifest deltas up to and including head.
+
+    Resolved through ``bundle._active_chain`` so squash replacements
+    (``superseded_by``) are followed: the stack holds the updates that
+    are actually live, not the pre-squash history.
+    """
     import numpy as np
     stack = []
-    for d in manifest["deltas"]:
+    for d in _active_chain(manifest):
         blob_hex = d["blob"].split(":", 1)[1]
         with safe_open(os.path.join(bundle_dir, "blobs", "sha256",
                                     blob_hex + ".safetensors"), framework="np") as f:
@@ -87,8 +93,6 @@ def _load_stack(bundle_dir: str, manifest: dict) -> list:
             A = f.get_tensor("delta.A")
         stack.append({"B": np.asarray(B), "A": np.asarray(A),
                       "scale": d["alpha"] / d["rank"], "id": d["id"]})
-        if d["id"] == manifest["head"]:
-            break
     return stack
 
 

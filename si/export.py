@@ -9,9 +9,10 @@ delegates to a REAL ``llama-quantize`` binary — never faked.
 Determinism is a hard requirement: the same head produces a
 byte-identical GGUF. That means no wall-clock timestamps anywhere in the
 file, tensors written sorted by name, and ``si.bundle_id`` anchored to
-head content rather than export-time journal state (the export itself
-journals, which moves the manifest's journal anchor — anchoring the id
-to that would make consecutive exports differ).
+head content rather than export-time journal state or manifest lineage:
+the export itself journals (which moves the manifest's journal anchor),
+and ``si squash`` rewrites the delta list — anchoring the id to either
+would make behavior-preserving operations change the file.
 
 Delta -> tensor resolution (honest, documented):
 - Single-tensor base (the demo seed's ``W``): the delta applies to that
@@ -35,10 +36,10 @@ import os
 import subprocess
 
 from si.bundle import (
+    _active_chain,
     _anchor_checkpoint,
     _write_manifest,
     load_bundle,
-    manifest_id,
     sha256_hex,
     utc_now,
 )
@@ -115,8 +116,9 @@ def _resolve_targets(delta_id: str, modules: list, base_names: list) -> list:
 def materialize_head(bundle_dir: str, manifest: dict | None = None) -> dict:
     """Materialize the current head into full float32 weight tensors.
 
-    Pure read. Loads every base tensor plus the active delta stack (manifest
-    deltas up to and including ``head``, in manifest order) and applies
+    Pure read. Loads every base tensor plus the active delta stack (the
+    ``_active_chain`` resolution of head: parent links with squash
+    ``superseded_by`` replacements followed) and applies
     ``W = W + scale*(B@A)`` per delta on torch CPU in float32.
     ``manifest`` may be supplied; otherwise it is loaded AND verified via
     ``load_bundle`` (fail closed). No gate, no journal, no manifest writes.
@@ -137,7 +139,9 @@ def materialize_head(bundle_dir: str, manifest: dict | None = None) -> dict:
         raise ValueError(f"unknown head {head!r}")
 
     out = {name: base[name].copy() for name in base_names}
-    for d in manifest["deltas"]:
+    # The active chain already ends at head and follows squash
+    # replacements, so no break is needed: it IS the live stack.
+    for d in _active_chain(manifest):
         B, A, scale = _load_delta(bundle_dir, d)
         modules = list(d.get("target_modules") or [])
         targets = _resolve_targets(d["id"], modules, base_names)
@@ -152,8 +156,6 @@ def materialize_head(bundle_dir: str, manifest: dict | None = None) -> dict:
                         f"{tuple(W.shape)}"
                     )
                 out[name] = (W + update).numpy().astype(np.float32)
-        if d["id"] == head:
-            break
     return out
 
 
@@ -172,19 +174,30 @@ def head_hash(tensors: dict) -> str:
 
 
 # -- GGUF writing ------------------------------------------------------------
-def _bundle_id_for_head(manifest: dict) -> str:
+def _bundle_id_for_head(manifest: dict, tensors: dict) -> str:
     """Bundle id anchored to head content, not export-time journal state.
 
-    The export journals (which advances the manifest's journal anchor), so
-    manifest_id() of the live manifest would differ between two exports of
-    the same head. Blank the anchor fields the way _anchor_checkpoint does
-    with its placeholder, and the id is a pure function of the head.
+    The export itself journals (which moves the manifest's journal
+    anchor), and representation rewrites like ``si squash`` change the
+    manifest's delta list without changing what the head computes.
+    Deriving the id from the manifest would let either move the id, so
+    the id is a pure function of the head instead: the head id plus the
+    exported (F16) tensor bytes. The same head content always yields the
+    same id, and a behavior-preserving rewrite keeps the exported file
+    byte-identical.
     """
-    probe = dict(manifest)
-    probe["journal"] = dict(probe["journal"])
-    probe["journal"]["last_seq"] = 0
-    probe["journal"]["last_seq_hash"] = ""
-    return manifest_id(probe)
+    import numpy as np
+
+    h = hashlib.sha256()
+    h.update(b"si-bundle-content-v1")
+    h.update(str(manifest["head"]).encode("utf-8"))
+    for name in sorted(tensors):
+        arr = np.ascontiguousarray(tensors[name], dtype=np.float16)
+        h.update(name.encode("utf-8"))
+        h.update(str(tuple(arr.shape)).encode("utf-8"))
+        h.update(b"float16")
+        h.update(arr.tobytes())
+    return "si1:" + h.hexdigest()
 
 
 def _write_f16_gguf(out_path: str, tensors: dict, manifest: dict) -> None:
@@ -199,7 +212,7 @@ def _write_f16_gguf(out_path: str, tensors: dict, manifest: dict) -> None:
     writer = gguf.GGUFWriter(out_path, "unknown")
     writer.add_name(str(manifest.get("name", "sentinel")))
     writer.add_key_value("si.bundle_id",
-                         _bundle_id_for_head(manifest),
+                         _bundle_id_for_head(manifest, tensors),
                          gguf.GGUFValueType.STRING)
     writer.add_key_value("si.head", str(manifest["head"]),
                          gguf.GGUFValueType.STRING)

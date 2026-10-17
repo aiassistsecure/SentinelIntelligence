@@ -65,6 +65,7 @@ si log ./sentinel-001.si
 si why ./sentinel-001.si d0001             # why does this delta exist?
 si diff ./sentinel-001.si base..d0001
 si rollback ./sentinel-001.si --to base --reason "operator: trim stack"
+si squash ./sentinel-001.si --keep 3    # compress oldest deltas into one gated delta (head id unchanged)
 ```
 
 Embedded sqlite fallback (zero services, no daemon):

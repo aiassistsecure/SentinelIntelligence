@@ -9,6 +9,7 @@
     si diff <path> <a>..<b>
     si why <path> <delta-id>
     si export <path> --out FILE [--quant Q4_K_M]
+    si squash <path> [--keep N] [--rank R] [--tol T]
 
 <path> is the bundle directory (conventionally <name>.si).
 """
@@ -217,6 +218,23 @@ def cmd_export(args) -> int:
     return 0
 
 
+def cmd_squash(args) -> int:
+    from si.squash import squash_bundle
+    res = squash_bundle(args.path, keep=args.keep, rank=args.rank,
+                        tol=args.tol)
+    if not res["squashed"]:
+        if res.get("verdict"):
+            print(f"verdict:   {res['verdict']}")
+            print(f"edit_id:   {res['edit_id']}")
+            print("squash not committed (rejection journaled; see si log)")
+        return 0
+    print(f"squashed into: {res['delta_id']}")
+    print(f"verdict:        {res['verdict']}")
+    print(f"edit_id:        {res['edit_id']}")
+    print(f"head:           {res['head']} (unchanged by design)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="si", description="SI-0 reference runtime: the self-writing loop.")
@@ -285,6 +303,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="quantize via a real llama-quantize binary "
                          "(e.g. Q4_K_M); requires hearth runtime llama")
     pe.set_defaults(func=cmd_export)
+
+    psq = sub.add_parser("squash", help="compress the oldest deltas on the "
+                                        "active stack into one gated delta "
+                                        "(head id unchanged)")
+    psq.add_argument("path", help="bundle directory")
+    psq.add_argument("--keep", type=int, default=3,
+                     help="newest deltas to leave untouched (default: 3)")
+    psq.add_argument("--rank", type=int, default=None,
+                     help="truncated-SVD rank for the squashed delta "
+                          "(default: max rank of the squashed deltas)")
+    psq.add_argument("--tol", type=float, default=1e-4,
+                     help="max abs diff vs the pre-squash head allowed "
+                          "before anything is committed (default: 1e-4)")
+    psq.set_defaults(func=cmd_squash)
     return p
 
 

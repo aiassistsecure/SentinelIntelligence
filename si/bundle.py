@@ -342,3 +342,69 @@ def load_policy(bundle_dir: str) -> dict:
     """Load the gate policy dict from policy.json."""
     with open(os.path.join(bundle_dir, "policy.json"), "rb") as f:
         return json.loads(f.read().decode("utf-8"))
+
+
+def _active_chain(manifest: dict) -> list:
+    """Deltas on the active stack, oldest first (application order).
+
+    Resolved from ``head`` by following parent links. A delta reached via
+    a parent link that carries ``superseded_by`` was subsumed by a squash:
+    the walk jumps to the replacement id, whose update is the (verified)
+    equivalent of the squashed deltas' combined update.
+
+    The HEAD itself is never replaced. If the head carries
+    ``superseded_by`` — i.e. something moved the head back onto a delta
+    that a squash later subsumed — that is time travel (a rollback), and
+    the true historical ancestry is resolved instead of the replacement.
+
+    Fail closed: unknown ids, missing parents, and parent cycles raise
+    TamperError rather than silently resolving a wrong stack.
+    """
+    by_id = {d["id"]: d for d in manifest["deltas"]}
+    head = manifest["head"]
+    if head != "base" and head not in by_id:
+        raise TamperError(f"unknown head {head!r}")
+
+    # Time travel: the head itself carries ``superseded_by`` — a rollback
+    # landed on a delta that a later squash subsumed. Per the contract
+    # above, the TRUE HISTORICAL ancestry is resolved: no squash
+    # replacement is followed anywhere on this walk, so the restored head
+    # computes exactly what it computed pre-squash. (Following the
+    # replacement for the head's ancestors would stack the squashed
+    # update — which already contains the head's own update — underneath
+    # the head itself: a state that never existed.)
+    time_travel = head != "base" and bool(by_id[head].get("superseded_by"))
+
+    ordered: list = []
+    seen: set = set()
+    cur = head
+    is_head = True
+    while cur != "base":
+        if cur in seen:
+            raise TamperError(f"cycle in delta parent chain at {cur!r}")
+        seen.add(cur)
+        d = by_id.get(cur)
+        if d is None:
+            raise TamperError(
+                f"active chain broken: {cur!r} referenced but not in "
+                "manifest deltas"
+            )
+        if not is_head and not time_travel:
+            # Traversed as a parent: resolve any squash replacement chain.
+            while d.get("superseded_by"):
+                cur = d["superseded_by"]
+                if cur in seen:
+                    raise TamperError(
+                        f"cycle in squash replacement chain at {cur!r}"
+                    )
+                seen.add(cur)
+                d = by_id.get(cur)
+                if d is None:
+                    raise TamperError(
+                        f"squash replacement {cur!r} not in manifest deltas"
+                    )
+        ordered.append(d)
+        cur = d["parent"]
+        is_head = False
+    ordered.reverse()
+    return ordered
