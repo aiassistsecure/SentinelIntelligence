@@ -10,6 +10,7 @@
     si why <path> <delta-id>
     si export <path> --out FILE [--quant Q4_K_M]
     si squash <path> [--keep N] [--rank R] [--tol T]
+    si serve <path> [--host H] [--port P]
 
 <path> is the bundle directory (conventionally <name>.si).
 """
@@ -242,6 +243,12 @@ def cmd_squash(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    from si.serve import serve_bundle
+    serve_bundle(args.path, host=args.host, port=args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="si", description="SI-0 reference runtime: the self-writing loop.")
@@ -324,6 +331,18 @@ def build_parser() -> argparse.ArgumentParser:
                      help="max abs diff vs the pre-squash head allowed "
                           "before anything is committed (default: 1e-4)")
     psq.set_defaults(func=cmd_squash)
+
+    psv = sub.add_parser("serve", help="serve the bundle head for inference "
+                                       "over local HTTP (read-only; demo "
+                                       "mind only — seeded transformer "
+                                       "bundles return 501 on /infer)")
+    psv.add_argument("path", help="bundle directory")
+    psv.add_argument("--host", default="127.0.0.1",
+                     help="bind host (default: 127.0.0.1, localhost only; "
+                          "no auth — do not expose beyond localhost)")
+    psv.add_argument("--port", type=int, default=8000,
+                     help="bind port (default: 8000; 0 = ephemeral)")
+    psv.set_defaults(func=cmd_serve)
     return p
 
 

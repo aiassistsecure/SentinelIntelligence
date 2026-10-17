@@ -66,7 +66,18 @@ si why ./sentinel-001.si d0001             # why does this delta exist?
 si diff ./sentinel-001.si base..d0001
 si rollback ./sentinel-001.si --to base --reason "operator: trim stack"
 si squash ./sentinel-001.si --keep 3    # compress oldest deltas into one gated delta (head id unchanged)
+si serve ./sentinel-001.si --port 8000  # serve the head for inference (local HTTP, read-only)
 ```
+
+`si serve` API (localhost only, no auth — do not expose it beyond
+localhost): `GET /health` returns the bundle id, head, mind kind, and
+arch source. `POST /infer` with `{"input": [8 numbers]}` returns
+`{"output": [8 numbers]}` — real inference from the demo mind
+materialized at the current head (frozen base + active deltas). SI has
+no transformer inference engine, so a bundle seeded from a real
+transformer checkpoint returns an explicit `501` on `/infer` (never a
+fabricated output); only demo-mind inference is supported. Serving is
+read-only: no journal writes, and the head never moves.
 
 Embedded sqlite fallback (zero services, no daemon):
 
