@@ -11,6 +11,7 @@
     si export <path> --out FILE [--quant Q4_K_M]
     si squash <path> [--keep N] [--rank R] [--tol T]
     si serve <path> [--host H] [--port P]
+    si amend-constitution <path> --from-file F --reason R --operator NAME
 
 <path> is the bundle directory (conventionally <name>.si).
 """
@@ -243,6 +244,22 @@ def cmd_squash(args) -> int:
     return 0
 
 
+def cmd_amend_constitution(args) -> int:
+    from si.amend import amend_constitution
+    res = amend_constitution(args.path, args.from_file, args.reason,
+                             args.operator)
+    print(f"amended:   {res['amended']}")
+    print(f"old_hash:  sha256:{res['old_hash']}")
+    print(f"new_hash:  sha256:{res['new_hash']}")
+    print(f"operator:  {res['operator']}")
+    print(f"edit_id:   {res['edit_id']}")
+    print(f"head:      {res['head']} (unchanged by design)")
+    print("note: --operator is an attribution/authorization record in "
+          "the journal, NOT cryptographic authentication (see "
+          "si/amend.py)")
+    return 0
+
+
 def cmd_serve(args) -> int:
     from si.serve import serve_bundle
     serve_bundle(args.path, host=args.host, port=args.port)
@@ -343,6 +360,25 @@ def build_parser() -> argparse.ArgumentParser:
     psv.add_argument("--port", type=int, default=8000,
                      help="bind port (default: 8000; 0 = ephemeral)")
     psv.set_defaults(func=cmd_serve)
+
+    pam = sub.add_parser("amend-constitution",
+                         help="OPERATOR-ONLY: replace the gate constitution "
+                              "with a new hash-versioned text (journaled; "
+                              "head/deltas/base never move; autonomous "
+                              "amendment still escalates at the gate). The "
+                              "--operator flag is an attribution record, "
+                              "not cryptographic authentication.")
+    pam.add_argument("path", help="bundle directory")
+    pam.add_argument("--from-file", required=True,
+                     help="UTF-8 file containing the new constitution text")
+    pam.add_argument("--reason", default=None,
+                     help="why the constitution is being amended "
+                          "(required, non-empty; journaled)")
+    pam.add_argument("--operator", default=None,
+                     help="operator name, recorded in the journal as the "
+                          "authorization record (required, non-empty; an "
+                          "attribution record, not cryptographic auth)")
+    pam.set_defaults(func=cmd_amend_constitution)
     return p
 
 

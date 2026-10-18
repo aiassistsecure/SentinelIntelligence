@@ -67,6 +67,7 @@ si diff ./sentinel-001.si base..d0001
 si rollback ./sentinel-001.si --to base --reason "operator: trim stack"
 si squash ./sentinel-001.si --keep 3    # compress oldest deltas into one gated delta (head id unchanged)
 si serve ./sentinel-001.si --port 8000  # serve the head for inference (local HTTP, read-only)
+si amend-constitution ./sentinel-001.si --from-file ./new-constitution.md --reason "why" --operator "your-name"  # operator-only, journaled
 ```
 
 `si serve` API (localhost only, no auth — do not expose it beyond
@@ -78,6 +79,21 @@ no transformer inference engine, so a bundle seeded from a real
 transformer checkpoint returns an explicit `501` on `/infer` (never a
 fabricated output); only demo-mind inference is supported. Serving is
 read-only: no journal writes, and the head never moves.
+
+`si amend-constitution` (SI-6) is the **operator-only** way to change
+the gate constitution. Autonomous amendment is still impossible: the
+gate returns ESCALATE for every constitution intent, and the autonomous
+loop has no path to this command. An amendment requires an explicit
+`--operator` name and a non-empty `--reason`; it is **journaled and
+hash-versioned** — the journal records the gate's ESCALATE report, the
+operator, the reason, and the hash chain link (old hash → new hash) —
+and it never moves the head, the delta stack, or the frozen base.
+Empty and no-op (identical) replacement files are refused, a tampered
+bundle is never amended, and the bundle is re-verified after the write.
+Honest limit: `--operator` is an **attribution/authorization record in
+the journal, not cryptographic authentication** — this local reference
+runtime trusts its operator; the flag records who claimed to act, it
+does not prove it. Policy (`policy.json`) amendment is out of scope.
 
 Embedded sqlite fallback (zero services, no daemon):
 
