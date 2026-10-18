@@ -70,10 +70,10 @@ def _probe_err(y, expected) -> float:
 
 
 def _load_base_W(bundle_dir: str, manifest: dict):
-    blob_hex = manifest["base"]["blob"].split(":", 1)[1]
-    with safe_open(os.path.join(bundle_dir, "blobs", "sha256",
-                                blob_hex + ".safetensors"), framework="np") as f:
-        return f.get_tensor("W")
+    # Resolves across every base layout (demo blob, pre-SI-7 whole-file
+    # parts, SI-7 per-tensor blobs) via the shared bundle helper.
+    from si.bundle import load_base_tensor
+    return load_base_tensor(bundle_dir, manifest, "W")
 
 
 def _load_stack(bundle_dir: str, manifest: dict) -> list:

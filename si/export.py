@@ -51,21 +51,34 @@ from si.bundle import (
 def _load_base_tensors(bundle_dir: str, manifest: dict) -> dict:
     """Load ALL base tensors as float32 numpy arrays, keyed by name.
 
-    Handles both the demo single-blob base (``base["blob"]``) and seeded
-    multi-part bases (``base["parts"]``). Duplicate tensor names across
-    parts fail closed with ValueError rather than silently shadowing.
+    Handles all three base layouts: SI-7 per-tensor bases
+    (``base["tensor_blobs"]`` — each name maps to its own blob, read
+    via ``si.bundle.read_tensor_blob`` so identical tensors sharing one
+    deduplicated blob both resolve), pre-SI-7 seeded multi-part bases
+    (``base["parts"]`` whole-file blobs), and the demo single-blob base
+    (``base["blob"]``). Duplicate tensor names across parts fail closed
+    with ValueError rather than silently shadowing.
     Pure read: no journal, no manifest writes.
     """
     import numpy as np
     from safetensors import safe_open
 
-    base = manifest["base"]
-    if "parts" in base and base["parts"]:
-        blob_refs = [p["blob"] for p in base["parts"]]
-    else:
-        blob_refs = [base["blob"]]
+    from si.bundle import read_tensor_blob
 
-    tensors: dict = {}
+    base = manifest["base"]
+    tensor_blobs = base.get("tensor_blobs")
+    if isinstance(tensor_blobs, dict) and tensor_blobs:
+        tensors = {}
+        for name in sorted(tensor_blobs):
+            arr = read_tensor_blob(bundle_dir, tensor_blobs[name]["blob"], name)
+            tensors[name] = np.asarray(arr, dtype=np.float32)
+        return tensors
+
+    part_refs = [p["blob"] for p in base.get("parts") or []
+                 if isinstance(p, dict) and p.get("blob")]
+    blob_refs = part_refs if part_refs else [base["blob"]]
+
+    tensors = {}
     for ref in blob_refs:
         blob_hex = ref.split(":", 1)[1]
         path = os.path.join(bundle_dir, "blobs", "sha256", blob_hex + ".safetensors")

@@ -80,6 +80,28 @@ transformer checkpoint returns an explicit `501` on `/infer` (never a
 fabricated output); only demo-mind inference is supported. Serving is
 read-only: no journal writes, and the head never moves.
 
+`si seed` (SI-7) imports a real multi-tensor transformer checkpoint
+**per tensor**: every tensor becomes its own content-addressed blob
+(a valid single-tensor safetensors file under the canonical key
+`"tensor"`; the tensor's name lives in the manifest's
+`base.tensor_blobs`), so content addressing addresses tensor *data* —
+two tensors with identical bytes under different names are stored
+exactly once. **SI never duplicates bytes**: a blob whose hash already
+exists in the store is never rewritten or copied (dedup is at blob
+level, skip-if-exists; per-tensor re-serialization means source files
+are never hardlinked, and none is claimed). Re-seeding the exact
+checkpoint that is already the base is an idempotent no-op (zero bytes
+written, reported as `already_seeded`). Sharded HuggingFace layouts
+(`model.safetensors.index.json` + shard files) are validated
+fail-closed — missing shards, missing mapped tensors, and tensors
+claimed by two shards are all refused — and a captured `config.json`
+drives `si export`'s GGUF architecture metadata end to end (tied
+embeddings / a missing `lm_head` included). Pre-SI-7 bundles
+(whole-file `parts` bases, demo bases) still load, verify, and export.
+The seeded import is journaled with full provenance accounting:
+tensor count, total bytes, deduplicated bytes, source path, and the
+config sha256 when present.
+
 `si amend-constitution` (SI-6) is the **operator-only** way to change
 the gate constitution. Autonomous amendment is still impossible: the
 gate returns ESCALATE for every constitution intent, and the autonomous

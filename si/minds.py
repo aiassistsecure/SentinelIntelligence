@@ -162,13 +162,10 @@ class DemoMind:
         self._name = name
         self._seed = seed
         if bundle_path is not None:
-            from si.bundle import load_bundle
+            from si.bundle import load_base_tensor, load_bundle
             manifest = load_bundle(bundle_path)
-            blob_hex = manifest["base"]["blob"].split(":", 1)[1]
-            from safetensors import safe_open
-            with safe_open(f"{bundle_path}/blobs/sha256/{blob_hex}.safetensors",
-                           framework="np") as f:
-                self.W_base = f.get_tensor("W").astype(np.float32)
+            self.W_base = load_base_tensor(
+                bundle_path, manifest, "W").astype(np.float32)
         else:
             rng = np.random.default_rng(seed)
             self.W_base = rng.standard_normal((DIM, DIM)).astype(np.float32)
