@@ -1,9 +1,11 @@
 """``si seed``: import a real safetensors checkpoint as the frozen base.
 
-Covers: happy path (manifest rewritten, blobs content-addressed,
-provenance recorded, bundle still verifies), multi-file imports, corrupt /
-truncated / non-safetensors rejection, refusal on bundles with history,
-and a seeded bundle running a real self-write cycle.
+Covers: happy path (manifest rewritten, per-tensor blobs content-
+addressed, provenance recorded, bundle still verifies), multi-file
+imports, corrupt / truncated / non-safetensors rejection, refusal on
+bundles with history, and a seeded bundle running a real self-write
+cycle. SI-7 per-tensor / dedup / sharded-layout specifics live in
+tests/test_seed_real.py.
 """
 import os
 import struct
@@ -59,22 +61,36 @@ def test_seed_happy_path(tmp_path):
     assert base["imported_at"]
     assert len(base["parts"]) == 1
 
-    # Every part blob exists with a matching content hash.
-    for part in base["parts"]:
-        p = _blob_path(bundle_dir, part["blob"])
+    # SI-7: every TENSOR has its own content-addressed blob, and every
+    # referenced blob exists with a matching content hash.
+    assert base["seed_format"] == "per-tensor-v1"
+    assert set(base["tensor_blobs"]) == {"W", "b"}
+    unique_sizes = {}
+    for name, ref in base["tensor_blobs"].items():
+        p = _blob_path(bundle_dir, ref["blob"])
         assert os.path.isfile(p), f"missing blob {p}"
         with open(p, "rb") as f:
-            assert sha256_hex(f.read()) == part["blob"].split(":", 1)[1]
-        assert part["bytes"] == os.path.getsize(p)
-    assert base["bytes"] == sum(p["bytes"] for p in base["parts"])
+            assert sha256_hex(f.read()) == ref["blob"].split(":", 1)[1]
+        assert ref["bytes"] == os.path.getsize(p)
+        unique_sizes[ref["blob"]] = ref["bytes"]
+    # base["bytes"] counts each unique blob once (never duplicated).
+    assert base["bytes"] == sum(unique_sizes.values())
+
+    # Parts are now source-file provenance (name, source bytes + hash,
+    # the file's tensor metadata) — the source file itself is not a blob.
+    part = base["parts"][0]
+    assert part["file"] == "model.safetensors"
+    assert part["sha256"].startswith("sha256:")
+    assert "blob" not in part
 
     # Tensor metadata recorded from the headers.
     assert base["tensors"]["W"] == {"shape": [8, 8], "dtype": "float32"}
     assert base["tensors"]["b"] == {"shape": [8], "dtype": "float32"}
     assert base["parts"][0]["tensors"]["W"]["shape"] == [8, 8]
 
-    # "blob" still points at the first part: single-blob loaders keep working.
-    assert base["blob"] == base["parts"][0]["blob"]
+    # "blob" points at the "W" tensor's blob: single-blob loaders
+    # (DemoMind, the loop) keep working on seeded demo-shaped bases.
+    assert base["blob"] == base["tensor_blobs"]["W"]["blob"]
 
     # Provenance: seeded_from edge on child "base".
     journal = open_journal(bundle_dir, manifest)
@@ -119,15 +135,17 @@ def test_seed_multifile(tmp_path):
     parts = manifest["base"]["parts"]
     assert len(parts) == 2
     assert [p["file"] for p in parts] == ["a_part.safetensors", "b_part.safetensors"]
-    assert manifest["base"]["bytes"] == sum(p["bytes"] for p in parts)
+    unique_sizes = {ref["blob"]: ref["bytes"]
+                    for ref in manifest["base"]["tensor_blobs"].values()}
+    assert manifest["base"]["bytes"] == sum(unique_sizes.values())
     assert res["bytes"] == manifest["base"]["bytes"]
     assert res["parts"] == 2
-    # Tensors merged across parts; "blob" points at the first part.
+    # Tensors merged across parts; "blob" points at the "W" tensor blob.
     assert set(manifest["base"]["tensors"]) == {"W", "V"}
     assert manifest["base"]["tensors"]["V"] == {"shape": [4, 4], "dtype": "float32"}
-    assert manifest["base"]["blob"] == parts[0]["blob"]
-    for part in parts:
-        assert os.path.isfile(_blob_path(bundle_dir, part["blob"]))
+    assert manifest["base"]["blob"] == manifest["base"]["tensor_blobs"]["W"]["blob"]
+    for ref in manifest["base"]["tensor_blobs"].values():
+        assert os.path.isfile(_blob_path(bundle_dir, ref["blob"]))
 
 
 def test_seed_rejects_corrupt_header(tmp_path):

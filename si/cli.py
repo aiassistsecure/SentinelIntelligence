@@ -48,8 +48,14 @@ def cmd_seed(args) -> int:
     from si.seed import seed_bundle
     res = seed_bundle(args.path, args.safetensors, importer="cli")
     base = res["base"]
+    if res.get("already_seeded"):
+        print("already seeded: this checkpoint is already the bundle's "
+              "base (idempotent no-op; zero bytes written)")
     print(f"seeded base: {base['blob']}")
     print(f"parts: {res['parts']}  bytes: {res['bytes']}  head: {res['head']}")
+    if "tensors" in res:
+        print(f"tensors: {res['tensors']}  "
+              f"deduplicated_bytes: {res['deduplicated_bytes']}")
     print(f"source: {base['source']}")
     if base.get("checkpoint_config") is not None:
         print(f"arch: config.json captured "

@@ -286,9 +286,26 @@ def load_bundle(path: str) -> dict:
         raise TamperError("policy.json hash does not match manifest")
 
     # Blobs: every referenced blob must exist with matching content hash.
-    _verify_blob(bundle_dir, manifest["base"]["blob"], "base")
+    # A base may reference blobs three ways (all verified, each unique
+    # ref hashed once): the legacy single ``base.blob``, whole-file
+    # ``base.parts[*].blob`` refs from pre-SI-7 seeds, and SI-7's
+    # per-tensor ``base.tensor_blobs`` refs.
+    verified: set = set()
+    base = manifest["base"]
+    _verify_blob(bundle_dir, base["blob"], "base", _cache=verified)
+    for part in base.get("parts") or []:
+        if isinstance(part, dict) and part.get("blob"):
+            _verify_blob(bundle_dir, part["blob"],
+                         f"base part {part.get('file', '?')}", _cache=verified)
+    tensor_blobs = base.get("tensor_blobs")
+    if isinstance(tensor_blobs, dict):
+        for tname, tref in sorted(tensor_blobs.items()):
+            if not isinstance(tref, dict) or not tref.get("blob"):
+                raise TamperError(f"malformed tensor_blobs entry for {tname!r}")
+            _verify_blob(bundle_dir, tref["blob"], f"base tensor {tname}",
+                         _cache=verified)
     for d in manifest["deltas"]:
-        _verify_blob(bundle_dir, d["blob"], d["id"])
+        _verify_blob(bundle_dir, d["blob"], d["id"], _cache=verified)
 
     # Journal: chain must verify, and the manifest must anchor the tip.
     # The backend comes from the manifest itself; an unknown name fails
@@ -324,7 +341,10 @@ def load_bundle(path: str) -> dict:
     return manifest
 
 
-def _verify_blob(bundle_dir: str, blob_ref: str, label: str) -> None:
+def _verify_blob(bundle_dir: str, blob_ref: str, label: str,
+                 _cache: set | None = None) -> None:
+    if _cache is not None and blob_ref in _cache:
+        return
     try:
         prefix, hexpart = blob_ref.split(":", 1)
     except ValueError:
@@ -338,6 +358,56 @@ def _verify_blob(bundle_dir: str, blob_ref: str, label: str) -> None:
         actual = sha256_hex(f.read())
     if actual != hexpart:
         raise TamperError(f"blob hash mismatch for {label}: content does not match manifest")
+    if _cache is not None:
+        _cache.add(blob_ref)
+
+
+def blob_path(bundle_dir: str, blob_ref: str) -> str:
+    """Filesystem path of a ``sha256:<hex>`` blob ref inside a bundle."""
+    hexpart = blob_ref.split(":", 1)[1]
+    return os.path.join(bundle_dir, "blobs", "sha256", hexpart + ".safetensors")
+
+
+def read_tensor_blob(bundle_dir: str, blob_ref: str, tensor_name: str):
+    """Read one tensor out of a blob file as a numpy array.
+
+    The tensor is looked up under its own name first (demo blobs and
+    pre-SI-7 whole-file blobs store tensors under their real names),
+    then under SI-7's canonical per-tensor key ``"tensor"``, then —
+    for a single-tensor blob — under whatever sole key it carries.
+    Raises KeyError when the blob holds no such tensor.
+    """
+    from safetensors import safe_open
+
+    with safe_open(blob_path(bundle_dir, blob_ref), framework="np") as f:
+        keys = list(f.keys())
+        if tensor_name in keys:
+            return f.get_tensor(tensor_name)
+        if "tensor" in keys:
+            return f.get_tensor("tensor")
+        if len(keys) == 1:
+            return f.get_tensor(keys[0])
+    raise KeyError(f"tensor {tensor_name!r} not found in blob {blob_ref}")
+
+
+def load_base_tensor(bundle_dir: str, manifest: dict, tensor_name: str):
+    """Load one base tensor by name across every base layout.
+
+    SI-7 per-tensor bases resolve via ``base.tensor_blobs``; pre-SI-7
+    seeded bases are searched across their whole-file ``parts``; demo
+    and single-blob bases read ``base.blob``. Raises KeyError when the
+    base carries no such tensor (fail honestly, never fabricate).
+    """
+    base = manifest["base"]
+    tensor_blobs = base.get("tensor_blobs")
+    if isinstance(tensor_blobs, dict) and tensor_name in tensor_blobs:
+        return read_tensor_blob(bundle_dir, tensor_blobs[tensor_name]["blob"],
+                                tensor_name)
+    for part in base.get("parts") or []:
+        if isinstance(part, dict) and part.get("blob") \
+                and tensor_name in (part.get("tensors") or {}):
+            return read_tensor_blob(bundle_dir, part["blob"], tensor_name)
+    return read_tensor_blob(bundle_dir, base["blob"], tensor_name)
 
 
 def load_policy(bundle_dir: str) -> dict:
