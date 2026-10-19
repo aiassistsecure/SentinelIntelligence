@@ -38,6 +38,10 @@ class LoopContext:
         self.bundle_dir = bundle_dir
         self.mind = mind
         self.journal = journal
+        # The verified manifest, exposed for the gate's SI-9b
+        # transformer-delta evaluation (manifest only; the gate never
+        # reads base tensor bytes). Demo evaluation does not use it.
+        self.manifest = manifest
         self.policy = load_policy(bundle_dir)
         self.head = manifest["head"]
         self.last_seq = manifest["journal"]["last_seq"]
@@ -53,6 +57,10 @@ class LoopContext:
     def capability_suite(self): return self.mind.capability_suite()
     def capability_baseline(self): return dict(self._baseline)
     def stack_depth(self): return len(self.active)
+
+    def base_manifest(self):
+        """The bundle's verified manifest dict (SI-9b gate context)."""
+        return self.manifest
 
     def forward_candidate(self, x, candidate):
         d = candidate["delta"]
@@ -142,7 +150,14 @@ def run_cycle(bundle_path: str, mind, gate: Gate | None = None) -> dict:
         # the mind supplies the training signal, never touches raw tensors.
         intent = mind.propose(perceptions, ctx)
         candidate = None
-        if intent.kind == "delta" and intent.reason and intent.reason.strip():
+        # Transformer-delta intents (SI-9b) also obtain a candidate so
+        # the gate can evaluate it. This adds NO materialize path for
+        # them: the SI-9b gate never ADMITs a transformer delta (a
+        # valid one ESCALATEs to the operator, an invalid one is
+        # REJECTed — both journaled and halted below), and the
+        # MATERIALIZE step further down is demo-"delta"-only.
+        if intent.kind in ("delta", "transformer-delta-v1") \
+                and intent.reason and intent.reason.strip():
             candidate = mind.train_delta(intent)
 
         # GATE.

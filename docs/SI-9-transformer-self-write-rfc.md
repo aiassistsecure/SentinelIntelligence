@@ -14,6 +14,14 @@
 > data definitions plus pure validation in `si/transformer_delta.py`
 > (a new module; see the notes in §2.3, §3, and §6.1). No gate, loop,
 > or serve integration exists yet; those remain SI-9b / SI-9c.
+>
+> **As-built note (SI-9b):** §6.2 is implemented — the §4.2 structural
+> suite is the gate's safety check for `transformer-delta-v1` intents,
+> the §4.5 policy keys are live with fail-closed defaults, and §4.3 is
+> implemented exactly as specified (identity/capability report
+> "not evaluated" and a valid transformer delta ESCALATES; see the
+> notes in §4.2, §4.5, and §6.2). No apply-at-load or serve integration
+> exists yet; that remains SI-9c.
 
 ---
 
@@ -385,6 +393,23 @@ verification cost (§7.1). Sub-checks, all required:
    existing `rank_cap`. These budgets are what keep "small adapters on
    a frozen base" a fact rather than a slogan — an unbounded "delta"
    is a second checkpoint wearing a costume.
+
+   *As-built in SI-9b (norm method, §4.2.5's open choice):* the gate
+   recomputes per-target LoRA norms from the **Gram matrices** in
+   float64 — `‖B@A‖_F^2 = trace((B^T B) @ (A A^T))` — never
+   materialising the `[out, in]` product. The Gram value must agree
+   with the record's `target_norm` (which SI-9a validation checks
+   against a direct `B@A` computation) to relative tolerance 1e-6;
+   cap comparisons are strict (`measured > cap` fails) on the float64
+   Gram values, tested at exactly the cap and just above it. The
+   suite is implemented as named sub-checks on the safety check
+   (`subchecks` in the journaled gate report), with SI-9a's
+   `validate_transformer_delta` running as a final catch-all so the
+   gate can only be stricter than the format validation. Two trust
+   decisions are pinned in `si/gate.py`: the base manifest comes only
+   from the bundle context (never the candidate), and allowlist
+   patterns are case-sensitive `fnmatch` patterns — a wildcard-free
+   pattern is an exact name, with no implicit substring matching.
 7. **Allowlist.** Target names must match policy
    `allowed_target_patterns` (new key, §4.5) — exact names or
    layer-scoped patterns, resolved exactly. The demo policy's
@@ -470,6 +495,21 @@ Existing keys (`norm_cap: 1.0`, `escalation_norm: 0.5`,
 defaults are *not* proposed as Glimmer defaults — SI-9b must set
 transformer policy numbers deliberately, per bundle, at seed/policy
 time, and say why.
+
+*As-built in SI-9b:* the defaults are pinned in
+`si.bundle.DEFAULT_POLICY` — `allowed_target_patterns: []`,
+`max_targets_per_delta: 1`, `allow_additive: false`,
+`per_target_norm_cap: 1.0` (= `norm_cap`, the loosest value the
+"≤ `norm_cap`" bound allows; bundles may tighten it), and
+`delta_byte_cap: 4 MiB` — fixed with evidence: a rank-8 LoRA on the
+largest ordinary Glimmer matrix shape (`[19968, 6656]`) needs
+~0.81 MiB of float32 factors, while a rank-8 lm_head-scale delta
+(`[202048, 6656]`) would need ~6.4 MiB, so the cap admits the former
+with headroom and excludes the latter (§5.4). A policy key that is
+absent falls back to these defaults; a key present but malformed is
+treated as its most restrictive value. These remain *runtime*
+defaults, not Glimmer policy: a seeded bundle's operator still sets
+its allowlist deliberately, per bundle, as a journaled policy act.
 
 ---
 
@@ -625,6 +665,25 @@ serve code was touched.
   admits, not rejects) with the expected report; demo-delta gate
   behaviour is byte-for-byte unchanged (existing `tests/test_gate.py`
   green, untouched expectations).
+
+*As-built:* done in `si/gate.py` (the §4 mapping, the structural
+suite as safety sub-checks, the §4.4 provenance extension via a new
+`Intent.targets` declared-target list), `si/bundle.py` (the §4.5 keys
+in `DEFAULT_POLICY`), and one deliberate loop touch in `si/loop.py`:
+`LoopContext` exposes the verified manifest as the gate's base
+manifest, and `run_cycle` obtains a candidate for transformer intents
+so the gate can evaluate them — this adds no materialize path, since
+the SI-9b gate never ADMITs a transformer delta (valid → ESCALATE,
+invalid → REJECT; both journaled, and `si run` halts, tested in
+`tests/test_gate_transformer.py`). The demo-delta path is unchanged,
+including its journaled report shape (`subchecks` appear only on the
+transformer safety check). One scope decision, recorded: the gate
+does not add a demo-intent-vs-transformer-base rejection — the demo
+path is byte-for-byte unchanged per this section's own test
+requirement, existing seeded demo-shaped bases legitimately run demo
+cycles (SI-8 tests), and a true transformer base cannot reach the
+demo gate through the loop at all (`LoopContext` requires the demo
+`W` tensor). Apply-at-load, serve, and squash are untouched (SI-9c).
 
 ### 6.3 SI-9c — Apply-at-load for a narrow tensor subset + numeric tests
 
