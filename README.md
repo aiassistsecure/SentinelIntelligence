@@ -69,6 +69,7 @@ si rollback ./sentinel-001.si --to base --reason "operator: trim stack"
 si squash ./sentinel-001.si --keep 3    # compress oldest deltas into one gated delta (head id unchanged)
 si serve ./sentinel-001.si --port 8000  # serve the head for inference (local HTTP, read-only)
 si amend-constitution ./sentinel-001.si --from-file ./new-constitution.md --reason "why" --operator "your-name"  # operator-only, journaled
+si admit-transformer-delta ./sentinel-001.si --record ./candidate.json --blob ./candidate.safetensors --reason "why" --operator "your-name"  # SI-10: operator-only admission of an escalated transformer delta
 ```
 
 `si serve` API (localhost only, no auth — do not expose it beyond
@@ -168,6 +169,27 @@ Honest limit: `--operator` is an **attribution/authorization record in
 the journal, not cryptographic authentication** — this local reference
 runtime trusts its operator; the flag records who claimed to act, it
 does not prove it. Policy (`policy.json`) amendment is out of scope.
+
+`si admit-transformer-delta` (SI-10, `docs/SI-10-operator-admission.md`)
+is the **operator-only** materialise path for transformer deltas —
+the answer an escalated delta (SI-9b) was waiting for. It re-runs the
+SI-9b gate at admission time and admits only a delta whose fresh
+verdict is ESCALATE; a REJECT-class delta can never be admitted, by
+anyone (the refusal is journaled and the head never moves). Admission
+requires an explicit `--operator` name and a non-empty `--reason`,
+is journaled *before* anything materialises (gate ESCALATE report
+verbatim, operator, reason, timestamp), materialises through the
+loop's existing blob/head semantics, and then runs the SI-9c VERIFY
+smoke step — journaled under its honest `transformer-apply-smoke`
+label, with rollback on failure. Two honesty labels, stated plainly:
+**operator admission is not a probe pass** — identity/capability
+probes were *not evaluated* (no transformer probe harness exists);
+the operator acted as the identity/capability check, and the journal
+says exactly that. And **autonomous admission is still impossible**:
+`si run` / `run_cycle` halt on ESCALATE and have no path to this
+command; no flag, config, or policy entry makes admission automatic.
+As with SI-6, `--operator` is an attribution record, not
+cryptographic authentication.
 
 Embedded sqlite fallback (zero services, no daemon):
 

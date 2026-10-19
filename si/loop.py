@@ -327,16 +327,19 @@ def _verify_transformer_apply(bundle_dir: str, manifest: dict,
     labeled ``transformer-apply-smoke`` so a journal reader cannot
     mistake it for a probe report.
 
-    Wiring, stated honestly: ``run_cycle`` does NOT call this yet,
+    Wiring, stated honestly: ``run_cycle`` does NOT call this,
     because under SI-9b the gate never ADMITs a transformer delta (a
-    valid one ESCALATEs to the operator and the loop halts before
-    MATERIALIZE), so no transformer delta is ever materialised by
-    the loop today and there is no post-write moment to verify.
-    Calling it from the demo VERIFY path would be wrong — that path
-    serves demo deltas only, and it is unchanged. This function is
-    the VERIFY step, implemented and tested now so that an
-    operator-admission materialise path, when one exists, runs
-    exactly this check; until then its callers are tests.
+    valid one ESCALATEs to the operator and the autonomous loop
+    halts before MATERIALIZE), so no transformer delta is ever
+    materialised by the autonomous loop and it has no post-write
+    moment to verify. Calling it from the demo VERIFY path would be
+    wrong — that path serves demo deltas only, and it is unchanged.
+    Since SI-10 this function IS the VERIFY step of the
+    operator-admission materialise path (``si/admit.py``): after an
+    operator admits an escalated delta and it materialises, that
+    path runs exactly this check and journals the report under the
+    ``transformer-apply-smoke`` label; a failed smoke rolls the
+    admission back. The autonomous loop still never calls it.
     """
     import numpy as np
 

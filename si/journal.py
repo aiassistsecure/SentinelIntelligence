@@ -372,6 +372,38 @@ class Journal:
         })
         return res["_id"]
 
+    def record_transformer_delta(self, delta_id: str, parent: str, blob: str,
+                                 byte_len: int, norm: float,
+                                 self_edit_id: str, source_seqs: list,
+                                 targets: list,
+                                 status: str = "active") -> str:
+        """Journal a materialised transformer delta (SI-10).
+
+        The demo-shaped :meth:`record_delta` cannot describe this
+        kind honestly: a transformer delta has no single rank/alpha —
+        rank/alpha live per target — so its journal row carries the
+        SI-9a ``targets`` array verbatim (exact names, base hashes,
+        per-target rank/alpha/norm) plus ``kind``. ``target_modules``
+        is the target *names*, recorded so name-based journal reads
+        see the same list the manifest record carries. No single
+        rank/alpha is fabricated.
+        """
+        res = self._append("deltas", {
+            "id": delta_id,
+            "parent": parent,
+            "blob": blob,
+            "bytes": byte_len,
+            "kind": "transformer-delta-v1",
+            "targets": list(targets),
+            "target_modules": [t.get("name") for t in targets
+                               if isinstance(t, dict)],
+            "norm": norm,
+            "self_edit_id": self_edit_id,
+            "source_seqs": list(source_seqs),
+            "status": status,
+        })
+        return res["_id"]
+
     def set_delta_status(self, delta_id: str, status: str) -> None:
         rows = self.backend.find("deltas", filter={"id": delta_id}, limit=1)
         if not rows:
