@@ -12,6 +12,7 @@
     si squash <path> [--keep N] [--rank R] [--tol T]
     si serve <path> [--host H] [--port P]
     si amend-constitution <path> --from-file F --reason R --operator NAME
+    si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
 <path> is the bundle directory (conventionally <name>.si).
 """
@@ -274,6 +275,80 @@ def cmd_amend_constitution(args) -> int:
     return 0
 
 
+def cmd_admit_transformer_delta(args) -> int:
+    import json as _json
+
+    from si.admit import admit_transformer_delta
+    from si.bundle import load_bundle
+    from si.gate import Intent
+    from si.transformer_delta import KIND as TF_KIND
+
+    bundle_dir = _bundle(args.path)
+    try:
+        with open(args.record, "rb") as f:
+            record = _json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"si: error: cannot read delta record {args.record!r}: {e}",
+              file=sys.stderr)
+        return 1
+    try:
+        with open(args.blob, "rb") as f:
+            blob_bytes = f.read()
+    except OSError as e:
+        print(f"si: error: cannot read delta blob {args.blob!r}: {e}",
+              file=sys.stderr)
+        return 1
+    if not isinstance(record, dict):
+        print("si: error: delta record file must contain a JSON object",
+              file=sys.stderr)
+        return 1
+
+    # The intent the operator puts in front of the gate: its declared
+    # target list is taken from the record itself (they must match —
+    # the gate's provenance check refuses any disagreement, and a CLI
+    # that let the operator type a second, divergent list would only
+    # manufacture such disagreements). Parents default to the current
+    # head, which is the delta's true parent at admission time.
+    targets = [t.get("name") for t in record.get("targets") or []
+               if isinstance(t, dict)]
+    if args.parents:
+        parents = [p.strip() for p in args.parents.split(",") if p.strip()]
+    else:
+        parents = [load_bundle(bundle_dir)["head"]]
+    source_seqs = []
+    if args.source_seqs:
+        try:
+            source_seqs = [int(s) for s in args.source_seqs.split(",")
+                           if s.strip()]
+        except ValueError:
+            print("si: error: --source-seqs must be comma-separated "
+                  "journal sequence numbers", file=sys.stderr)
+            return 1
+    intent = Intent(
+        kind=TF_KIND,
+        reason=args.intent_reason or args.reason or "",
+        parents=parents, source_seqs=source_seqs, targets=targets)
+    res = admit_transformer_delta(
+        bundle_dir, {"record": record, "blob_bytes": blob_bytes},
+        intent, operator=args.operator, reason=args.reason)
+    print(f"admitted:  {res['admitted']}")
+    print(f"delta_id:  {res['delta_id']} "
+          f"(candidate: {res['candidate_delta_id']})")
+    print(f"edit_id:   {res['edit_id']}")
+    print(f"operator:  {res['operator']}")
+    print(f"head:      {res['head']}")
+    print(f"verified:  {res['verified']} "
+          "(transformer-apply-smoke: shape + finiteness only)")
+    print(f"rolled_back: {res['rolled_back']}")
+    print("note: admission is the operator acting as the "
+          "identity/capability check — identity/capability probes "
+          "were NOT evaluated (no transformer probe harness exists) "
+          "and this is not a probe pass. --operator is an "
+          "attribution/authorization record in the journal, NOT "
+          "cryptographic authentication (see si/admit.py)")
+    return 0
+
+
 def cmd_serve(args) -> int:
     from si.serve import serve_bundle
     serve_bundle(args.path, host=args.host, port=args.port)
@@ -399,6 +474,39 @@ def build_parser() -> argparse.ArgumentParser:
                           "authorization record (required, non-empty; an "
                           "attribution record, not cryptographic auth)")
     pam.set_defaults(func=cmd_amend_constitution)
+
+    pad = sub.add_parser("admit-transformer-delta",
+                         help="OPERATOR-ONLY: admit one escalated "
+                              "transformer delta to the active chain "
+                              "(re-validated at admission; REJECT-class "
+                              "deltas are never admitted; the autonomous "
+                              "loop has no path here and still halts on "
+                              "ESCALATE). The --operator flag is an "
+                              "attribution record, not cryptographic "
+                              "authentication.")
+    pad.add_argument("path", help="bundle directory")
+    pad.add_argument("--record", required=True,
+                     help="JSON file with the transformer-delta-v1 "
+                          "manifest record (the escalated candidate)")
+    pad.add_argument("--blob", required=True,
+                     help="the candidate's .safetensors delta blob file")
+    pad.add_argument("--operator", default=None,
+                     help="operator name, recorded in the journal as the "
+                          "authorization record (required, non-empty; an "
+                          "attribution record, not cryptographic auth)")
+    pad.add_argument("--reason", default=None,
+                     help="why the operator is admitting this delta "
+                          "(required, non-empty; journaled)")
+    pad.add_argument("--parents", default=None,
+                     help="comma-separated intent parents "
+                          "(default: the current head)")
+    pad.add_argument("--source-seqs", default=None,
+                     help="comma-separated journal seqs the proposal is "
+                          "grounded in (default: none)")
+    pad.add_argument("--intent-reason", default=None,
+                     help="reason recorded on the gate intent "
+                          "(default: the admission --reason)")
+    pad.set_defaults(func=cmd_admit_transformer_delta)
     return p
 
 

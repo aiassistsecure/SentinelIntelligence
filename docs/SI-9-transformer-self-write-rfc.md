@@ -656,6 +656,20 @@ Glimmer seed. Consequences:
   be worse than leaving export as-is and saying so, which this RFC
   does), and the demo `LoopContext` forward path (demo deltas only).
 
+> *As-built follow-up in SI-10:* the operator-admission materialise
+> path now exists — `si admit-transformer-delta` (`si/admit.py`;
+> design + as-built notes in `docs/SI-10-operator-admission.md`).
+> It re-runs this section's gate at admission time, admits only an
+> ESCALATE verdict (a REJECT-class delta is never admitted; the
+> refusal is journaled), journals the admission decision before
+> materialising through the loop's existing semantics, and runs
+> exactly this VERIFY smoke step afterwards, rolling back on
+> failure. The honest labels hold: the journaled verdict stays
+> ESCALATE, the probes stay "not evaluated", and the operator's
+> admission is recorded as the operator acting as the
+> identity/capability check — never as a probe pass. The autonomous
+> loop is unchanged and still halts on ESCALATE.
+
 ---
 
 ## 6. Phased plan
