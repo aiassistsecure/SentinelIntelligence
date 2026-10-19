@@ -132,6 +132,28 @@ bundle. One read-path note: bfloat16 tensors referenced in place are
 widened losslessly to float32 when read (numpy has no bf16 dtype in
 this runtime; their raw bytes and hashes are bf16-exact regardless).
 
+Transformer deltas (SI-9, RFC `docs/SI-9-transformer-self-write-rfc.md`)
+are how a self-write names real transformer tensors: a delta artifact
+(SI-9a, `si/transformer_delta.py`) binds each target by exact name and
+base content hash — never substring matching — and the gate (SI-9b)
+structurally validates such deltas and **escalates** them to the
+operator, because identity/capability probes cannot honestly be run
+without a transformer probe harness; a valid transformer delta is
+never autonomously admitted. **Apply-at-load** (SI-9c,
+`si.apply.load_applied_tensor`) is a **library capability, not
+inference**: given a bundle, a manifest, and one tensor name, it
+returns that tensor in memory with the active chain's deltas for that
+exact name folded in oldest-first (`W + (alpha/rank)·B@A` for `lora`
+targets; `w + d` for `additive` targets only when policy
+`allow_additive` is true — it defaults to false), starting from the
+hash-verified per-tensor read. Nothing is materialised to disk, the
+base is never modified or copied, and a rolled-back delta simply
+stops being applied. Nothing in SI-9 trains or authors deltas,
+nothing runs a transformer, and `si serve` still returns an explicit
+`501` for transformer bundles; `si export`'s existing demo-era delta
+resolution is unchanged (reconciling it with exact named-tensor
+deltas is a separate, future decision — see RFC §5.5).
+
 `si amend-constitution` (SI-6) is the **operator-only** way to change
 the gate constitution. Autonomous amendment is still impossible: the
 gate returns ESCALATE for every constitution intent, and the autonomous

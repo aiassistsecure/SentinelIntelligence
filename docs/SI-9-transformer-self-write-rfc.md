@@ -22,6 +22,15 @@
 > "not evaluated" and a valid transformer delta ESCALATES; see the
 > notes in §4.2, §4.5, and §6.2). No apply-at-load or serve integration
 > exists yet; that remains SI-9c.
+>
+> **As-built note (SI-9c):** §6.3 is implemented — apply-at-load
+> exists as the library function `si.apply.load_applied_tensor`
+> (§5.1–§5.3, with the module-location and target choices recorded
+> in §5, §6.3, and §7.4), plus the loop's VERIFY smoke step
+> (`si.loop._verify_transformer_apply`, §5.5). `si serve` still
+> returns 501 for transformer bundles and `si export` is unchanged.
+> Nothing in SI-9c trains, authors, or runs anything: apply-at-load
+> is a library capability, not inference.
 
 ---
 
@@ -539,6 +548,27 @@ without loading the checkpoint. SI-9c adds a sibling —
 from `load_base_tensor` and folds the active transformer deltas for
 that name.
 
+> *As-built in SI-9c:* implemented as
+> `si.apply.load_applied_tensor(bundle_dir, manifest, name,
+> policy=None)`. Three behaviours are pinned beyond the sketch
+> above. (1) **Validation at apply time:** before a *targeting*
+> delta's factors are trusted, its record/blob pair is re-run
+> through SI-9a's `validate_transformer_delta` against the caller's
+> manifest (content hash, metadata-vs-manifest agreement, exact-name
+> base binding, shapes, finiteness, norms) — a tampered delta fails
+> closed at apply, it is not silently applied; non-targeting deltas
+> are not read or validated by a call that does not need them.
+> (2) **Exact-name existence:** on a multi-tensor base an unknown
+> name raises `KeyError` in the apply path rather than falling
+> through to `load_base_tensor`'s single-blob fallback (which would
+> silently return another tensor's data); `load_base_tensor` itself
+> is unchanged. (3) **Additive policy:** `additive` targets apply
+> only when `allow_additive` resolves to the literal `True` (the
+> `policy` argument, else the bundle's `policy.json`, else the
+> §4.5 default of false) — the SI-9b policy design does allow
+> additive deltas behind that key, so §6.3's conditional is met and
+> additive is implemented, gated exactly as the gate gates it.
+
 ### 5.2 The by-reference wrinkle
 
 For a `reference-v1` base, `load_base_tensor` reads the tensor's byte
@@ -606,6 +636,19 @@ Glimmer seed. Consequences:
   apply the just-admitted delta to its own target(s) and check the
   result is finite, correctly shaped, and equal to a directly
   computed reference in the test.
+
+  *As-built in SI-9c:* the VERIFY smoke step is implemented as
+  `si.loop._verify_transformer_apply` — per target it applies via
+  `load_applied_tensor` and checks shape + finiteness, returning a
+  report explicitly labeled `transformer-apply-smoke` (never a probe
+  result). One wiring limit, stated honestly: `run_cycle` does not
+  call it yet, because under SI-9b the gate never ADMITs a
+  transformer delta (a valid one ESCALATEs and the loop halts before
+  MATERIALIZE), so no transformer delta is ever materialised by the
+  loop today and there is no post-write moment to verify; the demo
+  VERIFY path (`_verify_head`, demo deltas only) is unchanged. When
+  an operator-admission materialise path exists, this is the step
+  its VERIFY phase runs; until then its callers are tests.
 - **Not wired:** `si serve` (still 501), `si export` (its existing
   substring-resolution path is *not* silently upgraded; reconciling
   export with exact named-tensor deltas is a follow-up decision —
@@ -710,6 +753,39 @@ demo gate through the loop at all (`LoopContext` requires the demo
 - `si serve` still returns 501; README's honesty labels updated to
   describe apply-at-load as a library capability, not inference.
 
+*As-built:* done in `si/apply.py` (new module — §7.4 Q3's lean,
+followed: `bundle.py`'s contract is storage/verification, not
+arithmetic) plus the VERIFY smoke step in `si/loop.py` (see §5.5's
+as-built note for its exact wiring limit). `load_applied_tensor`
+resolves through `_active_chain` via `load_base_tensor`, per tensor,
+on demand; nothing is materialised (a test asserts the bundle is
+byte-for-byte untouched by an apply read) and results are float32
+per §5.3. Both target kinds are implemented: `lora`, and `additive`
+gated on `allow_additive` (default false — §5.1's as-built note).
+Numeric tests (`tests/test_apply.py`) run on a synthetic miniature
+checkpoint seeded in-test (Glimmer-style names, toy dimensions):
+hand-computed `W + (alpha/rank)·B@A` references to float32
+tolerance; cumulative stacking; **stack order** proven
+distinguishable via an engineered float32 rounding case (updates of
++2²⁴ then −2²⁴ against a base entry of 1.0 yield 0.0 in chain order
+and 1.0 reversed — pure addition commutes in exact arithmetic, so
+order is observable only through float32 rounding, and each order
+is checked against its own sequential hand computation);
+rolled-back deltas stop applying; untargeted tensors are
+base-identical. The real-checkpoint proof (`tests/test_apply_real.py`,
+marked `slow`, skipped when the bundle is absent) targets the
+vision-tower projection `model.vision_tower.layers.0.attn.q_proj.weight`
+([1536, 1536]) — §7.4 Q4's decision: vision because it is small, the
+language matrices being ≥ [6656, …] and the 1-D language tensors
+exercising only the policy-refused additive path. It reads the
+manifest once as JSON and never calls `load_bundle` (§7.1: no
+repeated full verification), works on a copy of the 2.9 MB bundle
+directory (the by-reference base bytes are not copied and the
+originals are asserted untouched), and verifies shape/finiteness,
+equality with the hand-computed update over the real bf16 bytes,
+and that the delta-free read is unchanged. `si serve`, `si export`,
+and the demo `LoopContext` forward path are untouched.
+
 ### 6.4 Explicit non-goals
 
 - **No training loop.** Nothing in SI-9 learns a delta from data.
@@ -810,6 +886,7 @@ must answer with measurements, not vibes:
    `load_base_tensor`, or a new `si/apply.py`? (Lean: `si/apply.py`;
    `bundle.py` is already 745 lines and its contract is storage, not
    arithmetic.)
+   *Decided in SI-9c:* the lean — new `si/apply.py` (see §6.3).
 4. Glimmer is multimodal: is the vision tower in scope as a target
    class for the first proof, or language-only? §6.3's proof uses a
    vision tensor because it is small (`[1536, 1536]`), not because
@@ -817,6 +894,8 @@ must answer with measurements, not vibes:
    target if one is comparably cheap; the layernorms are 1-D and the
    language matrices are ≥ `[6656, …]`, so the honest trade-off is
    size vs subsystem. Decide in 9c and record why.
+   *Decided in SI-9c:* the vision tensor, for exactly the size
+   reason given here (see §6.3's as-built note).
 
 ---
 
