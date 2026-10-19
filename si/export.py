@@ -51,7 +51,10 @@ from si.bundle import (
 def _load_base_tensors(bundle_dir: str, manifest: dict) -> dict:
     """Load ALL base tensors as float32 numpy arrays, keyed by name.
 
-    Handles all three base layouts: SI-7 per-tensor bases
+    Handles all four base layouts: SI-8 by-reference bases
+    (``base["tensor_refs"]`` — each name resolves to a byte range in
+    the source checkpoint, read and hash-verified per tensor via
+    ``si.bundle.load_base_tensor``), SI-7 per-tensor bases
     (``base["tensor_blobs"]`` — each name maps to its own blob, read
     via ``si.bundle.read_tensor_blob`` so identical tensors sharing one
     deduplicated blob both resolve), pre-SI-7 seeded multi-part bases
@@ -63,9 +66,17 @@ def _load_base_tensors(bundle_dir: str, manifest: dict) -> dict:
     import numpy as np
     from safetensors import safe_open
 
-    from si.bundle import read_tensor_blob
+    from si.bundle import load_base_tensor, read_tensor_blob
 
     base = manifest["base"]
+    tensor_refs = base.get("tensor_refs")
+    if isinstance(tensor_refs, dict) and tensor_refs:
+        tensors = {}
+        for name in sorted(tensor_refs):
+            arr = load_base_tensor(bundle_dir, manifest, name)
+            tensors[name] = np.asarray(arr, dtype=np.float32)
+        return tensors
+
     tensor_blobs = base.get("tensor_blobs")
     if isinstance(tensor_blobs, dict) and tensor_blobs:
         tensors = {}

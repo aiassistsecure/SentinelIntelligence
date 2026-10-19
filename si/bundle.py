@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import struct
 import tempfile
 from datetime import datetime, timezone
 
@@ -95,6 +96,256 @@ def canonical_json(obj) -> bytes:
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+#: Chunk size for every streaming hash in this module / si.seed (1 MiB).
+#: Hashing NEVER loads a whole file (or a whole checkpoint shard) into
+#: RAM: a 49.9 GB shard hashes in the same bounded memory as a 1 KB one.
+STREAM_CHUNK = 1024 * 1024
+
+
+def sha256_file(path: str) -> str:
+    """SHA-256 hex of a file, computed by streaming chunked reads."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(STREAM_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+#: Marker recorded in ``base.seed_format`` for SI-8 by-reference seeds.
+#: Kept here (not si.seed) because load_bundle must branch on it and
+#: si.seed imports from this module — the constant lives at the lower
+#: layer so neither direction cycles.
+REF_SEED_FORMAT = "reference-v1"
+
+
+def canonical_tensor_prefix(dtype_code: str, shape: list,
+                            raw_len: int) -> bytes:
+    """Byte prefix of SI-7's canonical single-tensor blob.
+
+    The canonical blob for a tensor is
+    ``struct.pack("<Q", len(header)) + padded_header + raw_bytes`` where
+    the header is the deterministic one-key JSON document
+    ``{"tensor": {"dtype":..., "shape":..., "data_offsets":[0, n]}}``
+    (the key is si.seed.TENSOR_BLOB_KEY; it is duplicated as a literal
+    here because si.seed imports this module, not vice versa). Hashing
+    ``prefix + raw`` therefore yields EXACTLY the copy-mode blob hash —
+    which is what lets a by-reference seed record the same content
+    identity (``blob`` ref) that a copy seed would have stored, without
+    storing anything. si.seed's ``_canonical_tensor_blob`` builds its
+    in-RAM blob through this same function so the two cannot drift.
+    """
+    header = json.dumps(
+        {"tensor": {"dtype": dtype_code, "shape": list(shape),
+                    "data_offsets": [0, int(raw_len)]}},
+        separators=(",", ":")).encode("utf-8")
+    header += b" " * (-(8 + len(header)) % 8)
+    return struct.pack("<Q", len(header)) + header
+
+
+#: manifest dtype name -> safetensors dtype code (inverse of
+#: si.seed._DTYPE_NAMES; used only when a ref lacks a recorded code).
+_DTYPE_CODES_BY_NAME = {
+    "float64": "F64", "float32": "F32", "float16": "F16",
+    "bfloat16": "BF16", "float8_e4m3fn": "F8_E4M3",
+    "float8_e5m2": "F8_E5M2", "int64": "I64", "int32": "I32",
+    "int16": "I16", "int8": "I8", "uint64": "U64", "uint32": "U32",
+    "uint16": "U16", "uint8": "U8", "bool": "BOOL",
+}
+
+
+def _ref_dtype_code(ref: dict) -> str:
+    code = ref.get("dtype_code")
+    if isinstance(code, str) and code:
+        return code
+    return _DTYPE_CODES_BY_NAME.get(str(ref.get("dtype", "")), "")
+
+
+def _ref_geometry(ref: dict, label: str) -> tuple[str, int, int]:
+    """(source_file, file_offset, byte_length) of a tensor ref.
+
+    Malformed refs fail closed with TamperError: a manifest that cannot
+    say exactly where its base lives cannot be trusted to load.
+    """
+    src = ref.get("source_file")
+    off = ref.get("file_offset")
+    length = ref.get("byte_length")
+    if not isinstance(src, str) or not src \
+            or not isinstance(off, int) or isinstance(off, bool) or off < 0 \
+            or not isinstance(length, int) or isinstance(length, bool) \
+            or length < 0:
+        raise TamperError(f"malformed tensor reference for {label}: {ref!r}")
+    blob = ref.get("blob")
+    if not isinstance(blob, str) or not blob.startswith("sha256:") \
+            or not isinstance(ref.get("shape"), list) \
+            or not _ref_dtype_code(ref):
+        raise TamperError(f"malformed tensor reference for {label}: {ref!r}")
+    return src, off, length
+
+
+def _hash_ref_canonical(ref: dict, label: str) -> str:
+    """Streaming canonical-blob hash of one referenced tensor.
+
+    Feeds the canonical prefix, then the tensor's byte range out of the
+    source file in bounded chunks — never the whole tensor, never the
+    whole file. Raises TamperError on a missing/truncated source.
+    """
+    src, off, length = _ref_geometry(ref, label)
+    if not os.path.isfile(src):
+        raise TamperError(
+            f"missing referenced source file for {label}: {src}")
+    if off + length > os.path.getsize(src):
+        raise TamperError(
+            f"referenced tensor {label} range [{off}, {off + length}) "
+            f"lies outside source file {src}")
+    h = hashlib.sha256()
+    h.update(canonical_tensor_prefix(
+        _ref_dtype_code(ref), ref["shape"], length))
+    remaining = length
+    with open(src, "rb") as f:
+        f.seek(off)
+        while remaining > 0:
+            chunk = f.read(min(STREAM_CHUNK, remaining))
+            if not chunk:
+                raise TamperError(
+                    f"truncated referenced source file {src} while "
+                    f"hashing {label}")
+            h.update(chunk)
+            remaining -= len(chunk)
+    return h.hexdigest()
+
+
+def _verify_reference_base(base: dict) -> None:
+    """Fail-closed verification of an SI-8 by-reference base.
+
+    Verification level (stated honestly — this is ALL of it, and it is
+    the same fail-closed strength copy mode gets from blob hashes):
+    for every source file named by ``base.tensor_refs`` —
+    existence, exact size vs the recorded ``base.parts`` entry, and a
+    full streaming SHA-256 of the whole file vs that entry; PLUS, for
+    every tensor, a streaming recomputation of its canonical-blob hash
+    from the recorded byte range vs the recorded ``blob`` ref. Any
+    tampered, truncated, moved, or missing source therefore raises
+    TamperError on load. Cost: two streaming passes over the source
+    checkpoint per load — O(checkpoint size), bounded memory, exactly
+    like copy mode's per-load blob hashing. There are no spot checks
+    and no mtime shortcuts.
+    """
+    refs = base.get("tensor_refs")
+    if not isinstance(refs, dict) or not refs:
+        raise TamperError(
+            "by-reference base (seed_format=reference-v1) carries no "
+            "tensor_refs; refusing to load")
+    blob_values = set()
+    for tname, ref in refs.items():
+        if not isinstance(ref, dict):
+            raise TamperError(f"malformed tensor_refs entry for {tname!r}")
+        _ref_geometry(ref, f"base tensor {tname}")
+        blob_values.add(ref["blob"])
+    if base.get("blob") not in blob_values:
+        raise TamperError(
+            "by-reference base: base.blob is not one of the tensor_refs "
+            "blob refs; manifest is inconsistent")
+
+    parts_by_file = {}
+    for part in base.get("parts") or []:
+        if isinstance(part, dict) and part.get("file"):
+            parts_by_file[part["file"]] = part
+
+    by_source: dict[str, list] = {}
+    for tname, ref in refs.items():
+        by_source.setdefault(ref["source_file"], []).append((tname, ref))
+    for src, items in sorted(by_source.items()):
+        if not os.path.isfile(src):
+            raise TamperError(
+                f"missing referenced source file for base: {src} "
+                "(a by-reference base depends on its source checkpoint "
+                "remaining at the recorded path)")
+        part = parts_by_file.get(os.path.basename(src))
+        if part is None:
+            raise TamperError(
+                f"by-reference base: no parts provenance entry for "
+                f"source file {src}")
+        size = os.path.getsize(src)
+        if part.get("bytes") != size:
+            raise TamperError(
+                f"referenced source file size mismatch for {src}: "
+                f"manifest records {part.get('bytes')}, file is {size}")
+        expect = str(part.get("sha256", ""))
+        if expect != "sha256:" + sha256_file(src):
+            raise TamperError(
+                f"referenced source file hash mismatch for {src}: "
+                "content does not match manifest")
+        for tname, ref in items:
+            actual = _hash_ref_canonical(ref, f"base tensor {tname}")
+            if "sha256:" + actual != ref["blob"]:
+                raise TamperError(
+                    f"referenced tensor hash mismatch for {tname}: "
+                    "content does not match manifest")
+
+
+def read_tensor_ref(ref: dict, tensor_name: str):
+    """Read one by-reference base tensor as a numpy array, verified.
+
+    Reads exactly the tensor's recorded byte range (one tensor in RAM —
+    the same granularity copy mode reads), rebuilds its canonical blob
+    in memory, and checks the canonical SHA-256 against the recorded
+    ``blob`` ref BEFORE decoding: a tampered source byte raises
+    TamperError here even when the caller supplied a manifest without
+    going through load_bundle. Dtypes decode as stored, with one exact
+    widening: bfloat16 has no numpy dtype in this environment (copy
+    mode's safetensors-numpy path raises on bf16), so bf16 raw bits are
+    widened losslessly to float32 (bf16 -> f32 is exact by
+    construction). float8 dtypes have no numpy representation either
+    and raise ValueError rather than decoding approximately.
+    """
+    import numpy as np
+
+    src, off, length = _ref_geometry(ref, f"base tensor {tensor_name}")
+    if not os.path.isfile(src):
+        raise TamperError(
+            f"missing referenced source file for base tensor "
+            f"{tensor_name}: {src}")
+    if off + length > os.path.getsize(src):
+        raise TamperError(
+            f"referenced tensor {tensor_name} range lies outside "
+            f"source file {src}")
+    with open(src, "rb") as f:
+        f.seek(off)
+        raw = f.read(length)
+    if len(raw) != length:
+        raise TamperError(
+            f"truncated referenced source file {src} while reading "
+            f"{tensor_name}")
+    canonical = canonical_tensor_prefix(
+        _ref_dtype_code(ref), ref["shape"], length) + raw
+    if "sha256:" + sha256_hex(canonical) != ref["blob"]:
+        raise TamperError(
+            f"referenced tensor hash mismatch for {tensor_name}: "
+            "content does not match manifest")
+    dtype = str(ref.get("dtype", ""))
+    shape = [int(x) for x in ref["shape"]]
+    if dtype == "bfloat16":
+        bits = np.frombuffer(raw, dtype=np.uint16)
+        arr = (bits.astype(np.uint32) << 16).view(np.float32)
+        return arr.reshape(shape).copy()
+    np_dtype = {
+        "float64": np.float64, "float32": np.float32,
+        "float16": np.float16, "int64": np.int64, "int32": np.int32,
+        "int16": np.int16, "int8": np.int8, "uint64": np.uint64,
+        "uint32": np.uint32, "uint16": np.uint16, "uint8": np.uint8,
+        "bool": np.bool_,
+    }.get(dtype)
+    if np_dtype is None:
+        raise ValueError(
+            f"tensor {tensor_name!r} has dtype {dtype!r}, which has no "
+            "numpy representation in this runtime; refusing to decode "
+            "it approximately")
+    return np.frombuffer(raw, dtype=np_dtype).reshape(shape).copy()
 
 
 def manifest_id(manifest: dict) -> str:
@@ -292,18 +543,26 @@ def load_bundle(path: str) -> dict:
     # per-tensor ``base.tensor_blobs`` refs.
     verified: set = set()
     base = manifest["base"]
-    _verify_blob(bundle_dir, base["blob"], "base", _cache=verified)
-    for part in base.get("parts") or []:
-        if isinstance(part, dict) and part.get("blob"):
-            _verify_blob(bundle_dir, part["blob"],
-                         f"base part {part.get('file', '?')}", _cache=verified)
-    tensor_blobs = base.get("tensor_blobs")
-    if isinstance(tensor_blobs, dict):
-        for tname, tref in sorted(tensor_blobs.items()):
-            if not isinstance(tref, dict) or not tref.get("blob"):
-                raise TamperError(f"malformed tensor_blobs entry for {tname!r}")
-            _verify_blob(bundle_dir, tref["blob"], f"base tensor {tname}",
-                         _cache=verified)
+    if base.get("seed_format") == REF_SEED_FORMAT:
+        # SI-8 by-reference base: the tensor bytes live in the source
+        # checkpoint, NOT in this bundle's store — verifying store
+        # blobs for them would be a false claim, and skipping
+        # verification would be worse. Verify the references instead
+        # (see _verify_reference_base for the exact level).
+        _verify_reference_base(base)
+    else:
+        _verify_blob(bundle_dir, base["blob"], "base", _cache=verified)
+        for part in base.get("parts") or []:
+            if isinstance(part, dict) and part.get("blob"):
+                _verify_blob(bundle_dir, part["blob"],
+                             f"base part {part.get('file', '?')}", _cache=verified)
+        tensor_blobs = base.get("tensor_blobs")
+        if isinstance(tensor_blobs, dict):
+            for tname, tref in sorted(tensor_blobs.items()):
+                if not isinstance(tref, dict) or not tref.get("blob"):
+                    raise TamperError(f"malformed tensor_blobs entry for {tname!r}")
+                _verify_blob(bundle_dir, tref["blob"], f"base tensor {tname}",
+                             _cache=verified)
     for d in manifest["deltas"]:
         _verify_blob(bundle_dir, d["blob"], d["id"], _cache=verified)
 
@@ -354,8 +613,7 @@ def _verify_blob(bundle_dir: str, blob_ref: str, label: str,
     blob_path = os.path.join(bundle_dir, "blobs", "sha256", hexpart + ".safetensors")
     if not os.path.isfile(blob_path):
         raise TamperError(f"missing blob for {label}: {blob_path}")
-    with open(blob_path, "rb") as f:
-        actual = sha256_hex(f.read())
+    actual = sha256_file(blob_path)
     if actual != hexpart:
         raise TamperError(f"blob hash mismatch for {label}: content does not match manifest")
     if _cache is not None:
@@ -393,12 +651,17 @@ def read_tensor_blob(bundle_dir: str, blob_ref: str, tensor_name: str):
 def load_base_tensor(bundle_dir: str, manifest: dict, tensor_name: str):
     """Load one base tensor by name across every base layout.
 
-    SI-7 per-tensor bases resolve via ``base.tensor_blobs``; pre-SI-7
-    seeded bases are searched across their whole-file ``parts``; demo
-    and single-blob bases read ``base.blob``. Raises KeyError when the
+    SI-7 per-tensor bases resolve via ``base.tensor_blobs``; SI-8
+    by-reference bases resolve via ``base.tensor_refs`` (byte ranges in
+    the source checkpoint, hash-verified on read); pre-SI-7 seeded
+    bases are searched across their whole-file ``parts``; demo and
+    single-blob bases read ``base.blob``. Raises KeyError when the
     base carries no such tensor (fail honestly, never fabricate).
     """
     base = manifest["base"]
+    tensor_refs = base.get("tensor_refs")
+    if isinstance(tensor_refs, dict) and tensor_name in tensor_refs:
+        return read_tensor_ref(tensor_refs[tensor_name], tensor_name)
     tensor_blobs = base.get("tensor_blobs")
     if isinstance(tensor_blobs, dict) and tensor_name in tensor_blobs:
         return read_tensor_blob(bundle_dir, tensor_blobs[tensor_name]["blob"],
