@@ -65,7 +65,8 @@ Small rows pointing at big blobs.
 | `bytes` | int | blob size |
 | `rank` / `alpha` | int | LoRA hyperparameters |
 | `target_modules` | string[] | e.g. `["q_proj","v_proj"]` |
-| `norm` | float | Frobenius norm at materialization |
+| `targets` | object[] | transformer deltas only (`kind: "transformer-delta-v1"`, SI-9a): one entry per named base tensor — `{name, base_blob, base_shape, base_dtype, kind (lora\|additive), rank/alpha (lora only), factor_keys, target_norm}`. `base_blob` binds the delta to the base tensor's content hash (mode-independent, RFC §2.4). Absent on demo deltas. |
+| `norm` | float | Frobenius norm at materialization; for transformer deltas, the root-sum-square over per-target norms (SI-9a) |
 | `self_edit_id` | string | FK → `self_edits.edit_id` — the proposal that caused it |
 | `source_seqs` | int[] | journal seqs this delta learned from |
 | `status` | string | `active` \| `superseded` \| `rolled_back` |

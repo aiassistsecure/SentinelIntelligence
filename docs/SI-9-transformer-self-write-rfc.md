@@ -8,6 +8,12 @@
 > **Scope discipline:** CPU only. No training loop, no GPU, no full
 > transformer inference. Terminology: this is machine learning
 > infrastructure, not "custom LLM software."
+>
+> **As-built note (SI-9a, PR pending at time of writing):** §6.1 is
+> implemented — the §2 blob layout and §3 manifest record exist as
+> data definitions plus pure validation in `si/transformer_delta.py`
+> (a new module; see the notes in §2.3, §3, and §6.1). No gate, loop,
+> or serve integration exists yet; those remain SI-9b / SI-9c.
 
 ---
 
@@ -194,6 +200,14 @@ little and complicate exact numeric tests. This is a deliberate,
 stated choice — revisiting it is an SI-9a decision (§6.1), not an
 accident.
 
+> *As-built in SI-9a:* float32 factor storage is **confirmed** —
+> `si/transformer_delta.py` requires every factor's safetensors dtype
+> to be `F32` and rejects anything else. The metadata duplication is
+> also pinned: metadata `targets` is a JSON array carrying, per
+> target, exactly `name`, `kind`, `factor_keys`, and (`lora` only)
+> `rank`/`alpha`; validation compares it against the manifest record
+> on exactly those fields, and any disagreement is invalid (tamper).
+
 **Dedup.** The blob is written through the existing skip-if-exists
 content-addressed path (the same pattern as `_write_blob` in
 `si/loop.py`): if the SHA-256 already exists in `blobs/sha256/`, it is
@@ -299,6 +313,11 @@ Notes and rules:
   kind; record-level `norm` remains the aggregate the existing gate
   escalation logic reads (defined in §4.3 as the root-sum-square over
   targets — a definition SI-9a must pin down, not leave implied).
+  *As-built in SI-9a:* pinned — record-level `norm` is exactly
+  `sqrt(sum(target_norm_i ** 2))`, where a `lora` target's norm is
+  `||(alpha/rank) * B @ A||_F` and an `additive` target's norm is
+  `||d||_2`, both recomputed from the blob's factors (in float64)
+  during validation; a record that disagrees is invalid.
 - `target_modules` is **not** reused for transformer deltas. It is a
   demo-era allowlist string; overloading it would make the gate's
   existing safety check pass or fail for the wrong reasons.
@@ -578,6 +597,18 @@ without the next one existing. No phase trains anything.
   no Glimmer reads required.
 - Docs: this RFC moves from "proposal" to "as-built" notes for the
   format sections; journal spec gains the `targets` row (§3).
+
+*As-built:* done in `si/transformer_delta.py` — construct / serialise
+/ parse / validate for the record+blob pair against a base manifest,
+with the module-location decision (new module, not a `bundle.py`
+extension: `bundle.py`'s contract is storage/verification, and the
+format layer must be importable by the SI-9b gate and SI-9c apply
+path without bundle internals), the float32 confirmation (§2.3), and
+the root-sum-square aggregate norm (§3) all recorded in that
+module's docstring. Tests are synthetic-fixture only
+(`tests/test_transformer_delta.py`): round-trip plus a fail-closed
+case for every malformed class in this section. No gate, loop, or
+serve code was touched.
 
 ### 6.2 SI-9b — Gate checks for transformer deltas
 
