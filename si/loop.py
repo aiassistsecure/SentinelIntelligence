@@ -310,6 +310,66 @@ def _verify_head(bundle_dir: str, manifest: dict, mind, ctx: LoopContext):
     return ok, report
 
 
+def _verify_transformer_apply(bundle_dir: str, manifest: dict,
+                              delta_record: dict):
+    """Post-write VERIFY smoke step for a transformer delta (SI-9c).
+
+    RFC §4.4 / §5.5: post-materialisation VERIFY for a transformer
+    delta can only re-run the §4.2 structural suite (the gate's job,
+    already done before materialisation) plus an APPLY SMOKE TEST —
+    apply the just-admitted delta to each of its own targets via
+    ``si.apply.load_applied_tensor`` and check the result is
+    correctly shaped and finite. There are no probes to run: this
+    runtime has no transformer forward pass, and this report must
+    never be read as an identity or capability result.
+
+    Returns (ok, report) in ``_verify_head``'s shape, with the report
+    labeled ``transformer-apply-smoke`` so a journal reader cannot
+    mistake it for a probe report.
+
+    Wiring, stated honestly: ``run_cycle`` does NOT call this yet,
+    because under SI-9b the gate never ADMITs a transformer delta (a
+    valid one ESCALATEs to the operator and the loop halts before
+    MATERIALIZE), so no transformer delta is ever materialised by
+    the loop today and there is no post-write moment to verify.
+    Calling it from the demo VERIFY path would be wrong — that path
+    serves demo deltas only, and it is unchanged. This function is
+    the VERIFY step, implemented and tested now so that an
+    operator-admission materialise path, when one exists, runs
+    exactly this check; until then its callers are tests.
+    """
+    import numpy as np
+
+    from si.apply import load_applied_tensor
+
+    targets_report = []
+    ok = True
+    for target in delta_record.get("targets") or []:
+        name = target.get("name") if isinstance(target, dict) else None
+        entry = {"name": name, "passed": False}
+        try:
+            applied = load_applied_tensor(bundle_dir, manifest, name)
+            shape_ok = list(applied.shape) == list(target["base_shape"])
+            finite_ok = bool(np.all(np.isfinite(applied)))
+            entry.update({"shape": list(applied.shape),
+                          "shape_ok": shape_ok, "finite": finite_ok,
+                          "passed": shape_ok and finite_ok})
+        except Exception as err:  # smoke step: a failed apply is a failed verify
+            entry["error"] = f"{type(err).__name__}: {err}"
+        ok = ok and entry["passed"]
+        targets_report.append(entry)
+    if not targets_report:
+        ok = False
+    report = {"kind": "transformer-apply-smoke",
+              "delta_id": delta_record.get("id"),
+              "targets": targets_report, "passed": ok,
+              "note": "apply smoke test only (shape + finiteness via "
+                      "si.apply.load_applied_tensor); NOT identity or "
+                      "capability probes — no transformer probe "
+                      "harness exists (RFC SI-9 §4.3/§4.4)"}
+    return ok, report
+
+
 # -- rollback ----------------------------------------------------------------
 def rollback(bundle_path: str, to: str, reason: str | None = None,
              operator: str | None = None, mind=None,
