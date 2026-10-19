@@ -64,20 +64,57 @@ Per-tensor blob format (the dedup design):
   bundles) still load, verify, and export: ``load_bundle`` verifies
   whichever refs a base actually carries, and ``si.export`` reads
   ``tensor_blobs`` first, then legacy ``parts``, then ``blob``.
+
+SI-8 adds a BY-REFERENCE seed mode (``seed_bundle(...,
+by_reference=True)`` / ``si seed --by-reference``) for checkpoints too
+large to copy into the store (the 55.46 GiB Muse Glimmer 30B seed:
+copy mode would need ~59.5 GB of store on a volume without it, and
+its planning pass held every tensor's blob bytes in RAM). In this
+mode the bundle stores ZERO new tensor bytes. The manifest records
+``seed_format="reference-v1"`` and ``base.tensor_refs``: per tensor,
+the source file's absolute path, the tensor's absolute byte offset
+and length within that file, dtype (name + safetensors code), shape,
+and a content hash. The hash reuses COPY MODE's identity exactly: it
+is the SHA-256 of the tensor's canonical blob bytes — but computed
+STREAMING (canonical prefix, then the raw byte range in bounded
+chunks), so neither a whole shard nor all tensors are ever held in
+RAM. Same checkpoint, same ``blob`` refs in either mode; only the
+storage differs, and the manifest says so honestly (``bytes`` /
+``stored_bytes`` are 0; ``base.blob`` is a virtual ref in this mode —
+no such file exists in the store, and nothing claims otherwise).
+Verification fails closed at the same strength as copy mode:
+``load_bundle`` re-checks every referenced source file (existence,
+exact size, full streaming SHA-256) and every tensor's streaming
+canonical hash on every load; reads through ``load_base_tensor`` /
+``si export`` re-verify the tensor they read. The dependency is the
+design's price, stated plainly: a by-reference base DEPENDS on the
+source checkpoint remaining at its recorded absolute path — moving
+or deleting it breaks the base (``load_bundle`` raises TamperError),
+by design of never duplicating bytes. Copy mode remains the choice
+for portable bundles. Copy mode also gains two hardenings here: its
+source-file hashes are computed streaming, and a fail-closed disk
+preflight refuses the import BEFORE writing anything when the unique
+new blob bytes clearly cannot fit in the free space at the bundle.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import struct
 
 # Underscore helpers below live in si.bundle -- the same package as this
 # module. Reusing them (rather than duplicating the manifest/journal
 # anchoring logic) keeps the checkpoint invariant in one place.
 from si.bundle import (
+    REF_SEED_FORMAT,
+    STREAM_CHUNK,
     _anchor_checkpoint,
     _write_manifest,
+    canonical_tensor_prefix,
     load_bundle,
+    sha256_file,
     sha256_hex,
     utc_now,
 )
@@ -87,6 +124,11 @@ TENSOR_BLOB_KEY = "tensor"
 
 #: Marker recorded in ``base.seed_format`` for per-tensor seeded bases.
 SEED_FORMAT = "per-tensor-v1"
+
+#: Marker recorded in ``base.seed_format`` for by-reference seeded
+#: bases (SI-8). The constant itself lives in si.bundle (see
+#: REF_SEED_FORMAT there) because load_bundle branches on it.
+REFERENCE_SEED_FORMAT = REF_SEED_FORMAT
 
 #: safetensors dtype code -> manifest dtype name (numpy-style, matching
 #: what pre-SI-7 seeds recorded via ``str(np.dtype)``).
@@ -187,12 +229,44 @@ def _canonical_tensor_blob(dtype_code: str, shape: list, raw: bytes) -> bytes:
     Identical tensors therefore produce byte-identical blobs and share
     one content address, whatever their original names were.
     """
-    header = json.dumps(
-        {TENSOR_BLOB_KEY: {"dtype": dtype_code, "shape": list(shape),
-                           "data_offsets": [0, len(raw)]}},
-        separators=(",", ":")).encode("utf-8")
-    header += b" " * (-(8 + len(header)) % 8)
-    return struct.pack("<Q", len(header)) + header + raw
+    # Built through si.bundle.canonical_tensor_prefix so the in-RAM
+    # blob and the streaming by-reference hash share ONE construction.
+    return canonical_tensor_prefix(dtype_code, list(shape), len(raw)) + raw
+
+
+def _hash_canonical_tensor_streaming(path: str, data_start: int,
+                                     start: int, end: int,
+                                     dtype_code: str,
+                                     shape: list) -> tuple[str, int]:
+    """(canonical blob sha256 hex, canonical blob byte length) for one
+    tensor, computed by streaming its raw byte range in bounded chunks.
+
+    Identity is EXACTLY copy mode's: the hash covers the canonical
+    prefix + raw bytes, i.e. the very bytes copy mode would store.
+    Memory stays bounded no matter how large the tensor (or the shard
+    containing it) is.
+    """
+    raw_len = end - start
+    h = hashlib.sha256()
+    prefix = canonical_tensor_prefix(dtype_code, list(shape), raw_len)
+    h.update(prefix)
+    remaining = raw_len
+    with open(path, "rb") as f:
+        f.seek(data_start + start)
+        while remaining > 0:
+            chunk = f.read(min(STREAM_CHUNK, remaining))
+            if not chunk:
+                raise ValueError(
+                    f"invalid safetensors file {path}: truncated tensor data")
+            h.update(chunk)
+            remaining -= len(chunk)
+    return h.hexdigest(), len(prefix) + raw_len
+
+
+def _disk_free(path: str) -> int:
+    """Free bytes at ``path``'s filesystem. A named seam so the copy-mode
+    preflight (and its tests) have exactly one place to read/override."""
+    return shutil.disk_usage(path).free
 
 
 def _read_tensor_raw(path: str, data_start: int, start: int, end: int) -> bytes:
@@ -352,22 +426,34 @@ def _capture_checkpoint_config(src_abs: str, files: list[str]) -> dict | None:
     return {"config": cfg, "sha256": sha256_hex(raw)}
 
 
-def _is_same_checkpoint(base: dict, tensor_blobs: dict,
-                        ckpt_cfg: dict | None) -> bool:
+def _is_same_checkpoint_identity(base: dict, identity: dict,
+                                 ckpt_cfg: dict | None) -> bool:
     """True when the bundle's base already IS exactly this checkpoint.
 
     Identity is content identity: the same tensor names, each with the
-    same shape/dtype and the same content-addressed blob ref, plus the
-    same config.json sha256 (or both sides having none). Only
-    per-tensor-format bases can match — a legacy whole-file base is
-    re-seeded into the new format rather than compared approximately.
+    same shape/dtype and the same canonical content-addressed blob ref,
+    plus the same config.json sha256 (or both sides having none).
+    Mode-independent since SI-8 (``identity`` carries canonical refs,
+    identical in copy and by-reference mode): an existing base matches
+    via ``tensor_blobs`` (copy) or ``tensor_refs`` (reference), which
+    is what makes a mixed-mode re-seed of the SAME checkpoint an
+    honest idempotent no-op rather than a silent storage-mode
+    conversion — converting modes is not supported implicitly;
+    re-seeding identical content writes nothing whichever mode is
+    requested, and a mode change needs a fresh bundle. A legacy
+    whole-file base never matches (no per-tensor refs to compare
+    exactly) — it is re-seeded into a current format instead.
     """
-    if base.get("seed_format") != SEED_FORMAT:
+    fmt = base.get("seed_format")
+    if fmt == SEED_FORMAT:
+        existing = base.get("tensor_blobs")
+    elif fmt == REFERENCE_SEED_FORMAT:
+        existing = base.get("tensor_refs")
+    else:
         return False
-    existing = base.get("tensor_blobs")
-    if not isinstance(existing, dict) or set(existing) != set(tensor_blobs):
+    if not isinstance(existing, dict) or set(existing) != set(identity):
         return False
-    for name, ref in tensor_blobs.items():
+    for name, ref in identity.items():
         cur = existing[name]
         if cur.get("blob") != ref["blob"] or cur.get("bytes") != ref["bytes"] \
                 or cur.get("shape") != ref["shape"] \
@@ -378,27 +464,45 @@ def _is_same_checkpoint(base: dict, tensor_blobs: dict,
     return existing_cfg_sha == planned_cfg_sha
 
 
-def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> dict:
+def seed_bundle(bundle_path: str, source: str, importer: str = "operator",
+                by_reference: bool = False) -> dict:
     """Import a REAL safetensors checkpoint as the bundle's frozen base.
 
     ``source`` is one .safetensors file, a directory of them (all used,
     sorted by name), or a sharded checkpoint directory carrying
-    ``model.safetensors.index.json``. Every tensor is imported as its
-    own content-addressed blob (see the module docstring for the format
-    and the never-duplicate-bytes rule); ``manifest["base"]`` records
-    the per-tensor refs, ``seeded_from`` provenance is journaled, and
-    the return is ``{"base", "parts", "tensors", "bytes",
-    "deduplicated_bytes", "already_seeded", "head"}`` where ``parts``
-    is the number of source files, ``bytes`` is the total bytes of the
-    UNIQUE blobs representing the base in the store, and
-    ``deduplicated_bytes`` counts bytes not written because their blob
-    already existed.
+    ``model.safetensors.index.json``. In copy mode (the default) every
+    tensor is imported as its own content-addressed blob (see the
+    module docstring for the format and the never-duplicate-bytes
+    rule); ``manifest["base"]`` records the per-tensor refs,
+    ``seeded_from`` provenance is journaled, and the return is
+    ``{"base", "parts", "tensors", "bytes", "deduplicated_bytes",
+    "already_seeded", "head", ...}`` where ``parts`` is the number of
+    source files, ``bytes`` is the total bytes of the UNIQUE blobs
+    representing the base in the store, and ``deduplicated_bytes``
+    counts bytes not written because their blob already existed.
+
+    With ``by_reference=True`` (SI-8) NO tensor bytes are stored: the
+    manifest records per-tensor external references
+    (``base.tensor_refs``, ``seed_format="reference-v1"``) with the
+    same canonical content hashes copy mode would have stored, all
+    computed streaming. The return then reports ``bytes`` /
+    ``stored_bytes`` as 0 (the real number), ``deduplicated_bytes`` as
+    the full logical size (every byte not copied), and
+    ``seed_format="reference-v1"``. The base depends on the source
+    checkpoint remaining at its recorded path — see the module
+    docstring.
+
+    Checkpoint identity is mode-independent (canonical hashes), so
+    re-seeding the exact checkpoint already serving as the base — in
+    EITHER mode, requested in either mode — is an idempotent no-op
+    that writes nothing and reports ``already_seeded=True``; it never
+    silently converts the base's storage mode.
 
     Fail-closed: ``load_bundle`` runs first (any tamper raises);
     bundles with existing history are refused with ``ValueError`` —
-    except the idempotent re-seed of the exact checkpoint already
-    serving as the base, which writes nothing and reports
-    ``already_seeded=True``.
+    except the idempotent re-seed above. Copy mode additionally
+    refuses up front when the unique new blob bytes cannot fit in the
+    free space at the bundle location.
     """
     from si.journal import open_journal  # local import: no cycle
 
@@ -434,34 +538,76 @@ def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> di
 
     ckpt_cfg = _capture_checkpoint_config(src_abs, files)
 
-    # Plan every tensor's canonical blob from its raw bytes. Hashing is
-    # done here; the store writes happen only after the refusals below.
-    tensor_blobs: dict = {}
-    planned: dict[str, bytes] = {}   # tensor name -> canonical blob bytes
+    # Per-file provenance is computed ONCE, streaming (never a whole
+    # source file in RAM — a shard can be ~50 GB), and shared by both
+    # modes: copy mode records it as before; by-reference mode's
+    # load-time verification checks source files against exactly these
+    # sizes + hashes.
+    parts = []
+    for path in files:
+        basename = os.path.basename(path)
+        parts.append({
+            "file": basename,
+            "bytes": os.path.getsize(path),
+            "sha256": "sha256:" + sha256_file(path),
+            "tensors": per_file[basename],
+        })
+
+    # Plan the checkpoint's content identity. In by-reference mode the
+    # plan is pure metadata + streaming hashes (bounded memory at any
+    # checkpoint size). In copy mode the canonical blob bytes are also
+    # materialized, as before SI-8 (copy mode's checkpoints are the
+    # ones that fit the store; SI-8 does not change its storage path).
+    tensor_blobs: dict = {}   # copy mode: name -> blob ref record
+    tensor_refs: dict = {}    # reference mode: name -> external ref
+    identity: dict = {}       # both modes: name -> {blob,bytes,shape,dtype}
+    planned: dict[str, bytes] = {}   # copy mode only: name -> blob bytes
     for path in files:
         header, data_start = headers[path]
         for name in sorted(per_file[os.path.basename(path)]):
             info = header[name]
             start, end = info["data_offsets"]
-            raw = _read_tensor_raw(path, data_start, start, end)
-            blob_bytes = _canonical_tensor_blob(
-                str(info["dtype"]), [int(x) for x in info["shape"]], raw)
-            planned[name] = blob_bytes
-            tensor_blobs[name] = {
-                "blob": "sha256:" + sha256_hex(blob_bytes),
-                "bytes": len(blob_bytes),
-                "shape": [int(x) for x in info["shape"]],
-                "dtype": _dtype_name(str(info["dtype"])),
-            }
+            shape = [int(x) for x in info["shape"]]
+            dtype = _dtype_name(str(info["dtype"]))
+            if by_reference:
+                hexpart, canonical_len = _hash_canonical_tensor_streaming(
+                    path, data_start, start, end, str(info["dtype"]), shape)
+                identity[name] = {
+                    "blob": "sha256:" + hexpart, "bytes": canonical_len,
+                    "shape": shape, "dtype": dtype,
+                }
+                tensor_refs[name] = {
+                    **identity[name],
+                    "dtype_code": str(info["dtype"]),
+                    "source_file": path,
+                    "file_offset": data_start + start,
+                    "byte_length": end - start,
+                }
+            else:
+                raw = _read_tensor_raw(path, data_start, start, end)
+                blob_bytes = _canonical_tensor_blob(
+                    str(info["dtype"]), shape, raw)
+                planned[name] = blob_bytes
+                tensor_blobs[name] = {
+                    "blob": "sha256:" + sha256_hex(blob_bytes),
+                    "bytes": len(blob_bytes),
+                    "shape": shape,
+                    "dtype": dtype,
+                }
+                identity[name] = tensor_blobs[name]
+    total_logical = sum(ref["bytes"] for ref in identity.values())
 
-    # 3. Idempotent re-seed: the base already IS this checkpoint.
-    #    Nothing to write, nothing to journal — report it honestly.
-    if _is_same_checkpoint(manifest["base"], tensor_blobs, ckpt_cfg):
-        total_logical = sum(len(b) for b in planned.values())
+    # 3. Idempotent re-seed: the base already IS this checkpoint, in
+    #    either storage mode (identity is mode-independent). Nothing
+    #    to write, nothing to journal — report it honestly, and never
+    #    silently convert the base's storage mode.
+    if _is_same_checkpoint_identity(manifest["base"], identity, ckpt_cfg):
         return {"base": manifest["base"], "parts": len(files),
-                "tensors": len(tensor_blobs),
+                "tensors": len(identity),
                 "bytes": manifest["base"].get("bytes", 0),
+                "stored_bytes": manifest["base"].get("bytes", 0),
                 "deduplicated_bytes": total_logical,
+                "seed_format": manifest["base"].get("seed_format"),
                 "already_seeded": True, "head": manifest["head"]}
 
     # 4. Refuse bundles that already have history: seeding would rewrite
@@ -473,59 +619,100 @@ def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> di
             f"head={manifest.get('head')!r})"
         )
 
-    # 5. Store the blobs, deduplicating globally within the store: a
-    #    blob that already exists (an identical tensor in this same
-    #    checkpoint, or one stored by an earlier seed) is never
-    #    rewritten or copied; its bytes count as deduplicated.
-    deduplicated_bytes = 0
-    stored_refs: set = set()
-    for name in sorted(planned):
-        blob_bytes = planned[name]
-        hexpart, existed = _store_blob(bundle_dir, blob_bytes)
-        assert "sha256:" + hexpart == tensor_blobs[name]["blob"]
-        if existed:
-            deduplicated_bytes += len(blob_bytes)
-        stored_refs.add(hexpart)
-    stored_bytes = 0
-    for hexpart in stored_refs:
-        stored_bytes += os.path.getsize(
-            os.path.join(bundle_dir, "blobs", "sha256",
-                         hexpart + ".safetensors"))
-    total_logical = sum(len(b) for b in planned.values())
-
-    # 6. Rewrite the base. "blob" keeps pointing at a single usable
-    #    blob (the "W" tensor's when present — the DemoMind/loop compat
-    #    path — else the first tensor in sorted order) and "parts"
-    #    keeps one provenance entry per source file, so legacy readers
-    #    keep working; "tensor_blobs" is the canonical per-tensor map.
-    parts = []
-    for path in files:
-        basename = os.path.basename(path)
-        with open(path, "rb") as f:
-            source_sha = sha256_hex(f.read())
-        parts.append({
-            "file": basename,
-            "bytes": os.path.getsize(path),
-            "sha256": "sha256:" + source_sha,
-            "tensors": per_file[basename],
-        })
-    compat_name = "W" if "W" in tensor_blobs else sorted(tensor_blobs)[0]
+    compat_name = "W" if "W" in identity else sorted(identity)[0]
     utc = utc_now()
-    manifest["base"] = {
-        "source": f"seed:{src_abs} (imported {utc})",
-        "format": "safetensors",
-        "seed_format": SEED_FORMAT,
-        "blob": tensor_blobs[compat_name]["blob"],
-        "parts": parts,
-        "tensor_blobs": tensor_blobs,
-        "tensors": merged_tensors,
-        "bytes": stored_bytes,
-        "imported_bytes": total_logical,
-        "deduplicated_bytes": deduplicated_bytes,
-        "tensor_count": len(tensor_blobs),
-        "importer": importer,
-        "imported_at": utc,
-    }
+
+    if by_reference:
+        # 5R. Store NOTHING: the manifest records references only.
+        #     stored_bytes is really 0; every logical byte counts as
+        #     not-copied (deduplicated) — the design rule's end state.
+        stored_bytes = 0
+        deduplicated_bytes = total_logical
+        manifest["base"] = {
+            "source": f"seed:{src_abs} (imported {utc})",
+            "format": "safetensors",
+            "seed_format": REFERENCE_SEED_FORMAT,
+            "storage": "by-reference",
+            "blob": identity[compat_name]["blob"],
+            "parts": parts,
+            "tensor_refs": tensor_refs,
+            "tensors": merged_tensors,
+            "bytes": 0,
+            "stored_bytes": 0,
+            "imported_bytes": total_logical,
+            "referenced_bytes": sum(
+                ref["byte_length"] for ref in tensor_refs.values()),
+            "deduplicated_bytes": deduplicated_bytes,
+            "tensor_count": len(tensor_refs),
+            "importer": importer,
+            "imported_at": utc,
+        }
+    else:
+        # 5C. Disk preflight (fail closed, BEFORE writing anything):
+        #     the unique blob bytes not already in the store must fit
+        #     in the free space at the bundle location.
+        unique_planned: dict[str, int] = {}
+        for name in sorted(planned):
+            unique_planned.setdefault(
+                tensor_blobs[name]["blob"], len(planned[name]))
+        required_bytes = 0
+        for blob_ref, size in unique_planned.items():
+            hexpart = blob_ref.split(":", 1)[1]
+            if not os.path.isfile(os.path.join(
+                    bundle_dir, "blobs", "sha256",
+                    hexpart + ".safetensors")):
+                required_bytes += size
+        free_bytes = _disk_free(bundle_dir)
+        if required_bytes > free_bytes:
+            raise ValueError(
+                f"insufficient disk space for copy-mode seed: the "
+                f"checkpoint needs {required_bytes} new blob bytes in "
+                f"the bundle store but only {free_bytes} bytes are "
+                f"free at {bundle_dir}; refusing before writing "
+                f"anything (use --by-reference to seed without "
+                f"copying tensor bytes)")
+
+        # 6C. Store the blobs, deduplicating globally within the
+        #     store: a blob that already exists (an identical tensor
+        #     in this same checkpoint, or one stored by an earlier
+        #     seed) is never rewritten or copied; its bytes count as
+        #     deduplicated.
+        deduplicated_bytes = 0
+        stored_refs: set = set()
+        for name in sorted(planned):
+            blob_bytes = planned[name]
+            hexpart, existed = _store_blob(bundle_dir, blob_bytes)
+            assert "sha256:" + hexpart == tensor_blobs[name]["blob"]
+            if existed:
+                deduplicated_bytes += len(blob_bytes)
+            stored_refs.add(hexpart)
+        stored_bytes = 0
+        for hexpart in stored_refs:
+            stored_bytes += os.path.getsize(
+                os.path.join(bundle_dir, "blobs", "sha256",
+                             hexpart + ".safetensors"))
+
+        # 7C. Rewrite the base. "blob" keeps pointing at a single
+        #     usable blob (the "W" tensor's when present — the
+        #     DemoMind/loop compat path — else the first tensor in
+        #     sorted order) and "parts" keeps one provenance entry per
+        #     source file, so legacy readers keep working;
+        #     "tensor_blobs" is the canonical per-tensor map.
+        manifest["base"] = {
+            "source": f"seed:{src_abs} (imported {utc})",
+            "format": "safetensors",
+            "seed_format": SEED_FORMAT,
+            "blob": tensor_blobs[compat_name]["blob"],
+            "parts": parts,
+            "tensor_blobs": tensor_blobs,
+            "tensors": merged_tensors,
+            "bytes": stored_bytes,
+            "imported_bytes": total_logical,
+            "deduplicated_bytes": deduplicated_bytes,
+            "tensor_count": len(tensor_blobs),
+            "importer": importer,
+            "imported_at": utc,
+        }
     if weight_map is not None:
         manifest["base"]["sharded"] = True
         manifest["base"]["weight_map"] = dict(weight_map)
@@ -536,19 +723,32 @@ def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> di
         )
         manifest["base"]["arch_source"] = "checkpoint-config"
 
-    # 7. Provenance + re-anchor: the checkpoint must be the journal tip
+    # 8. Provenance + re-anchor: the checkpoint must be the journal tip
     #    so the manifest anchor matches on the next load. The note
     #    carries the full accounting the project requires: tensor
-    #    count, total bytes, deduplicated bytes, source path, and the
-    #    config sha256 when the checkpoint shipped one.
+    #    count, total bytes, stored bytes, deduplicated/not-copied
+    #    bytes, source path, and the config sha256 when present.
     journal = open_journal(bundle_dir, manifest)
     try:
-        note = (
-            f"imported {len(parts)} tensor file(s), {len(tensor_blobs)} "
-            f"tensors, {total_logical} bytes via si seed "
-            f"(stored {stored_bytes} unique blob bytes, deduplicated "
-            f"{deduplicated_bytes} bytes); source={src_abs}"
-        )
+        if by_reference:
+            note = (
+                f"imported {len(parts)} tensor file(s), "
+                f"{len(tensor_refs)} tensors, {total_logical} bytes "
+                f"via si seed --by-reference (stored {stored_bytes} "
+                f"tensor bytes in the bundle store, deduplicated "
+                f"{deduplicated_bytes} bytes not copied; tensors are "
+                f"referenced in place and the base depends on the "
+                f"source remaining at its recorded path); "
+                f"source={src_abs}"
+            )
+        else:
+            note = (
+                f"imported {len(parts)} tensor file(s), "
+                f"{len(identity)} tensors, {total_logical} bytes via "
+                f"si seed (stored {stored_bytes} unique blob bytes, "
+                f"deduplicated {deduplicated_bytes} bytes); "
+                f"source={src_abs}"
+            )
         if ckpt_cfg is not None:
             note += f"; config_sha256=sha256:{ckpt_cfg['sha256']}"
         journal.record_provenance(
@@ -565,6 +765,8 @@ def seed_bundle(bundle_path: str, source: str, importer: str = "operator") -> di
         journal.close()
 
     return {"base": manifest["base"], "parts": len(parts),
-            "tensors": len(tensor_blobs), "bytes": stored_bytes,
+            "tensors": len(identity), "bytes": stored_bytes,
+            "stored_bytes": stored_bytes,
             "deduplicated_bytes": deduplicated_bytes,
+            "seed_format": manifest["base"]["seed_format"],
             "already_seeded": False, "head": "base"}

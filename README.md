@@ -59,6 +59,7 @@ python3 -m venv /tmp/prfactory-si0/venv
 
 si init ./sentinel-001.si --name sentinel-001   # journal: real NEDB (default)
 si seed ./sentinel-001.si ./my-checkpoint/   # real safetensors base (or skip: demo random seed)
+si seed ./sentinel-001.si ./huge-checkpoint/ --by-reference   # SI-8: store zero tensor bytes; reference the checkpoint in place
 si cycle ./sentinel-001.si --mind demo     # one self-write: trains a real adapter, gates it, journals it
 si run ./sentinel-001.si --cycles 5        # autonomous multi-cycle run (halts on REJECT/ESCALATE)
 si log ./sentinel-001.si
@@ -101,6 +102,35 @@ embeddings / a missing `lm_head` included). Pre-SI-7 bundles
 The seeded import is journaled with full provenance accounting:
 tensor count, total bytes, deduplicated bytes, source path, and the
 config sha256 when present.
+
+`si seed --by-reference` (SI-8) is for checkpoints too large to copy
+into the bundle store — the never-duplicate-bytes rule taken to its
+end state. It stores **zero tensor bytes**: the manifest records
+`seed_format: "reference-v1"` and, per tensor, an external reference
+(absolute source path, absolute byte offset + length inside that
+file, dtype, shape, and a content hash). The hash is the *same*
+canonical-blob SHA-256 a copy seed would store — checkpoint identity
+is mode-independent, so re-seeding the same checkpoint in either mode
+is an idempotent no-op and never silently converts storage modes —
+but it is computed **streaming** (bounded memory: no whole shard and
+no all-tensor plan is ever held in RAM), and copy mode's source
+hashes are streaming now too. Verification stays fail-closed at full
+strength: every `load_bundle` re-checks each referenced source file
+(existence, exact size, full streaming SHA-256) and each tensor's
+streaming canonical hash, and reads via `si export` /
+`load_base_tensor` re-verify the tensor they read — a tampered,
+truncated, or missing source raises rather than passing silently.
+(That makes loading a by-reference bundle cost two streaming passes
+over its checkpoint; there are no spot checks or mtime shortcuts.)
+**The dependency, plainly: a by-reference base depends on the source
+checkpoint remaining at its recorded absolute path. Moving or
+deleting the source breaks the base — that is the design price of
+never duplicating bytes.** Copy mode remains the choice for portable
+bundles, and it now refuses up front — before writing anything — when
+the new blob bytes clearly cannot fit in the free space at the
+bundle. One read-path note: bfloat16 tensors referenced in place are
+widened losslessly to float32 when read (numpy has no bf16 dtype in
+this runtime; their raw bytes and hashes are bf16-exact regardless).
 
 `si amend-constitution` (SI-6) is the **operator-only** way to change
 the gate constitution. Autonomous amendment is still impossible: the

@@ -1,7 +1,7 @@
 """Command-line interface for the SI-0 reference runtime.
 
     si init <path> [--name NAME]        create a new .si bundle
-    si seed <path> <safetensors>        import a real checkpoint as the frozen base
+    si seed <path> <safetensors> [--by-reference]  import a real checkpoint as the frozen base
     si cycle <path> [--mind demo|mock]  run one self-write cycle
     si run <path> --cycles N [--mind demo|mock]  autonomous multi-cycle run
     si rollback <path> --to <id|base> [--reason R] [--mind demo|mock]
@@ -46,7 +46,8 @@ def cmd_init(args) -> int:
 
 def cmd_seed(args) -> int:
     from si.seed import seed_bundle
-    res = seed_bundle(args.path, args.safetensors, importer="cli")
+    res = seed_bundle(args.path, args.safetensors, importer="cli",
+                      by_reference=getattr(args, "by_reference", False))
     base = res["base"]
     if res.get("already_seeded"):
         print("already seeded: this checkpoint is already the bundle's "
@@ -56,6 +57,13 @@ def cmd_seed(args) -> int:
     if "tensors" in res:
         print(f"tensors: {res['tensors']}  "
               f"deduplicated_bytes: {res['deduplicated_bytes']}")
+    if base.get("seed_format") == "reference-v1":
+        print(f"seed_format: reference-v1 (by-reference: "
+              f"{res.get('stored_bytes', 0)} tensor bytes stored in the "
+              f"bundle; tensors are referenced in place)")
+        print("warning: this base DEPENDS on the source checkpoint "
+              "remaining at its recorded path — moving or deleting it "
+              "breaks the base (by design: SI never duplicates bytes)")
     print(f"source: {base['source']}")
     if base.get("checkpoint_config") is not None:
         print(f"arch: config.json captured "
@@ -293,6 +301,12 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("path", help="bundle directory")
     ps.add_argument("safetensors", help=".safetensors file or directory of "
                                         ".safetensors files")
+    ps.add_argument("--by-reference", action="store_true",
+                    help="SI-8: store ZERO tensor bytes — record "
+                         "per-tensor references into the source "
+                         "checkpoint instead of copying blobs. The "
+                         "base then depends on the source remaining "
+                         "at its recorded path (see README)")
     ps.set_defaults(func=cmd_seed)
 
     prun = sub.add_parser("run", help="autonomous serial multi-cycle "
