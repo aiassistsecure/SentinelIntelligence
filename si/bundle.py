@@ -32,6 +32,21 @@ DEFAULT_POLICY = {
     "rank_cap": 8,
     "allowed_modules": ["demo_linear"],
     "max_stack_depth": 8,
+    # SI-9b transformer-delta policy (RFC SI-9 §4.5). Fail-closed:
+    # the allowlist is EMPTY — a transformer bundle's policy must opt
+    # targets in explicitly; additive (1-D) targets are off; one
+    # target per delta. delta_byte_cap is 4 MiB: a rank-8 LoRA on the
+    # largest ordinary Glimmer matrix shape ([19968, 6656]) needs
+    # ~0.81 MiB of float32 factors, while a rank-8 lm_head-scale delta
+    # ([202048, 6656]) would need ~6.4 MiB — over the cap, as intended
+    # (RFC §5.4 excludes lm_head-scale targets in the first slices).
+    # per_target_norm_cap defaults to norm_cap (the RFC bound is
+    # "<= norm_cap"); a bundle may tighten it per-bundle.
+    "allowed_target_patterns": [],
+    "max_targets_per_delta": 1,
+    "delta_byte_cap": 4 * 1024 * 1024,
+    "per_target_norm_cap": 1.0,
+    "allow_additive": False,
     "identity_tol": 0.25,
     "capability_eps": 0.25,
     "blocklist": [
