@@ -151,9 +151,21 @@ hash-verified per-tensor read. Nothing is materialised to disk, the
 base is never modified or copied, and a rolled-back delta simply
 stops being applied. Nothing in SI-9 trains or authors deltas,
 nothing runs a transformer, and `si serve` still returns an explicit
-`501` for transformer bundles; `si export`'s existing demo-era delta
-resolution is unchanged (reconciling it with exact named-tensor
-deltas is a separate, future decision — see RFC §5.5).
+`501` for transformer bundles. **`si export` is reconciled with
+transformer deltas as of SI-11** (`docs/SI-11-export-reconciliation.md`,
+RFC §5.5): its materialize path applies transformer deltas by exact
+tensor name only — never substring — re-validating each delta with
+SI-9a validation and using the same arithmetic as apply-at-load
+(`W + (alpha/rank)·B@A` for `lora`; `w + d` for `additive` only when
+policy `allow_additive` is true, otherwise export refuses with
+`ExportError`). A transformer delta that cannot be validated or
+applied fails closed with `ExportError` — no partial GGUF file and
+no export journal entry — and rolled-back deltas are not applied.
+Mixed demo+transformer stacks apply both kinds in chain order, each
+by its own rules; the demo-delta export path itself is unchanged.
+What export still does **not** do: it materializes the whole base as
+float32, so exporting a full Glimmer head (~119 GB as float32) is
+out of scope on this machine (RFC §5.4).
 
 `si amend-constitution` (SI-6) is the **operator-only** way to change
 the gate constitution. Autonomous amendment is still impossible: the
