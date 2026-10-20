@@ -23,14 +23,28 @@ gated by a different, honest mapping of the same five checks:
   *manifest* and the delta blob only — base tensor bytes are never
   read by the gate. Each sub-check is recorded on the safety check's
   ``subchecks`` list, which is journaled with the gate report.
-- identity continuity / capability floor: **cannot be evaluated** —
-  this runtime has no transformer forward pass and no probe harness
-  (RFC §4.3). Both checks are reported as not passed, with
-  ``measured=None`` and the plain reason, and a transformer delta
-  that passes constitution + safety + provenance is ESCALATED to the
-  operator — never ADMITTED, never given a synthetic pass. Under
-  SI-9b transformer deltas are operator-admitted, not autonomously
-  admitted; the autonomous loop already halts on ESCALATE.
+- identity continuity / capability floor: **cannot be evaluated**
+  for a general transformer base — this runtime has no forward pass
+  and no probe suite for one (RFC §4.3). Both checks are reported
+  as not passed, with ``measured=None`` and the plain reason, and a
+  transformer delta that passes constitution + safety + provenance
+  is ESCALATED to the operator — never ADMITTED, never given a
+  synthetic pass. Under SI-9b transformer deltas are
+  operator-admitted, not autonomously admitted; the autonomous
+  loop already halts on ESCALATE.
+- SI-16 exception (RFC SI-13 §6, SHADOW MODE ONLY): when the
+  bundle context is a probe context for a *miniature* bundle
+  (``si.probes.ProbeContext`` — §6.2 binding verified, §6.3
+  startup validation passed), checks 3/4 run for real through the
+  gate's own generic check logic plus §5.3's echo accuracy arm,
+  and their real measured results are journaled — **but the
+  verdict is held at ESCALATE regardless of probe outcome**
+  (§6.4 staging). A probe pass does not admit and a probe failure
+  does not reject in shadow mode; the record exists so SI-17's
+  conditional flip can be decided on evidence. Every other
+  context (demo contexts, admission contexts, miniature contexts
+  whose binding/startup validation fails) keeps the SI-9b
+  behaviour above, byte-for-byte.
 - provenance: the demo requirements plus §4.4's extension — the
   intent must declare its target list (``Intent.targets``, exact base
   tensor names) and it must match the candidate record's targets.
@@ -289,12 +303,14 @@ class Gate:
                     "transformer-delta intent arrived with no candidate", None)])
             checks.append(self._transformer_safety_check(intent, candidate, ctx))
             # §4.3: NOT passes — the checks could not be evaluated.
-            checks.append(CheckResult(
-                "identity_continuity", False,
-                TRANSFORMER_PROBES_NOT_EVALUATED, None))
-            checks.append(CheckResult(
-                "capability_floor", False,
-                TRANSFORMER_PROBES_NOT_EVALUATED, None))
+            # SI-16: for a miniature probe context (§6.2 binding +
+            # §6.3 startup validation green) these run for real in
+            # SHADOW MODE; every other context reports them exactly
+            # as SI-9b did. See _transformer_probe_checks.
+            id_check, cap_check = self._transformer_probe_checks(
+                intent, candidate, ctx)
+            checks.append(id_check)
+            checks.append(cap_check)
             checks.append(self._transformer_provenance_check(intent, candidate))
             # The two probe checks are unevaluated, not failed: they
             # alone never cause a REJECT, and they block any ADMIT.
@@ -801,6 +817,93 @@ class Gate:
                       + "; ".join(f"{s.name}=pass" for s in subs))
         return CheckResult("safety_bounds", not failed, detail,
                            aggregate, subchecks=subs)
+
+    def _transformer_probe_checks(self, intent: Intent, candidate,
+                                  ctx) -> tuple:
+        """Checks 3/4 for a transformer delta (RFC SI-13 §6, SI-16).
+
+        Default — every context that is not a validated miniature
+        probe context: the SI-9b report, unchanged (``passed=False``,
+        ``measured=None``, :data:`TRANSFORMER_PROBES_NOT_EVALUATED`).
+
+        Shadow-mode evaluation — only when ``ctx`` carries the
+        probe-context marker AND its §6.2 binding + §6.3 startup
+        validation pass: check 3 runs the §5.2 suite through this
+        gate's own :meth:`_identity_check`; check 4 runs
+        :meth:`_capability_check`'s regression logic PLUS §5.3's
+        echo accuracy arm (both arms land in the check's detail and
+        subchecks, per §6.5). The caller holds the verdict at
+        ESCALATE regardless of the outcome (§6.4 staging): these
+        results are evidence in the journal, not a verdict input,
+        until SI-17.
+
+        Any harness failure at any point — binding mismatch,
+        unreproducible baselines, a forward exception — is reported
+        "not evaluated" with the specific reason in the detail: it
+        is never a pass and never the candidate's failure (§6.3).
+        """
+        def not_evaluated(detail):
+            return (CheckResult("identity_continuity", False, detail, None),
+                    CheckResult("capability_floor", False, detail, None))
+
+        if ctx is None or not getattr(ctx, "probe_harness", False):
+            return not_evaluated(TRANSFORMER_PROBES_NOT_EVALUATED)
+        try:
+            ok, reason = ctx.probe_status()
+        except Exception as err:  # a broken harness is not a candidate failure
+            ok, reason = False, (f"probe harness startup raised "
+                                 f"{type(err).__name__}: {err}")
+        if not ok:
+            return not_evaluated(f"not evaluated: {reason}")
+        shadow = ("probe suite "
+                  f"{getattr(ctx, 'probe_artifact_hash', None)} evaluated "
+                  "in SHADOW MODE (RFC SI-13 §6.4: verdict held at "
+                  "ESCALATE regardless of probe outcome; SI-17's "
+                  "admission flip is not implemented)")
+        try:
+            identity = self._identity_check(intent, candidate, ctx)
+            identity = CheckResult(
+                identity.name, identity.passed,
+                f"{identity.detail}; {shadow}", identity.measured)
+            regression = self._capability_check(intent, candidate, ctx)
+            # §5.3 accuracy arm: the echo task's functional floor.
+            targets = ctx.capability_targets()
+            floor = float(ctx.echo_floor())
+            suite = ctx.capability_suite()
+            correct = 0
+            for cid, x, _expected in suite:
+                import numpy as np
+                logits = ctx.forward_candidate(x, candidate)
+                if int(np.argmax(np.asarray(logits))) == int(targets[cid]):
+                    correct += 1
+            accuracy = correct / len(suite) if suite else 0.0
+            accuracy_passed = accuracy >= floor
+            capability = CheckResult(
+                "capability_floor",
+                bool(regression.passed and accuracy_passed),
+                f"regression arm: {regression.detail}; accuracy arm: "
+                f"echo accuracy {accuracy:.4f} ({correct}/{len(suite)}) "
+                f"vs floor {floor:.4f} -> "
+                f"{'pass' if accuracy_passed else 'FAIL'}; {shadow}",
+                regression.measured,
+                subchecks=[
+                    CheckResult("capability_regression",
+                                regression.passed, regression.detail,
+                                regression.measured),
+                    CheckResult("echo_accuracy", accuracy_passed,
+                                f"echo accuracy {accuracy:.4f} "
+                                f"({correct}/{len(suite)}) vs floor "
+                                f"{floor:.4f} (base accuracy minus "
+                                "one entry, RFC SI-13 §5.3)",
+                                accuracy),
+                ])
+            return identity, capability
+        except Exception as err:  # measurement failed, not the candidate
+            return not_evaluated(
+                f"not evaluated: probe harness raised during "
+                f"evaluation ({type(err).__name__}: {err}); the "
+                "candidate did not fail — the measurement failed "
+                "(RFC SI-13 §6.3)")
 
     def _transformer_provenance_check(self, intent: Intent,
                                       candidate) -> CheckResult:
