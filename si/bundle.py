@@ -551,6 +551,32 @@ def load_bundle(path: str) -> dict:
     if manifest["constitution"]["policy_hash"] != "sha256:" + policy_hex:
         raise TamperError("policy.json hash does not match manifest")
 
+    # Probe artifact (SI-14, RFC SI-13 §5.5): a base that carries one
+    # records its content hash in the manifest, the way policy and the
+    # constitution are hashed; verify it on every load so a tampered
+    # or missing suite fails closed. Bases without the field (demo,
+    # Glimmer, every pre-SI-14 bundle) are untouched by this check.
+    # NOTE: verifying the artifact's integrity is not consuming it —
+    # no gate/loop/serve path reads probe results in SI-14.
+    probe_art = manifest["base"].get("probe_artifact")
+    if probe_art is not None:
+        if not isinstance(probe_art, dict) \
+                or probe_art.get("file") != "probe_suite.json" \
+                or not str(probe_art.get("sha256", "")).startswith("sha256:"):
+            raise TamperError(
+                f"malformed probe_artifact record in manifest: {probe_art!r}")
+        probe_path = os.path.join(bundle_dir, "probe_suite.json")
+        if not os.path.isfile(probe_path):
+            raise TamperError(
+                "manifest records a probe artifact but probe_suite.json "
+                "is missing from the bundle")
+        with open(probe_path, "rb") as f:
+            probe_hex = sha256_hex(f.read())
+        if probe_art["sha256"] != "sha256:" + probe_hex:
+            raise TamperError(
+                "probe_suite.json hash does not match manifest "
+                "(probe suite changed?)")
+
     # Blobs: every referenced blob must exist with matching content hash.
     # A base may reference blobs three ways (all verified, each unique
     # ref hashed once): the legacy single ``base.blob``, whole-file
