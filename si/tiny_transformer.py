@@ -1,0 +1,429 @@
+"""SI-15: the miniature's forward path — a library capability, not inference.
+
+Implements RFC SI-13 §4 for the SI-14 miniature (``TinyTransformerMind``,
+§3.1 as amended by SI-14: the positional table is included, so the
+inventory is **30 tensors / 23,456 elements** — §3.1's 29 / 22,944
+plus the +1 tensor / +512 elements SI-14 recorded).
+
+Module-location decision (RFC §4.1 proposed this module and asked
+SI-15 to confirm or amend with its own rationale): **confirmed** —
+the forward path lives in this NEW module, ``si/tiny_transformer.py``.
+Rationale, following the SI-9a/SI-9c precedent: the gate, bundle, and
+seed layers keep no dependency on forward internals; tests and a
+future probe context (SI-16) can import the forward without importing
+the gate or the loop; and ``si/tiny_seed.py``'s seed-time helper
+stays what it was — an internal construction aid owned by the seed
+path — while this module is the library forward path the RFC designs.
+SI-14's as-built note explicitly left SI-15 free to replace or
+extract that helper; SI-15 instead keeps it untouched (it is the
+seed's own measured record of how its baselines were produced) and
+proves below that this path reproduces its recordings exactly.
+
+What this is and is not (honest labels):
+
+- This is a **library capability**: ``forward`` evaluates the
+  miniature over a weight set; the bundle entry points assemble that
+  weight set through apply-at-load (base + active chain, plus an
+  optional candidate overlay). It is NOT serving: nothing here is
+  wired to ``si serve`` (transformer bundles, miniature included,
+  still return 501), to the gate, or to the loop. Gate behaviour is
+  byte-for-byte unchanged — transformer deltas still report checks
+  3/4 as "not evaluated" and ESCALATE (asserted by test).
+- It is **not a Glimmer forward path**, at any size claim, and not a
+  general transformer executor: any architecture descriptor other
+  than §3.1's (as recorded by SI-14) is refused, and the pure
+  ``forward`` refuses any weight set that is not exactly the
+  miniature's 30-tensor inventory at its pinned shapes.
+- **No training, no authorship** (RFC §4.4): no gradient code, no
+  optimiser, no loss, and no way to construct a delta. The mind
+  adapter's ``train_delta`` (and ``propose``) refuse explicitly
+  rather than fabricate a candidate or an intent.
+
+Arithmetic discipline (§4.3, recorded per the SI-15 brief):
+
+- Weights and delta factors are **float32** — that is the dtype the
+  apply path delivers (``load_applied_tensor`` returns float32; the
+  shared fold in ``si.apply.fold_target`` computes its update and
+  result in float32), and ``forward`` casts its input weight set to
+  float32 before computing, so a caller cannot smuggle in a wider
+  weight dtype.
+- The forward computation itself widens the float32 weights to
+  **float64** and computes in float64, returning logits cast to
+  float32 (the §4.1 contract: ``float32 [len, V]``). This mirrors
+  SI-14's seed-time helper exactly — same widening, same operation
+  order — and follows the runtime's existing precedents for
+  float64 compute over float32 storage: the gate's ``_err`` measures
+  in float64, ``DemoMind.forward`` computes in float64, and the
+  gate's norm recomputation is float64. The consequence is a
+  *proven* one, not a hoped-for one: this path reproduces SI-14's
+  recorded probe-suite expected logits for the seeded base
+  **bit-identically** (after the float32 storage cast both paths
+  apply), asserted by ``tests/test_tiny_transformer.py`` over all
+  24 probe entries. At 23,456 parameters the float64 cost is noise
+  (§4.5), so there is no speed argument for a second, float32
+  arithmetic that would drift from the recorded baselines.
+- No randomness at forward time: no sampling, no dropout, no RNG.
+  Repeat runs are bit-identical (asserted by test).
+"""
+from __future__ import annotations
+
+import json
+import os
+
+import numpy as np
+
+from si.apply import applied_tensor_with_candidate, load_applied_tensor
+from si.tiny_seed import (
+    ARCHITECTURE,
+    EMBED_NAME,
+    FINAL_NORM_NAME,
+    LM_HEAD_NAME,
+    POS_NAME,
+    TINY_MIND_NAME,
+    tiny_tensor_shapes,
+)
+
+__all__ = [
+    "EXPECTED_ARCHITECTURE",
+    "TinyTransformerError",
+    "TinyTransformerMind",
+    "applied_tensor_with_candidate",
+    "assemble_weights",
+    "assemble_weights_with_candidate",
+    "forward",
+    "forward_from_bundle",
+    "validate_architecture",
+]
+
+#: The one architecture descriptor this forward path will run:
+#: RFC §3.1 exactly as SI-14 recorded it (positional table included).
+EXPECTED_ARCHITECTURE = dict(ARCHITECTURE)
+
+_V = EXPECTED_ARCHITECTURE["vocab_size"]
+_D = EXPECTED_ARCHITECTURE["d_model"]
+_LAYERS = EXPECTED_ARCHITECTURE["layers"]
+_HEADS = EXPECTED_ARCHITECTURE["heads"]
+_HEAD_DIM = EXPECTED_ARCHITECTURE["head_dim"]
+_T_MAX = EXPECTED_ARCHITECTURE["max_seq_len"]
+_EPS = float(EXPECTED_ARCHITECTURE["rms_norm_eps"])
+
+
+class TinyTransformerError(ValueError):
+    """The forward path refuses this input (architecture, weights,
+    or token sequence). Subclasses ValueError, like the other
+    fail-closed errors in this runtime."""
+
+
+def _layer_prefix(i: int) -> str:
+    return f"model.language_model.layers.{i}"
+
+
+# -- architecture refusal (§6.2 rule 3) --------------------------------------
+
+def validate_architecture(architecture) -> dict:
+    """Return ``architecture`` iff it is §3.1's descriptor exactly.
+
+    Fail closed: a non-dict, any missing key, any extra key, or any
+    value differing from the descriptor SI-14 recorded (vocab 32,
+    d_model 32, 2 layers, 4 heads, head_dim 8, d_ff 64, max_seq_len
+    16, positional_embedding True, and the rest of that record)
+    raises TinyTransformerError. This forward is a miniature
+    executor, not a general one (RFC §6.2 rule 3).
+    """
+    if not isinstance(architecture, dict):
+        raise TinyTransformerError(
+            f"architecture descriptor is not an object: "
+            f"{architecture!r} — refusing (only the SI-13 §3.1 "
+            f"miniature descriptor is runnable)")
+    problems = []
+    for key, want in EXPECTED_ARCHITECTURE.items():
+        if key not in architecture:
+            problems.append(f"missing key {key!r} (expected {want!r})")
+        elif architecture[key] != want:
+            problems.append(
+                f"{key}={architecture[key]!r} != expected {want!r}")
+    for key in architecture:
+        if key not in EXPECTED_ARCHITECTURE:
+            problems.append(f"unexpected key {key!r}")
+    if problems:
+        raise TinyTransformerError(
+            "architecture descriptor is not the SI-13 §3.1 miniature "
+            "(as amended by SI-14): " + "; ".join(problems))
+    return architecture
+
+
+def _manifest_architecture(manifest: dict) -> dict:
+    base = manifest.get("base") if isinstance(manifest, dict) else None
+    arch = base.get("architecture") if isinstance(base, dict) else None
+    if arch is None:
+        raise TinyTransformerError(
+            "manifest carries no base architecture descriptor — "
+            "refusing (not a miniature bundle; fail closed)")
+    return validate_architecture(arch)
+
+
+def _validate_weights(weights) -> dict:
+    """The exact 30-tensor inventory at pinned shapes, as float32."""
+    shapes = tiny_tensor_shapes()
+    if not isinstance(weights, dict):
+        raise TinyTransformerError("weights is not a {name: array} dict")
+    missing = [n for n in shapes if n not in weights]
+    extra = [n for n in weights if n not in shapes]
+    if missing or extra:
+        raise TinyTransformerError(
+            f"weight set is not the miniature's 30-tensor inventory: "
+            f"missing={missing!r} extra={extra!r}")
+    out = {}
+    for name, shape in shapes.items():
+        arr = np.asarray(weights[name])
+        if list(arr.shape) != list(shape):
+            raise TinyTransformerError(
+                f"tensor {name!r} has shape {list(arr.shape)} != "
+                f"pinned {list(shape)}")
+        out[name] = np.ascontiguousarray(arr, dtype=np.float32)
+    return out
+
+
+# -- the pure forward (§4.1) ---------------------------------------------------
+
+def _rms_norm(x: np.ndarray, w: np.ndarray) -> np.ndarray:
+    ms = np.mean(x * x, axis=-1, keepdims=True)
+    return x / np.sqrt(ms + _EPS) * w
+
+
+def _softmax(x: np.ndarray) -> np.ndarray:
+    x = x - np.max(x, axis=-1, keepdims=True)
+    e = np.exp(x)
+    return e / np.sum(e, axis=-1, keepdims=True)
+
+
+def forward(token_ids, weights: dict,
+            architecture: dict | None = None) -> np.ndarray:
+    """``forward(token_ids, weights) -> logits`` (RFC §4.1 contract).
+
+    ``token_ids``: sequence of ints, ``1 <= len <= 16``, each in
+    ``[0, 32)``. ``weights``: the full applied tensor set for the
+    miniature (exactly its 30 tensors; see ``assemble_weights``).
+    ``architecture``: when given, must be §3.1's descriptor exactly
+    or this refuses before computing. Returns float32 logits of
+    shape ``[len(token_ids), 32]`` — one row per position.
+
+    Computation, per position, in order (§4.1): token + positional
+    embedding → per layer: pre-norm RMSNorm → multi-head causal
+    self-attention (scaled dot-product, causal mask, softmax) →
+    residual add → pre-norm RMSNorm → SwiGLU MLP → residual add →
+    final RMSNorm → ``lm_head``. No dropout, no sampling, no KV
+    cache — the whole (<= 16-token) sequence is recomputed per call.
+    Arithmetic discipline: see the module docstring (float32
+    weights widened to float64 for compute; float32 logits out).
+    """
+    if architecture is not None:
+        validate_architecture(architecture)
+    w32 = _validate_weights(weights)
+    ids = [int(t) for t in token_ids]
+    if not (1 <= len(ids) <= _T_MAX):
+        raise TinyTransformerError(
+            f"sequence length {len(ids)} outside [1, {_T_MAX}]")
+    if any(t < 0 or t >= _V for t in ids):
+        raise TinyTransformerError(f"token id outside [0, {_V}): {ids!r}")
+    w = {k: np.asarray(v, dtype=np.float64) for k, v in w32.items()}
+    t = len(ids)
+    h = w[EMBED_NAME][ids] + w[POS_NAME][:t]
+    causal = np.triu(np.ones((t, t), dtype=bool), k=1)
+    for i in range(_LAYERS):
+        p = _layer_prefix(i)
+        a = _rms_norm(h, w[f"{p}.input_layernorm.weight"])
+        q = (a @ w[f"{p}.self_attn.q_proj.weight"].T
+             + w[f"{p}.self_attn.q_proj.bias"]).reshape(t, _HEADS, _HEAD_DIM)
+        k = (a @ w[f"{p}.self_attn.k_proj.weight"].T
+             + w[f"{p}.self_attn.k_proj.bias"]).reshape(t, _HEADS, _HEAD_DIM)
+        v = (a @ w[f"{p}.self_attn.v_proj.weight"].T
+             + w[f"{p}.self_attn.v_proj.bias"]).reshape(t, _HEADS, _HEAD_DIM)
+        q = np.transpose(q, (1, 0, 2))
+        k = np.transpose(k, (1, 0, 2))
+        v = np.transpose(v, (1, 0, 2))
+        scores = q @ np.transpose(k, (0, 2, 1)) / np.sqrt(float(_HEAD_DIM))
+        scores = np.where(causal, -np.inf, scores)
+        attn = _softmax(scores) @ v                       # [H, t, dh]
+        attn = np.transpose(attn, (1, 0, 2)).reshape(t, _D)
+        h = h + attn @ w[f"{p}.self_attn.o_proj.weight"].T \
+            + w[f"{p}.self_attn.o_proj.bias"]
+        m = _rms_norm(h, w[f"{p}.post_attention_layernorm.weight"])
+        gate = m @ w[f"{p}.mlp.gate_proj.weight"].T
+        up = m @ w[f"{p}.mlp.up_proj.weight"].T
+        silu = gate / (1.0 + np.exp(-gate))
+        h = h + (silu * up) @ w[f"{p}.mlp.down_proj.weight"].T
+    h = _rms_norm(h, w[FINAL_NORM_NAME])
+    return (h @ w[LM_HEAD_NAME].T).astype(np.float32)
+
+
+# -- weight assembly: apply-at-load, plus the candidate overlay (§4.2) --------
+
+def _check_tensor_map(manifest: dict) -> None:
+    from si.transformer_delta import base_tensor_map
+
+    names = set(base_tensor_map(manifest))
+    want = set(tiny_tensor_shapes())
+    if names != want:
+        raise TinyTransformerError(
+            f"manifest tensor map is not the miniature's inventory: "
+            f"missing={sorted(want - names)!r} "
+            f"extra={sorted(names - want)!r}")
+
+
+def assemble_weights(bundle_dir: str, manifest: dict,
+                     policy: dict | None = None) -> dict:
+    """The full applied weight set at the manifest's head.
+
+    One ``load_applied_tensor`` call per tensor in the miniature's
+    manifest tensor map — **30 calls** (RFC §4.2's text says
+    twenty-nine, which predates SI-14's positional-table decision;
+    the as-built doc records the 29 -> 30 note). The forward path
+    never reads base bytes directly: every value comes through
+    apply-at-load's hash-verified, delta-folding read. Refuses any
+    bundle whose architecture descriptor or tensor map is not the
+    miniature's.
+    """
+    _manifest_architecture(manifest)
+    _check_tensor_map(manifest)
+    return {name: load_applied_tensor(bundle_dir, manifest, name, policy)
+            for name in tiny_tensor_shapes()}
+
+
+def assemble_weights_with_candidate(bundle_dir: str, manifest: dict,
+                                    candidate,
+                                    policy: dict | None = None) -> dict:
+    """The applied weight set with a not-yet-landed candidate overlaid.
+
+    Same assembly as :func:`assemble_weights`, but every tensor goes
+    through :func:`si.apply.applied_tensor_with_candidate`: tensors
+    the candidate targets get the candidate's validated fold on top
+    of base + active chain; untargeted tensors are the
+    ``load_applied_tensor`` result untouched.
+    """
+    _manifest_architecture(manifest)
+    _check_tensor_map(manifest)
+    return {name: applied_tensor_with_candidate(
+                bundle_dir, manifest, name, candidate, policy)
+            for name in tiny_tensor_shapes()}
+
+
+def forward_from_bundle(bundle_dir: str, manifest: dict, token_ids,
+                        policy: dict | None = None,
+                        candidate=None) -> np.ndarray:
+    """Forward over a bundle: assemble weights (§4.2), then ``forward``.
+
+    With ``candidate=None`` this is base + active chain at the
+    manifest's head — a rolled-back delta is not on the chain, so it
+    does not affect the result. With a candidate (the SI-9b
+    ``{"record", "blob_bytes"}`` pair), the candidate is overlaid
+    in memory only; it does not land.
+    """
+    if candidate is None:
+        weights = assemble_weights(bundle_dir, manifest, policy)
+    else:
+        weights = assemble_weights_with_candidate(
+            bundle_dir, manifest, candidate, policy)
+    return forward(token_ids, weights)
+
+
+# -- mind adapter (§4.1 surface, §4.4 honesty) ---------------------------------
+
+class TinyTransformerMind:
+    """A bundle-backed adapter exposing the probe/forward surface.
+
+    This adapter exists so a future probe context (SI-16) has the
+    §4.1 surface to consume: ``forward`` / ``forward_candidate``
+    over token-id sequences, and the probe suites recorded in the
+    bundle's ``probe_suite.json``. It is wired to NOTHING in SI-15:
+    no gate, loop, or serve path constructs it.
+
+    §4.4 honesty: this mind cannot train and cannot propose.
+    ``train_delta`` and ``propose`` raise ``NotImplementedError``
+    explicitly rather than fabricate a candidate or an intent —
+    delta authorship for the miniature remains hand-built test
+    fixtures, exactly as the RFC leaves it.
+    """
+
+    def __init__(self, bundle_dir: str | None = None,
+                 manifest: dict | None = None,
+                 policy: dict | None = None):
+        if bundle_dir is not None and manifest is None:
+            from si.bundle import load_bundle
+            manifest = load_bundle(bundle_dir)
+        if manifest is not None:
+            _manifest_architecture(manifest)
+        self._bundle_dir = bundle_dir
+        self._manifest = manifest
+        self._policy = policy
+
+    @property
+    def name(self) -> str:
+        return TINY_MIND_NAME
+
+    def _require_bundle(self) -> None:
+        if self._bundle_dir is None or self._manifest is None:
+            raise TinyTransformerError(
+                "this TinyTransformerMind is not bundle-backed: the "
+                "adapter's forward/probe surface assembles weights "
+                "from a bundle via apply-at-load (the pure "
+                "si.tiny_transformer.forward takes an explicit "
+                "weight set instead)")
+
+    def forward(self, token_ids, candidate=None) -> np.ndarray:
+        """Logits for ``token_ids`` at the bundle head (+ overlay)."""
+        self._require_bundle()
+        return forward_from_bundle(
+            self._bundle_dir, self._manifest, token_ids,
+            policy=self._policy, candidate=candidate)
+
+    def forward_candidate(self, token_ids, candidate) -> np.ndarray:
+        """Logits with ``candidate`` overlaid (the §4.2 mechanism)."""
+        return self.forward(token_ids, candidate=candidate)
+
+    def _probe_artifact(self) -> dict:
+        self._require_bundle()
+        path = os.path.join(self._bundle_dir, "probe_suite.json")
+        if not os.path.isfile(path):
+            raise TinyTransformerError(
+                f"bundle carries no probe artifact ({path} missing): "
+                f"no probe suite exists for this bundle — fail closed")
+        with open(path, "rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+
+    def identity_probes(self) -> list:
+        """[(qid, token_ids, expected_last_position_logits), ...]"""
+        art = self._probe_artifact()
+        return [(e["id"], [int(x) for x in e["input"]],
+                 np.asarray(e["expected_logits"], dtype=np.float32))
+                for e in art["identity_suite"]]
+
+    def capability_suite(self) -> list:
+        """[(cid, token_ids, expected_last_position_logits), ...]"""
+        art = self._probe_artifact()
+        return [(e["id"], [int(x) for x in e["input"]],
+                 np.asarray(e["expected_logits"], dtype=np.float32))
+                for e in art["capability_suite"]]
+
+    def capability_baseline(self) -> dict:
+        """{cid: error} recorded at seed time (0.0 at head=base)."""
+        art = self._probe_artifact()
+        return dict(art["baselines"]["capability"])
+
+    def perceive(self, journal) -> list:
+        return []  # read-only; nothing to perceive in this adapter
+
+    def propose(self, perceptions: list, ctx):
+        raise NotImplementedError(
+            "TinyTransformerMind does not propose intents: delta "
+            "authorship for the miniature is out of scope (RFC "
+            "SI-13 §4.4) — refusing explicitly rather than "
+            "fabricating a proposal")
+
+    def train_delta(self, intent) -> dict:
+        raise NotImplementedError(
+            "TinyTransformerMind.train_delta refuses: this forward "
+            "path is inference-only in the narrowest sense — it "
+            "evaluates and contains no gradient, optimiser, or "
+            "delta-authorship code (RFC SI-13 §4.4); refusing "
+            "explicitly rather than fabricating a candidate")

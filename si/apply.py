@@ -66,6 +66,19 @@ Fail-closed behaviour:
   no ``targets`` and contribute nothing here. This path never
   applies a demo delta; the demo loop's forward path is separate
   and unchanged. Mixed stacks remain a non-goal (RFC §3).
+
+SI-15 additions (RFC SI-13 §4.2): the per-target fold arithmetic now
+lives in ONE shared function, :func:`fold_target`, used by both
+:func:`load_applied_tensor` (active chain) and
+:func:`applied_tensor_with_candidate` (the candidate overlay the
+probe harness needs: the gate evaluates a candidate *before* it
+lands, so the candidate is not on the active chain and
+``load_applied_tensor`` alone cannot see it). The overlay is NOT a
+third hand-copied fold — RFC SI-13 §4.2 forbids that (SI-11's export
+materialise path already mirrors this arithmetic once, as its own
+docstring records; the overlay deliberately does not add another).
+``si/tiny_transformer.py`` re-exports the overlay for the forward
+path's weight assembly.
 """
 from __future__ import annotations
 
@@ -110,6 +123,55 @@ def _read_blob_bytes(bundle_dir: str, blob_ref: str) -> bytes:
         return f.read()
 
 
+def fold_target(result: np.ndarray, target: dict, factor_tensors: dict,
+                *, allow_additive: bool,
+                delta_id: str | None = None) -> np.ndarray:
+    """Fold ONE validated target's update into ``result`` (shared fold).
+
+    This is the single implementation of the RFC §5.1 per-target
+    arithmetic — ``result + (alpha/rank)·B@A`` for ``lora`` (float32,
+    the update cast to float32 before the add, exactly as the
+    pre-SI-15 inline apply loop computed it) and ``result + d`` for
+    ``additive`` (policy-gated here, fail closed). Extracted verbatim
+    from ``load_applied_tensor`` in SI-15 so the active-chain path
+    and the candidate overlay (RFC SI-13 §4.2) share arithmetic by
+    construction, not by copy. Callers must have validated the delta
+    (SI-9a) before trusting its factors — this function trusts
+    ``target``/``factor_tensors`` and only enforces the additive
+    policy rule and the post-fold shape invariant. Returns a new
+    array; ``result`` is not mutated.
+    """
+    kind = target["kind"]
+    name = target["name"]
+    if kind == "lora":
+        A = np.asarray(factor_tensors[target["factor_keys"][0]],
+                       dtype=np.float32)
+        B = np.asarray(factor_tensors[target["factor_keys"][1]],
+                       dtype=np.float32)
+        scale = float(target["alpha"]) / float(target["rank"])
+        result = result + (scale * (B @ A)).astype(np.float32)
+    elif kind == "additive":
+        if not allow_additive:
+            raise ApplyError(
+                f"delta {delta_id!r} targets {name!r} "
+                "with an additive update, but policy "
+                "allow_additive is not true (RFC §4.5 default "
+                "is false): refusing to apply it")
+        d = np.asarray(factor_tensors[target["factor_keys"][0]],
+                       dtype=np.float32)
+        result = result + d
+    else:  # unreachable for validated deltas: validation rejects kinds
+        raise ApplyError(
+            f"delta {delta_id!r} target {name!r} has "
+            f"unknown kind {kind!r}")
+    if tuple(result.shape) != tuple(target["base_shape"]):
+        raise ApplyError(
+            f"applied tensor {name!r} has shape "
+            f"{tuple(result.shape)} != base shape "
+            f"{tuple(target['base_shape'])}")
+    return result
+
+
 def load_applied_tensor(bundle_dir: str, manifest: dict, name: str,
                         policy: dict | None = None) -> np.ndarray:
     """Return base tensor ``name`` with the active transformer deltas
@@ -150,31 +212,64 @@ def load_applied_tensor(bundle_dir: str, manifest: dict, name: str,
         validate_transformer_delta(record, blob_bytes, manifest)
         parsed = parse_blob(blob_bytes)
         for target in targets:
-            kind = target["kind"]
-            if kind == "lora":
-                A = np.asarray(parsed.tensors[target["factor_keys"][0]],
-                               dtype=np.float32)
-                B = np.asarray(parsed.tensors[target["factor_keys"][1]],
-                               dtype=np.float32)
-                scale = float(target["alpha"]) / float(target["rank"])
-                result = result + (scale * (B @ A)).astype(np.float32)
-            elif kind == "additive":
-                if not allow_additive:
-                    raise ApplyError(
-                        f"delta {record.get('id')!r} targets {name!r} "
-                        "with an additive update, but policy "
-                        "allow_additive is not true (RFC §4.5 default "
-                        "is false): refusing to apply it")
-                d = np.asarray(parsed.tensors[target["factor_keys"][0]],
-                               dtype=np.float32)
-                result = result + d
-            else:  # unreachable: validation rejects unknown kinds
-                raise ApplyError(
-                    f"delta {record.get('id')!r} target {name!r} has "
-                    f"unknown kind {kind!r}")
-            if tuple(result.shape) != tuple(target["base_shape"]):
-                raise ApplyError(
-                    f"applied tensor {name!r} has shape "
-                    f"{tuple(result.shape)} != base shape "
-                    f"{tuple(target['base_shape'])}")
+            result = fold_target(result, target, parsed.tensors,
+                                 allow_additive=allow_additive,
+                                 delta_id=record.get("id"))
+    return result
+
+
+def applied_tensor_with_candidate(bundle_dir: str, manifest: dict,
+                                  name: str, candidate,
+                                  policy: dict | None = None) -> np.ndarray:
+    """Base + active chain + ONE not-yet-landed candidate, for ``name``.
+
+    The RFC SI-13 §4.2 candidate overlay. ``candidate`` is the SI-9b
+    candidate contract — ``{"record": <transformer-delta record>,
+    "blob_bytes": <safetensors bytes>}`` — or ``None`` (no candidate:
+    the result is exactly :func:`load_applied_tensor`'s).
+
+    - For a name the candidate does NOT target, the
+      ``load_applied_tensor`` result is returned untouched: the
+      candidate blob is not read and not validated by this call
+      (one manifest lookup — the RFC §5.1 apply principle).
+    - For a targeted name, the candidate pair is FIRST run through
+      SI-9a's :func:`validate_transformer_delta` against the
+      caller's verified ``manifest`` (validation first; factors are
+      trusted only after it passes, exactly as the active-chain
+      path does), then the candidate's factor(s) for that exact
+      name are folded in with :func:`fold_target` — the shared
+      arithmetic, including the ``allow_additive`` policy rule
+      resolved the same way as the chain path.
+
+    Read-only and in-memory, like apply-at-load itself: nothing is
+    materialised, no bundle state is written, and the candidate does
+    not land anywhere by being overlaid.
+    """
+    result = load_applied_tensor(bundle_dir, manifest, name, policy)
+    if candidate is None:
+        return result
+    record = candidate.get("record") if isinstance(candidate, dict) else None
+    if not isinstance(record, dict):
+        raise ApplyError(
+            "candidate overlay needs the SI-9b candidate contract "
+            "{'record': <transformer-delta record>, 'blob_bytes': "
+            "<bytes>}: candidate carries no record dict")
+    targets = [t for t in record.get("targets") or []
+               if isinstance(t, dict) and t.get("name") == name]
+    if not targets:
+        return result  # untargeted: candidate never read (see docs)
+    blob_bytes = candidate.get("blob_bytes")
+    if not isinstance(blob_bytes, (bytes, bytearray)):
+        raise ApplyError(
+            "candidate overlay: candidate targets "
+            f"{name!r} but carries no blob bytes to validate")
+    blob_bytes = bytes(blob_bytes)
+    # Fail closed, validation first (same rule as the chain path).
+    validate_transformer_delta(record, blob_bytes, manifest)
+    parsed = parse_blob(blob_bytes)
+    allow_additive = _resolve_allow_additive(bundle_dir, policy)
+    for target in targets:
+        result = fold_target(result, target, parsed.tensors,
+                             allow_additive=allow_additive,
+                             delta_id=record.get("id"))
     return result
