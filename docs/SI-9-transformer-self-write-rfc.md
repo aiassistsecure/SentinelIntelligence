@@ -839,6 +839,18 @@ and the demo `LoopContext` forward path are untouched.
 - **No transformer squash**, no cross-bundle delta sharing, no mixed
   demo/transformer stacks, no embedding/`lm_head` targets in the
   first slices (§5.4).
+
+  *As-built follow-up in SI-12:* this non-goal is now enforced
+  explicitly in `si squash` (see
+  `docs/SI-12-squash-transformer-fail-closed.md`). Pre-SI-12, squash
+  had no transformer-kind check and failed by accident — raw
+  `KeyError: 'rank'` or `SafetensorError`, in one path after writing
+  an orphaned demo-format candidate blob. Now, if the resolved
+  active chain contains any transformer-delta-v1 record (in the
+  squash segment or the kept tail) and a squash would run, squash
+  raises `SquashError` before any blob, journal, or manifest write.
+  Composition itself remains unimplemented — SI-12 is the honest
+  refusal, not the feature.
 - **No silent export reconciliation** (§5.5).
 
 ---

@@ -117,6 +117,13 @@ New public surface (additive only): `ExportError`, and optional
   501 for transformer bundles.
 - **No seed-format change, no autonomous-admission change, no
   squash change.** Transformer squash remains deferred (RFC §6.4).
+
+  *As-built follow-up in SI-12:* `si squash` now enforces that
+  deferral explicitly — any transformer-delta-v1 record on the
+  resolved active chain (squash segment or kept tail) is refused
+  with `SquashError` before any write; see
+  `docs/SI-12-squash-transformer-fail-closed.md`. Transformer squash
+  composition itself is still not implemented.
 - Export remains **not gated** and does not move the head, as
   before; it journals `relation="export"` provenance only after a
   successful materialisation and write.
