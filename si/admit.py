@@ -26,20 +26,29 @@ mechanism, following the SI-6 constitution-amendment precedent
 
 WHAT ADMISSION IS (AND IS NOT), IN HONEST LABELS:
 
-Admission re-runs the SI-9b gate, at admission time, against the
-bundle as it stands NOW. Only a delta whose fresh verdict is
-ESCALATE — structurally valid, with identity/capability reported
-**not evaluated** — may be admitted. A REJECT-class delta can never
-be admitted, by anyone, through this path: admission of a rejected
-attempt is journaled as a refusal and the function raises.
+Admission re-runs the gate, at admission time, against the
+bundle as it stands NOW. For a non-miniature bundle only a delta
+whose fresh verdict is ESCALATE — structurally valid, with
+identity/capability reported **not evaluated** — may be admitted.
+For a miniature bundle (SI-17) the admissible verdicts are
+ESCALATE (blind-escalated or not-evaluated: the operator decides)
+and ADMIT (measured probe pass: the operator chose this path).
+A REJECT-class delta can never be admitted, by anyone, through
+this path: admission of a rejected attempt is journaled as a
+refusal and the function raises. That now includes a miniature
+delta whose probes were measured and FAILED — inadmissible by
+construction, and tested.
 
-The operator's admission is the operator **acting as the
-identity/capability check**: a human looked at a delta whose probes
-were not evaluated and decided, on the record, to let it land. It is
-NOT a probe pass, and nothing in the journal, the manifest, or this
-module's return value ever calls it one — the journaled gate report
-keeps the identity/capability checks at passed=False,
-measured=None, "not evaluated", verbatim.
+For a non-miniature bundle the operator's admission is the
+operator **acting as the identity/capability check**: a human
+looked at a delta whose probes were not evaluated and decided,
+on the record, to let it land. It is NOT a probe pass, and
+nothing in the journal, the manifest, or this module's return
+value ever calls it one — the journaled gate report keeps the
+identity/capability checks at passed=False, measured=None,
+"not evaluated", verbatim. For a miniature bundle the journaled
+record states which probe state actually held (measured-pass,
+blind-escalated, or not evaluated) — see the per-case bases.
 
 FLOW (journal before materialise, append-only, existing semantics):
 
@@ -50,22 +59,31 @@ FLOW (journal before materialise, append-only, existing semantics):
    against a manifest/stack context. For a non-miniature bundle
    that is the minimal context below, whose probe methods raise if
    touched — probes are NOT evaluated for such bundles, exactly as
-   before. For a *miniature* bundle (SI-16) it is
+   before. For a *miniature* bundle (SI-16/SI-17) it is
    ``si.probes.ProbeContext``: the gate runs checks 3/4 for real
-   in SHADOW MODE (verdict still ESCALATE), and the journaled gate
+   and §6.4's verdict mapping is LIVE, and the journaled gate
    report plus the ``operator_admission`` block's
-   ``shadow_probe_results`` carry those measured results with the
+   ``probe_results`` carry those measured results with the
    admission (RFC SI-13 §6.5) — the operator saw evidence, and the
-   record says what it was. The basis below stays literally true
-   in both cases: admission is the operator's decision, never the
-   gate's ADMIT, and a shadow probe result is not an admission.
+   record says what it was. The journaled basis is per-case (see
+   the constants below): the non-miniature basis stays the
+   original string verbatim; a miniature admission records
+   whether its probes were measured-pass, blind-escalated, or
+   not evaluated, and never borrows another case's wording.
    REJECT -> the refusal is journaled (self-edit, verdict REJECT,
    result "rejected", operator attached) and anchored, exactly the
    way the loop journals rejections; then AdmitError is raised and
-   nothing materialises. Any verdict other than ESCALATE is refused
-   the same way — transformer deltas are never gate-ADMITted today,
-   and if that ever changes, autonomous admission is a separate
-   decision, not this path silently widening.
+   nothing materialises. SI-17 consequence, tested: a probe-FAILED
+   miniature delta's fresh verdict is REJECT, so it is
+   INADMISSIBLE here by anyone — the measured failure, not an
+   operator's preference, decides. Any other verdict is refused
+   the same way, with ONE deliberate exception: a miniature delta
+   whose fresh verdict is ADMIT (measured probe pass) may still
+   be operator-admitted through this path — the operator chose
+   this path over the autonomous loop, and the admission journals
+   the measured results that made it ADMIT-eligible. A
+   non-miniature ADMIT (unreachable today) would still be refused:
+   this path does not silently widen.
 3. Journal the admission decision FIRST: a self-edit carrying the
    gate's ESCALATE report verbatim, the operator, the admission
    reason, and an ``operator_admission`` block on the intent dict
@@ -136,14 +154,39 @@ class AdmitError(ValueError):
     materialises, and a gate refusal leaves the head untouched."""
 
 
-#: The honest basis recorded on every admission: what the operator is
-#: standing in for, and what was NOT done. Kept as one constant so the
-#: journal, the CLI output, and the docs cannot drift apart.
+#: The honest basis recorded on every NON-miniature admission: what
+#: the operator is standing in for, and what was NOT done. Kept as
+#: one constant so the journal, the CLI output, and the docs cannot
+#: drift apart. (Miniature admissions use the per-case bases below —
+#: for them "probes were NOT evaluated" is not always true.)
 ADMISSION_BASIS = (
     "operator admission: the operator acted as the identity/capability "
     "check for this delta. Identity/capability probes were NOT "
     "evaluated — no transformer probe harness exists — and this "
     "admission is not a probe pass (RFC SI-9 §4.3/§4.4)")
+
+#: SI-17 miniature bases, one per probe state at admission time.
+#: Each states what was actually measured (or not), so the journal
+#: never borrows the non-miniature wording for a miniature case.
+MINIATURE_EVALUATED_BASIS = (
+    "operator admission (miniature bundle, SI-17): identity/capability "
+    "probes were evaluated for real by the probe harness and PASSED "
+    "(measured-pass; gate verdict ADMIT — this delta was "
+    "ADMIT-eligible on measured evidence). The operator chose the "
+    "operator path; the measured probe results are journaled with "
+    "this admission (RFC SI-13 §6.5)")
+MINIATURE_BLIND_BASIS = (
+    "operator admission (miniature bundle, SI-17 blind-escalated): "
+    "the candidate's target(s) are probe-blind — not measurable by "
+    "the probe suites (drift would be 0.0 vacuously, which is NOT "
+    "a measured pass) — so the gate escalated and the operator "
+    "acted as the identity/capability check for those targets. "
+    "This admission is not a probe pass")
+MINIATURE_NOT_EVALUATED_BASIS = (
+    "operator admission (miniature bundle, SI-17): identity/capability "
+    "probes were NOT evaluated for this admission (see the gate "
+    "report for the specific reason); the operator acted as the "
+    "identity/capability check, and this admission is not a probe pass")
 
 
 class _AdmissionContext:
@@ -208,7 +251,9 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
 
     Returns on success ``{"admitted": True, "verified": True,
     "rolled_back": False, "delta_id", "candidate_delta_id",
-    "edit_id", "head", "gate_verdict": "ESCALATE", "gate_report",
+    "edit_id", "head", "gate_verdict": <the fresh verdict —
+    "ESCALATE", or "ADMIT" for a measured-pass miniature delta>,
+    "gate_report",
     "verify_report", "operator", "reason", "admitted_at"}``.
     On VERIFY failure the delta is rolled back and the return is the
     same shape with ``"verified": False, "rolled_back": True``,
@@ -274,13 +319,16 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
     # -- re-validate at admission: the SI-9b gate, fresh, now --------
     gate = gate or Gate(load_policy(bundle_dir))
     from si.probes import ProbeContext, is_miniature_probe_bundle
-    if is_miniature_probe_bundle(manifest):
-        # SI-16 (§6.5): a miniature bundle's admission re-evaluation
-        # runs through the probe context, so shadow-mode probe
+    is_miniature = is_miniature_probe_bundle(manifest)
+    if is_miniature:
+        # SI-16/SI-17 (§6.5): a miniature bundle's admission
+        # re-evaluation runs through the probe context, so probe
         # results are measured fresh at admission time and journaled
         # with the admission (in the gate report verbatim, and in
-        # the operator_admission block below). The verdict is still
-        # ESCALATE-or-REJECT: shadow probes never admit.
+        # the operator_admission block below). §6.4's mapping is
+        # live: measured fail -> REJECT (inadmissible), measured
+        # pass -> ADMIT (operator-admissible, see module docs),
+        # blind/not-evaluated -> ESCALATE (operator decides).
         ctx = ProbeContext(bundle_dir, manifest,
                            policy=load_policy(bundle_dir))
     else:
@@ -289,39 +337,68 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
 
     admitted_at = _loop._utcnow()
     intent_dict = intent.to_dict()
+    # §6.5 labelling (SI-17): classify the probe state exactly —
+    # measured / blind-escalated / not evaluated — and journal the
+    # matching basis + results. Absent (and the original basis
+    # verbatim) for non-miniature bundles, whose admission record
+    # is unchanged.
+    probe_checks = [c for c in report.checks
+                    if c.name in ("identity_continuity",
+                                  "capability_floor")]
+    evaluated = {c.name: c.to_dict() for c in probe_checks
+                 if c.measured is not None}
+    blind = {c.name: c.to_dict() for c in probe_checks
+             if "blind-escalated" in c.detail}
+    if not is_miniature:
+        basis = ADMISSION_BASIS
+    elif len(evaluated) == 2:
+        basis = MINIATURE_EVALUATED_BASIS
+    elif blind:
+        basis = MINIATURE_BLIND_BASIS
+    else:
+        basis = MINIATURE_NOT_EVALUATED_BASIS
     admission_block = {
         "operator": operator,
         "reason": reason,
         "candidate_delta_id": candidate_delta_id,
         "admitted_at": admitted_at,
-        "basis": ADMISSION_BASIS,
+        "basis": basis,
         "gate_verdict_at_admission": report.verdict,
     }
-    # §6.5 labelling: if checks 3/4 were genuinely evaluated (a
-    # miniature bundle in shadow mode), journal the measured probe
-    # results alongside the basis — distinguished from both the
-    # not-evaluated report and any probe pass claim. Absent for
-    # non-miniature bundles, whose admission record is unchanged.
-    probe_results = {
-        c.name: c.to_dict() for c in report.checks
-        if c.name in ("identity_continuity", "capability_floor")
-        and c.measured is not None}
-    if probe_results:
-        admission_block["shadow_probe_results"] = {
-            "mode": "shadow (RFC SI-13 §6.4: verdict held at "
-                    "ESCALATE regardless of probe outcome)",
-            "checks": probe_results,
-            "note": "measured by the SI-16 probe harness at "
-                    "admission time; the operator's admission — "
-                    "not these results — is the basis for this "
-                    "delta landing",
+    if evaluated:
+        admission_block["probe_results"] = {
+            "mode": "measured (RFC SI-13 §6.4/§6.5, SI-17: verdict "
+                    "mapping live for miniature bundles; this "
+                    "journaling supersedes SI-16's shadow-mode "
+                    "record)",
+            "checks": evaluated,
+            "note": "measured by the probe harness at admission "
+                    "time and journaled with this admission",
+        }
+    elif blind:
+        admission_block["probe_results"] = {
+            "mode": "blind-escalated (SI-17 guard: target(s) not "
+                    "measurable by the probe suites; a vacuous "
+                    "drift 0.0 is not a measured pass)",
+            "checks": blind,
+            "note": "no probe measurement exists for these "
+                    "targets; the operator's admission is the "
+                    "basis for this delta landing",
         }
     intent_dict["operator_admission"] = admission_block
 
+    # Admissible verdicts: ESCALATE (the SI-10 case — the operator
+    # decides where the gate could not), plus, for a miniature
+    # bundle only, ADMIT on genuinely measured probe evidence
+    # (SI-17). REJECT is never admissible, by anyone.
+    admissible = report.verdict == "ESCALATE" or (
+        report.verdict == "ADMIT" and is_miniature
+        and len(evaluated) == 2)
+
     journal = open_journal(bundle_dir, manifest)
     try:
-        if report.verdict != "ESCALATE":
-            # REJECT-class (or any non-escalated) delta: never
+        if not admissible:
+            # REJECT-class (or any non-admissible) delta: never
             # admitted, by anyone. The refusal itself is journaled,
             # exactly the way the loop journals rejections — a
             # first-class, append-only record — then anchored, then
@@ -338,10 +415,13 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
                      f"gate {report.verdict}")
             raise AdmitError(
                 f"gate verdict at admission is {report.verdict}, not "
-                "ESCALATE: only a structurally valid transformer delta "
-                "whose identity/capability probes were not evaluated "
-                "may be operator-admitted; a REJECT-class delta can "
-                f"never be admitted (refusal journaled as {edit_id})")
+                "an admissible verdict: only an ESCALATE-verdict "
+                "transformer delta (or, for a miniature bundle, an "
+                "ADMIT verdict on measured probe evidence, SI-17) "
+                "may be operator-admitted; a REJECT-class delta — "
+                "including a miniature delta whose probes were "
+                "measured and FAILED — can never be admitted "
+                f"(refusal journaled as {edit_id})")
 
         # -- JOURNAL THE ADMISSION DECISION FIRST (before materialise)
         edit_id = journal.record_self_edit(
@@ -438,4 +518,6 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
         journal.close()
 
 
-__all__ = ["AdmitError", "ADMISSION_BASIS", "admit_transformer_delta"]
+__all__ = ["AdmitError", "ADMISSION_BASIS", "MINIATURE_BLIND_BASIS",
+           "MINIATURE_EVALUATED_BASIS", "MINIATURE_NOT_EVALUATED_BASIS",
+           "admit_transformer_delta"]

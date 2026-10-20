@@ -1,19 +1,21 @@
-"""SI-16: the probe ``BundleContext`` for miniature bundles (RFC
-SI-13 §6.1) — probe suites + gate wiring, SHADOW MODE ONLY.
+"""SI-16/SI-17: the probe ``BundleContext`` for miniature bundles
+(RFC SI-13 §6.1) — probe suites + gate wiring.
 
 This module is the loop/admit-layer context that lets the gate's
 transformer branch finally *measure* checks 3 (identity continuity)
-and 4 (capability floor) — for miniature bundles only, and only in
-shadow mode:
+and 4 (capability floor) — for miniature bundles only.
 
-- The verdict is held at **ESCALATE** regardless of probe outcome
-  (RFC §6.4 staging). A probe-passing miniature delta is NOT
-  admitted by the gate; a probe-failing one is NOT rejected by the
-  gate. Both are journaled with their real measured results and the
-  ESCALATE verdict, so the shadow record shows exactly what
-  SI-17's REJECT/ADMIT mapping *would* have been. SI-17's admission
-  flip is a separate, conditional decision and is NOT implemented
-  here.
+SI-17 (recorded decision, docs/SI-17-admission-flip.md): the
+§6.4 verdict mapping is now LIVE for miniature bundles with a
+validated probe context — probe-fail -> REJECT, all-pass ->
+ADMIT-eligible. SI-16's shadow mode (verdict held at ESCALATE
+regardless of outcome) is superseded for those bundles only.
+Every other bundle/context keeps SI-16/SI-9b behaviour exactly:
+checks 3/4 "not evaluated" and ESCALATE. One SI-17 addition: the
+probe-blind guard (see :func:`derive_probe_blind_targets`) — a
+candidate whose targets are exclusively probe-blind tensors
+measures drift 0.0 vacuously, which is NOT a measured pass; it
+ESCALATEs as blind-escalated.
 - Probe results count only for the bundle they were recorded on
   (§6.2 binding, verified here from the bundle context — never
   from the candidate): the probe artifact must be present, its
@@ -78,6 +80,7 @@ __all__ = [
     "BASELINE_TOL",
     "ProbeBindingError",
     "ProbeContext",
+    "derive_probe_blind_targets",
     "is_miniature_probe_bundle",
     "load_bound_probe_artifact",
 ]
@@ -89,6 +92,42 @@ __all__ = [
 #: RFC states it — "within float tolerance" — not as an assumption
 #: that every future numpy build rounds identically.
 BASELINE_TOL = 1e-6
+
+
+def derive_probe_blind_targets(architecture: dict | None = None) -> set:
+    """The probe-blind tensor set, derived — not a magic list.
+
+    Derivation (mechanism, corroborated by SI-16's §5.6 per-class
+    sensitivity measurement): in this architecture each layer's
+    keys are ``k_j = a_j @ W_k^T + b_k``, where ``b_k`` is the
+    layer's ``self_attn.k_proj.bias`` — the SAME vector added to
+    every position ``j``. A query ``q_i`` therefore scores
+    ``q_i . k_j = q_i . (a_j @ W_k^T) + q_i . b_k``; the second
+    term does not depend on ``j``, so it adds a constant to all of
+    query ``i``'s attention scores, and softmax over ``j`` is
+    invariant to a constant shift. No probe input can ever detect
+    a change to ``b_k`` through this architecture's outputs: drift
+    is exactly 0.0 for mathematical reasons, not measurement
+    noise. SI-16 measured exactly this: 28 of the 30 targetable
+    tensors are measurable, and the blind set is precisely the
+    ``k_proj.bias`` of both layers (drift exactly 0.0).
+
+    The set is therefore DERIVED here from the architecture: for
+    each layer index in the §3.1 descriptor, the one tensor whose
+    mechanism is "a constant added identically to all keys" —
+    ``model.language_model.layers.{i}.self_attn.k_proj.bias``.
+    No other tensor has that mechanism: ``q_proj.bias`` shifts
+    queries (scores change per-key), ``v_proj.bias`` shifts the
+    values that are averaged (outputs change), ``o_proj.bias``
+    shifts the residual stream directly, and every weight /
+    norm tensor enters multiplicatively or per-position.
+    """
+    arch = architecture or EXPECTED_ARCHITECTURE
+    layers = int(arch["layers"])
+    return {
+        f"model.language_model.layers.{i}.self_attn.k_proj.bias"
+        for i in range(layers)
+    }
 
 
 class ProbeBindingError(ValueError):
@@ -215,9 +254,9 @@ class ProbeContext:
     Sibling to ``si.loop.LoopContext`` (demo bundles) and
     ``si.admit._AdmissionContext`` (non-miniature transformer
     admission): same protocol, real measurements. The gate detects
-    this context by the ``probe_harness`` marker and, in shadow
-    mode, runs its generic ``_identity_check`` /
-    ``_capability_check`` against it.
+    this context by the ``probe_harness`` marker and runs its
+    generic ``_identity_check`` / ``_capability_check`` against
+    it (SI-17: the §6.4 verdict mapping consumes the results).
 
     Construction never raises for a bad bundle: binding and
     startup validation run lazily in :meth:`probe_status`, which
@@ -399,3 +438,41 @@ class ProbeContext:
         return forward_from_bundle(
             self.bundle_dir, self.manifest, x,
             policy=self.policy, candidate=candidate)[-1]
+
+    def forward_head(self, x):
+        """Last-position logits for ``x`` at the current head
+        (base + active chain, NO candidate) — the §6.6 VERIFY
+        measurement against a landed state."""
+        return forward_from_bundle(
+            self.bundle_dir, self.manifest, x,
+            policy=self.policy, candidate=None)[-1]
+
+    # -- SI-17 blind-set guard ----------------------------------------------
+    def probe_blind_targets(self) -> set:
+        """The derived probe-blind set for this bundle's
+        architecture (see :func:`derive_probe_blind_targets`)."""
+        art = self._artifact
+        arch = art.get("architecture") if isinstance(art, dict) else None
+        return derive_probe_blind_targets(arch)
+
+    def candidate_measurability(self, candidate) -> dict:
+        """Split a candidate's targets into measurable / blind.
+
+        Returns {"targets": [...], "measurable": [...],
+        "blind": [...], "all_blind": bool}. Target names come from
+        the candidate RECORD (the gate's safety suite independently
+        binds them to the base manifest); an unreadable record
+        yields no targets, in which case the safety suite — not
+        this guard — decides the outcome.
+        """
+        record = candidate.get("record") if isinstance(candidate, dict) else None
+        names: list = []
+        if isinstance(record, dict) and isinstance(record.get("targets"), list):
+            names = [t["name"] for t in record["targets"]
+                     if isinstance(t, dict) and isinstance(t.get("name"), str)]
+        blind_set = self.probe_blind_targets()
+        blind = [n for n in names if n in blind_set]
+        measurable = [n for n in names if n not in blind_set]
+        return {"targets": names, "measurable": measurable,
+                "blind": blind,
+                "all_blind": bool(names) and not measurable}

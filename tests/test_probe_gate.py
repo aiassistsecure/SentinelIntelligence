@@ -21,15 +21,19 @@ Covers the SI-16 acceptance criteria, in order:
    exactly as today: the legacy not-evaluated string, ESCALATE;
 4. the demo path's journaled gate reports are unchanged (no probe
    labelling leaks into them);
-5. SI-10 admission of a shadow-escalated miniature delta journals
-   the probe results with the admission (§6.5) — including a
-   probe-FAILED delta, whose measured failures ride along with its
-   ESCALATE verdict and its operator admission, because shadow
-   mode is precisely the record of what SI-17 would reject.
+5. SI-10 admission interplay (§6.5): a probe-PASSING miniature
+   delta admitted by an operator journals the measured results
+   with the admission; a probe-FAILED miniature delta is now
+   INADMISSIBLE — its fresh REJECT verdict refuses admission and
+   the refusal is journaled with the measured failure (SI-17).
 
-And the shadow contract itself, asserted on every gate test here:
-the verdict is ESCALATE whether probes pass, fail, or cannot run
-— never ADMIT, and (for probe outcomes) never REJECT.
+SI-17 UPDATE (recorded decision, docs/SI-17-admission-flip.md):
+the verdict mapping is now LIVE for evaluated miniature bundles —
+measured pass -> ADMIT, measured fail -> REJECT — so the SI-16
+shadow assertions below were updated to the §6.4 mapping. Every
+not-evaluated case (binding/startup/harness failure, non-probe
+contexts, Glimmer-shaped bundles) still ESCALATEs exactly as in
+shadow mode; that part of the contract is unchanged.
 """
 import copy
 import json
@@ -151,7 +155,7 @@ def test_zero_delta_passes_with_drift_exactly_zero(tmp_path):
     report, ctx = _evaluate(bundle_dir, _zero_candidate(manifest))
     assert ctx.probe_status() == (True, "ok")
     checks = _checks(report)
-    assert report.verdict == "ESCALATE"          # shadow: never ADMIT
+    assert report.verdict == "ADMIT"             # SI-17: §6.4 live
     assert checks["identity_continuity"].passed is True
     assert checks["identity_continuity"].measured == 0.0
     assert checks["capability_floor"].passed is True
@@ -160,7 +164,7 @@ def test_zero_delta_passes_with_drift_exactly_zero(tmp_path):
     assert subs["capability_regression"].passed is True
     assert subs["echo_accuracy"].passed is True
     assert subs["echo_accuracy"].measured == 1.0
-    assert "SHADOW MODE" in checks["identity_continuity"].detail
+    assert "measured-pass" in checks["identity_continuity"].detail
 
 
 def test_benign_delta_passes_with_live_drift(tmp_path):
@@ -168,23 +172,24 @@ def test_benign_delta_passes_with_live_drift(tmp_path):
     manifest = load_bundle(bundle_dir)
     report, _ctx = _evaluate(bundle_dir, _benign_candidate(manifest))
     checks = _checks(report)
-    assert report.verdict == "ESCALATE"
+    assert report.verdict == "ADMIT"             # SI-17: §6.4 live
     assert checks["identity_continuity"].passed is True
     assert checks["identity_continuity"].measured > 0.0   # measurement is live
     assert checks["capability_floor"].passed is True
     assert checks["capability_floor"].measured > 0.0
 
 
-def test_destructive_delta_fails_identity_but_still_escalates(tmp_path):
+def test_destructive_delta_fails_identity_and_rejects(tmp_path):
     bundle_dir = _seeded(tmp_path)
     manifest = load_bundle(bundle_dir)
     report, _ctx = _evaluate(bundle_dir, _destructive_candidate(manifest))
     checks = _checks(report)
-    # Measured failure, journaled WITH the shadow ESCALATE: this row
-    # of the shadow record is what SI-17's REJECT would have been.
+    # SI-17: a measured failure is evidence of harm -> REJECT
+    # (§6.4: evaluated-and-failed is REJECT, not ESCALATE).
     assert checks["identity_continuity"].passed is False
     assert checks["identity_continuity"].measured > 0.25   # > identity_tol
-    assert report.verdict == "ESCALATE"          # NOT reject in shadow mode
+    assert "measured-fail" in checks["identity_continuity"].detail
+    assert report.verdict == "REJECT"
 
 
 def test_echo_attack_fails_capability_accuracy_arm(tmp_path):
@@ -202,7 +207,7 @@ def test_echo_attack_fails_capability_accuracy_arm(tmp_path):
     assert subs["echo_accuracy"].passed is False
     assert subs["echo_accuracy"].measured == 0.5
     assert "accuracy arm" in cap.detail and "FAIL" in cap.detail
-    assert report.verdict == "ESCALATE"
+    assert report.verdict == "REJECT"            # SI-17: measured fail
 
 
 def test_per_class_sensitivity_all_measurable(tmp_path):
@@ -487,7 +492,7 @@ def test_demo_cycle_journal_report_has_no_probe_labelling(tmp_path):
         assert "subchecks" not in c
 
 
-# -- SI-10 admission journals shadow probe results (§6.5) ------------------------
+# -- SI-10 admission journals probe results (§6.5, SI-17 labelling) -------------
 
 def _journal_rows(bundle_dir, manifest, collection, **flt):
     journal = open_journal(bundle_dir, manifest)
@@ -497,7 +502,7 @@ def _journal_rows(bundle_dir, manifest, collection, **flt):
         journal.close()
 
 
-def test_admission_of_shadow_escalated_miniature_journals_probes(tmp_path):
+def test_admission_of_probe_passing_miniature_journals_probes(tmp_path):
     from si.admit import admit_transformer_delta
 
     bundle_dir = _seeded(tmp_path)
@@ -505,10 +510,12 @@ def test_admission_of_shadow_escalated_miniature_journals_probes(tmp_path):
     cand = _benign_candidate(manifest)
     res = admit_transformer_delta(
         bundle_dir, cand, _intent(cand["record"]),
-        operator="test-operator", reason="shadow evidence reviewed",
+        operator="test-operator", reason="SI-17 evidence reviewed",
         gate=Gate(_policy(bundle_dir)))
     assert res["admitted"] is True and res["verified"] is True
-    assert res["gate_verdict"] == "ESCALATE"     # shadow: still not ADMIT
+    # SI-17: the gate's fresh verdict is ADMIT (measured pass); the
+    # operator path remains available and journals that evidence.
+    assert res["gate_verdict"] == "ADMIT"
 
     manifest = load_bundle(bundle_dir)
     edits = _journal_rows(bundle_dir, manifest, "self_edits",
@@ -523,41 +530,47 @@ def test_admission_of_shadow_escalated_miniature_journals_probes(tmp_path):
     assert checks["capability_floor"]["measured"] is not None
     # And the operator_admission block carries them alongside the basis.
     adm = e["intent"]["operator_admission"]
-    assert "shadow_probe_results" in adm
-    spr = adm["shadow_probe_results"]["checks"]
+    assert "probe_results" in adm
+    assert "shadow_probe_results" not in adm
+    spr = adm["probe_results"]["checks"]
     assert spr["identity_continuity"]["measured"] == \
         checks["identity_continuity"]["measured"]
-    assert "shadow" in adm["shadow_probe_results"]["mode"]
+    assert "measured" in adm["probe_results"]["mode"]
+    assert "measured-pass" in adm["basis"]
 
 
-def test_admission_of_probe_failed_miniature_journals_failures(tmp_path):
-    from si.admit import admit_transformer_delta
+def test_admission_of_probe_failed_miniature_is_refused(tmp_path):
+    from si.admit import AdmitError, admit_transformer_delta
 
     bundle_dir = _seeded(tmp_path)
     manifest = load_bundle(bundle_dir)
     cand = _destructive_candidate(manifest)
-    res = admit_transformer_delta(
-        bundle_dir, cand, _intent(cand["record"]),
-        operator="test-operator",
-        reason="operator accepts the measured drift, on the record",
-        gate=Gate(_policy(bundle_dir)))
-    # Shadow mode: the gate ESCALATEd (it neither admitted nor
-    # rejected on probe grounds), so SI-10 admission remains
-    # possible — with the measured failure journaled beside it.
-    assert res["gate_verdict"] == "ESCALATE"
+    # SI-17 (§6.4 consequence): the fresh gate verdict is REJECT
+    # (measured identity failure), so the delta is INADMISSIBLE via
+    # operator admission — by anyone. The refusal is journaled.
+    with pytest.raises(AdmitError, match="REJECT"):
+        admit_transformer_delta(
+            bundle_dir, cand, _intent(cand["record"]),
+            operator="test-operator",
+            reason="operator accepts the measured drift, on the record",
+            gate=Gate(_policy(bundle_dir)))
     manifest = load_bundle(bundle_dir)
+    assert manifest["head"] == "base" and manifest["deltas"] == []
     edits = _journal_rows(bundle_dir, manifest, "self_edits",
-                          edit_id=res["edit_id"])
-    adm = edits[0]["intent"]["operator_admission"]
-    spr = adm["shadow_probe_results"]["checks"]
-    assert spr["identity_continuity"]["passed"] is False
-    assert spr["identity_continuity"]["measured"] > 0.25
+                          kind="transformer-delta-v1")
+    assert len(edits) == 1
+    assert edits[0]["gate_verdict"] == "REJECT"
+    assert edits[0]["result"] == "rejected"
+    checks = {c["name"]: c for c in edits[0]["gate_report"]["checks"]}
+    assert checks["identity_continuity"]["passed"] is False
+    assert checks["identity_continuity"]["measured"] > 0.25
+    assert "measured-fail" in checks["identity_continuity"]["detail"]
 
 
-def test_shadow_probe_evaluation_lands_nothing(tmp_path):
+def test_probe_evaluation_alone_lands_nothing(tmp_path):
     bundle_dir = _seeded(tmp_path)
     manifest = load_bundle(bundle_dir)
     report, _ctx = _evaluate(bundle_dir, _benign_candidate(manifest))
-    assert report.verdict == "ESCALATE"
+    assert report.verdict == "ADMIT"   # gate ADMIT-eligible; gate lands nothing
     after = load_bundle(bundle_dir)
     assert after["head"] == "base" and after["deltas"] == []
