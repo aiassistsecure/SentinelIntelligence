@@ -2,6 +2,7 @@
 
     si init <path> [--name NAME]        create a new .si bundle
     si seed <path> <safetensors> [--by-reference]  import a real checkpoint as the frozen base
+    si seed-tiny <path>                 seed the SI-14 constructed miniature + probe artifact
     si cycle <path> [--mind demo|mock]  run one self-write cycle
     si run <path> --cycles N [--mind demo|mock]  autonomous multi-cycle run
     si rollback <path> --to <id|base> [--reason R] [--mind demo|mock]
@@ -75,6 +76,31 @@ def cmd_seed(args) -> int:
               "tensor-shape inference (arch_source=tensor-shape-inference)")
     for name, info in sorted(base["tensors"].items()):
         print(f"  tensor {name}: shape={info['shape']} dtype={info['dtype']}")
+    return 0
+
+
+def cmd_seed_tiny(args) -> int:
+    from si.tiny_seed import seed_tiny_bundle
+    res = seed_tiny_bundle(args.path, importer="cli")
+    base = res["base"]
+    if res.get("already_seeded"):
+        print("already seeded: this miniature is already the bundle's "
+              "base (idempotent no-op; zero bytes written)")
+    print(f"seeded base: {base['blob']}")
+    print(f"tensors: {res['tensors']}  elements: {res['elements']}  "
+          f"bytes: {res['bytes']}  "
+          f"deduplicated_bytes: {res['deduplicated_bytes']}")
+    print(f"probe artifact: probe_suite.json "
+          f"sha256={res['probe_artifact_sha256']}")
+    print(f"base echo accuracy: {res['echo_accuracy']} "
+          f"(seed-time measured; floor is 15/16)")
+    print(f"identity_tol: {res['identity_tol']}  "
+          f"capability_eps: {res['capability_eps']} "
+          f"(min(0.25, 0.4*min_margin), recorded in policy.json)")
+    print(f"source: {base['source']}")
+    print("note: probes are RECORDED, not consumed — no gate, loop, "
+          "or serve path reads them in SI-14; transformer deltas "
+          "still report checks 3/4 as not evaluated and escalate")
     return 0
 
 
@@ -383,6 +409,16 @@ def build_parser() -> argparse.ArgumentParser:
                          "base then depends on the source remaining "
                          "at its recorded path (see README)")
     ps.set_defaults(func=cmd_seed)
+
+    pst = sub.add_parser("seed-tiny", help="seed the SI-14 constructed "
+                                           "miniature transformer "
+                                           "(TinyTransformerMind) plus "
+                                           "its probe artifact into a "
+                                           "fresh bundle; constructed, "
+                                           "NOT trained; probes are "
+                                           "recorded, not consumed")
+    pst.add_argument("path", help="bundle directory")
+    pst.set_defaults(func=cmd_seed_tiny)
 
     prun = sub.add_parser("run", help="autonomous serial multi-cycle "
                                       "self-write run")
