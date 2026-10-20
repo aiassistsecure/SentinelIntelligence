@@ -467,6 +467,17 @@ operator-admitted, not autonomously admitted.** The autonomous loop
 (`si run`) must halt on the `ESCALATE`, as it already halts on any
 escalation. That is a limitation, and it is the correct one.
 
+> *Follow-up in SI-13:* the probe harness this section deferred is
+> now designed — see `docs/SI-13-probe-harness-rfc.md` (design
+> only, no implementation). It specifies a small CPU-executable
+> miniature transformer, its forward path over apply-at-load plus
+> a validated candidate overlay, identity/echo-capability probe
+> suites with seed-time baselines, and gate wiring staged
+> shadow-mode-first. Until those slices are implemented and
+> validated, nothing in SI-13 changes this section's behaviour:
+> checks 3/4 still report "not evaluated" and valid transformer
+> deltas still ESCALATE.
+
 ### 4.4 Check 5 — Provenance completeness (extended)
 
 Existing requirements stand: non-empty `parents`, non-empty
