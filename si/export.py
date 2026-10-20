@@ -17,18 +17,51 @@ and ``si squash`` rewrites the delta list — anchoring the id to either
 would make behavior-preserving operations change the file.
 
 Delta -> tensor resolution (honest, documented):
-- Single-tensor base (the demo seed's ``W``): the delta applies to that
-  tensor, whatever the module string says.
-- Multi-tensor base (a seeded real checkpoint): a delta's module string
-  (e.g. ``"demo_linear"``) resolves to every base tensor whose NAME
-  contains the module string as a substring.
-- No match, or a (B@A) result whose shape does not equal the target
-  tensor's shape, is a ValueError. Export never silently misapplies a
-  delta to the wrong tensor.
+- Demo deltas (no ``kind`` or a non-transformer kind): unchanged from
+  the original export. Single-tensor base (the demo seed's ``W``): the
+  delta applies to that tensor, whatever the module string says.
+  Multi-tensor base: a delta's module string (e.g. ``"demo_linear"``)
+  resolves to every base tensor whose NAME contains the module string
+  as a substring. No match, or a (B@A) result whose shape does not
+  equal the target tensor's shape, is a ValueError.
+- Transformer deltas (``kind == "transformer-delta-v1"``, SI-11 —
+  RFC SI-9 §5.5 reconciliation): resolved by EXACT tensor name only,
+  never substring (§2.4/§5.5 explicitly rejected substring for this
+  kind). Each target is re-validated with
+  ``si.transformer_delta.validate_transformer_delta`` against the
+  manifest before any factor is trusted, factors are read from the
+  indexed keys in the target's ``factor_keys`` (``t{i}.A``/``t{i}.B``
+  / ``t{i}.d``), and the arithmetic mirrors
+  ``si.apply.load_applied_tensor`` exactly: ``W + (alpha/rank)*B@A``
+  for ``lora``, ``w + d`` for ``additive``. ``additive`` targets are
+  applied only when ``allow_additive`` resolves to the literal
+  ``True`` (the ``policy`` argument, else the bundle's
+  ``policy.json``, else the fail-closed default False); otherwise
+  export REFUSES with :class:`ExportError` — never silently skips or
+  applies. Any transformer delta that cannot be validated/applied
+  (unknown target, shape mismatch, metadata/record disagreement,
+  missing factor keys, missing blob) fails closed with
+  :class:`ExportError` — no raw ``SafetensorError``/``KeyError``
+  leaks, no partial GGUF file, and no journal entry claiming a
+  successful export (materialisation happens before any file write
+  or journaling in ``export_bundle``).
+- Mixed stacks: if a bundle somehow contains both demo and
+  transformer deltas, export applies BOTH in ``_active_chain`` order
+  (oldest first), each by its own kind's rules above. This is the
+  documented SI-11 choice — not a silent guess: each kind's
+  resolution is deterministic and fail-closed, so chain-order
+  application is well defined. Rolled-back/superseded deltas are
+  not on ``_active_chain`` and are therefore never applied.
 
 The export is NOT gated and does NOT move the head: it reads the
 current head, writes a file, and journals ``relation="export"``
 provenance for the produced artifact. No delta, no self-edit.
+
+Honest limits: materialisation still loads ALL base tensors into
+memory as float32, so exporting a full Glimmer head (~119 GB as
+float32) is out of scope on this machine (RFC §5.4) — SI-11 changes
+correctness for transformer deltas, not that cost. ``si serve`` is
+unchanged (still 501 for transformer bundles).
 """
 from __future__ import annotations
 
@@ -41,10 +74,24 @@ from si.bundle import (
     _active_chain,
     _anchor_checkpoint,
     _write_manifest,
+    blob_path,
     load_bundle,
     sha256_hex,
     utc_now,
 )
+
+
+class ExportError(ValueError):
+    """A head cannot be materialised/exported honestly. Fail closed.
+
+    Raised for transformer-delta problems in export (SI-11):
+    validation failure, unknown exact target, shape mismatch,
+    missing factor keys/blob, or an additive target the policy does
+    not allow. Subclasses ValueError so existing call sites that
+    treat malformed input as ValueError keep working. No raw
+    SafetensorError/KeyError from the transformer path leaks past
+    this error.
+    """
 
 
 # -- delta resolution -------------------------------------------------------
@@ -138,21 +185,179 @@ def _resolve_targets(delta_id: str, modules: list, base_names: list) -> list:
     return targets
 
 
+# -- transformer deltas in export (SI-11) ------------------------------------
+
+def _resolve_export_allow_additive(bundle_dir: str,
+                                   policy: dict | None) -> bool:
+    """``allow_additive`` resolution for export, fail closed.
+
+    Mirrors ``si.apply._resolve_allow_additive`` exactly: the
+    ``policy`` argument when given, else the bundle's ``policy.json``
+    when it exists, else False. Only the literal ``True`` permits
+    additive application.
+    """
+    from si.apply import _resolve_allow_additive
+    return _resolve_allow_additive(bundle_dir, policy)
+
+
+def _apply_transformer_delta(out: dict, bundle_dir: str, manifest: dict,
+                             record: dict, allow_additive: bool) -> None:
+    """Fold one transformer-delta-v1 record into ``out`` in place.
+
+    Exact names only. The record/blob pair is re-validated with
+    SI-9a validation before any factor is trusted; factor math
+    mirrors ``si.apply.load_applied_tensor`` (float32, per target).
+    Every failure is an ExportError — no raw SafetensorError/KeyError.
+    """
+    import numpy as np
+
+    from si.transformer_delta import (
+        DeltaValidationError,
+        parse_blob,
+        validate_transformer_delta,
+    )
+
+    delta_id = record.get("id", "?")
+    blob_ref = record.get("blob")
+    if not isinstance(blob_ref, str) or not blob_ref.startswith("sha256:"):
+        raise ExportError(
+            f"delta {delta_id}: transformer delta has no valid blob "
+            f"ref {blob_ref!r}; refusing to export")
+    try:
+        path = blob_path(bundle_dir, blob_ref)
+    except Exception as err:
+        raise ExportError(
+            f"delta {delta_id}: malformed blob ref {blob_ref!r}: {err}"
+        ) from err
+    if not os.path.isfile(path):
+        raise ExportError(
+            f"delta {delta_id}: transformer delta blob missing from "
+            f"the bundle store: {path}; refusing to export")
+    with open(path, "rb") as f:
+        blob_bytes = f.read()
+    try:
+        validate_transformer_delta(record, blob_bytes, manifest)
+    except DeltaValidationError as err:
+        raise ExportError(
+            f"delta {delta_id}: invalid transformer delta: {err}"
+        ) from err
+    except Exception as err:
+        raise ExportError(
+            f"delta {delta_id}: transformer delta validation failed: "
+            f"{type(err).__name__}: {err}"
+        ) from err
+    try:
+        parsed = parse_blob(blob_bytes)
+    except Exception as err:
+        raise ExportError(
+            f"delta {delta_id}: transformer delta blob does not "
+            f"parse: {err}"
+        ) from err
+
+    targets = record.get("targets")
+    if not isinstance(targets, list) or not targets:
+        raise ExportError(
+            f"delta {delta_id}: transformer delta carries no targets; "
+            "refusing to export")
+    for target in targets:
+        if not isinstance(target, dict):
+            raise ExportError(
+                f"delta {delta_id}: transformer target is not an "
+                "object; refusing to export")
+        name = target.get("name")
+        kind = target.get("kind")
+        if not isinstance(name, str) or name not in out:
+            raise ExportError(
+                f"delta {delta_id}: transformer target {name!r} is "
+                "not a base tensor (exact name match required); "
+                "refusing to export")
+        factor_keys = target.get("factor_keys") or []
+        if kind == "lora":
+            if len(factor_keys) != 2:
+                raise ExportError(
+                    f"delta {delta_id}: lora target {name!r} must "
+                    f"carry exactly 2 factor keys, got {factor_keys!r}")
+            for key in factor_keys:
+                if key not in parsed.tensors:
+                    raise ExportError(
+                        f"delta {delta_id}: lora target {name!r} "
+                        f"factor {key!r} missing from blob; refusing "
+                        "to export")
+            A = np.asarray(parsed.tensors[factor_keys[0]],
+                           dtype=np.float32)
+            B = np.asarray(parsed.tensors[factor_keys[1]],
+                           dtype=np.float32)
+            try:
+                scale = float(target["alpha"]) / float(target["rank"])
+            except Exception as err:
+                raise ExportError(
+                    f"delta {delta_id}: lora target {name!r} has "
+                    f"invalid rank/alpha: {err}"
+                ) from err
+            update = (scale * (B @ A)).astype(np.float32)
+            if tuple(update.shape) != tuple(out[name].shape):
+                raise ExportError(
+                    f"delta {delta_id}: (B@A) shape "
+                    f"{tuple(update.shape)} does not match target "
+                    f"tensor {name!r} shape {tuple(out[name].shape)}")
+            out[name] = np.asarray(out[name] + update, dtype=np.float32)
+        elif kind == "additive":
+            if not allow_additive:
+                raise ExportError(
+                    f"delta {delta_id}: additive target {name!r} "
+                    "cannot be exported because policy allow_additive "
+                    "is not true (default false, RFC §4.5): refusing "
+                    "to export rather than silently skipping or "
+                    "applying it")
+            if len(factor_keys) != 1:
+                raise ExportError(
+                    f"delta {delta_id}: additive target {name!r} "
+                    f"must carry exactly 1 factor key, got "
+                    f"{factor_keys!r}")
+            key = factor_keys[0]
+            if key not in parsed.tensors:
+                raise ExportError(
+                    f"delta {delta_id}: additive target {name!r} "
+                    f"factor {key!r} missing from blob; refusing to "
+                    "export")
+            d = np.asarray(parsed.tensors[key], dtype=np.float32)
+            if tuple(d.shape) != tuple(out[name].shape):
+                raise ExportError(
+                    f"delta {delta_id}: additive shape "
+                    f"{tuple(d.shape)} does not match target tensor "
+                    f"{name!r} shape {tuple(out[name].shape)}")
+            out[name] = np.asarray(out[name] + d, dtype=np.float32)
+        else:
+            raise ExportError(
+                f"delta {delta_id}: target {name!r} has unknown "
+                f"kind {kind!r}; refusing to export")
+
+
 # -- materialization ---------------------------------------------------------
-def materialize_head(bundle_dir: str, manifest: dict | None = None) -> dict:
+def materialize_head(bundle_dir: str, manifest: dict | None = None,
+                     policy: dict | None = None) -> dict:
     """Materialize the current head into full float32 weight tensors.
 
     Pure read. Loads every base tensor plus the active delta stack (the
     ``_active_chain`` resolution of head: parent links with squash
-    ``superseded_by`` replacements followed) and applies
-    ``W = W + scale*(B@A)`` per delta on torch CPU in float32.
-    ``manifest`` may be supplied; otherwise it is loaded AND verified via
-    ``load_bundle`` (fail closed). No gate, no journal, no manifest writes.
+    ``superseded_by`` replacements followed) and applies deltas in
+    chain order, oldest first: demo deltas as
+    ``W = W + scale*(B@A)`` on torch CPU in float32 (unchanged), and
+    transformer deltas per-target by exact name with the
+    ``si.apply.load_applied_tensor`` semantics (SI-11; see module
+    docs). ``manifest`` may be supplied; otherwise it is loaded AND
+    verified via ``load_bundle`` (fail closed). ``policy`` optionally
+    overrides the bundle's ``policy.json`` for the additive rule
+    (only the literal ``True`` for ``allow_additive`` permits
+    additive transformer targets). No gate, no journal, no manifest
+    writes.
 
     Returns {tensor_name: float32 np.ndarray}.
     """
     import numpy as np
     import torch
+
+    from si.transformer_delta import KIND as TRANSFORMER_KIND
 
     if manifest is None:
         manifest = load_bundle(bundle_dir)
@@ -165,9 +370,15 @@ def materialize_head(bundle_dir: str, manifest: dict | None = None) -> dict:
         raise ValueError(f"unknown head {head!r}")
 
     out = {name: base[name].copy() for name in base_names}
-    # The active chain already ends at head and follows squash
-    # replacements, so no break is needed: it IS the live stack.
+    allow_additive = None
     for d in _active_chain(manifest):
+        if d.get("kind") == TRANSFORMER_KIND:
+            if allow_additive is None:
+                allow_additive = _resolve_export_allow_additive(
+                    bundle_dir, policy)
+            _apply_transformer_delta(out, bundle_dir, manifest, d,
+                                     allow_additive)
+            continue
         B, A, scale = _load_delta(bundle_dir, d)
         modules = list(d.get("target_modules") or [])
         targets = _resolve_targets(d["id"], modules, base_names)
@@ -324,12 +535,17 @@ def _run_quantize(f16_path: str, out_path: str, quant: str) -> None:
 
 # -- the export ---------------------------------------------------------------
 def export_bundle(bundle_dir: str, out_path: str,
-                  quant: str | None = None) -> dict:
+                  quant: str | None = None,
+                  policy: dict | None = None) -> dict:
     """Export the current head as a GGUF file.
 
     1. ``load_bundle`` first: fail closed on any tamper before touching
        anything.
     2. ``materialize_head``: base + active deltas -> float32 tensors.
+       Transformer deltas are validated/applied there (SI-11); a
+       failure raises ExportError BEFORE any file is written or any
+       journal entry is made — no partial GGUF, no export provenance
+       claiming success.
     3. Write F16 GGUF (deterministic; see ``_write_f16_gguf``).
     4. If ``quant``: delegate to a REAL llama-quantize binary. Missing
        binary -> RuntimeError (honest; never faked). The quantized file
@@ -339,6 +555,8 @@ def export_bundle(bundle_dir: str, out_path: str,
        manifest to the new journal tip (same pattern as si/seed.py).
     6. Return {"head","head_hash","out_path","bytes","sha256","quant",
        "journal_seq"} — journal_seq is the export provenance entry's seq.
+    ``policy`` is forwarded to ``materialize_head`` for the additive
+    rule; when None the bundle's ``policy.json`` is used.
     """
     from si.journal import open_journal  # local import: no cycle
 
@@ -351,7 +569,7 @@ def export_bundle(bundle_dir: str, out_path: str,
     manifest = load_bundle(bundle_dir)
 
     # 2. Materialize the head (pure read).
-    tensors = materialize_head(bundle_dir, manifest)
+    tensors = materialize_head(bundle_dir, manifest, policy=policy)
     hhash = head_hash(tensors)
     head = manifest["head"]
 
@@ -401,4 +619,4 @@ def export_bundle(bundle_dir: str, out_path: str,
             "journal_seq": journal_seq}
 
 
-__all__ = ["materialize_head", "head_hash", "export_bundle"]
+__all__ = ["ExportError", "materialize_head", "head_hash", "export_bundle"]

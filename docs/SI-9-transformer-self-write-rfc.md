@@ -670,6 +670,30 @@ Glimmer seed. Consequences:
 > identity/capability check — never as a probe pass. The autonomous
 > loop is unchanged and still halts on ESCALATE.
 
+> *As-built follow-up in SI-11:* the export reconciliation this
+> section left as a follow-up decision is now **decided and
+> implemented** (see `docs/SI-11-export-reconciliation.md`). Since
+> SI-10, a bundle's active chain can contain a transformer delta,
+> and the unreconciled export crashed on it with a raw
+> `SafetensorError: File does not contain tensor delta.B` — neither
+> correct application nor an honest fail-closed error. `si export`'s
+> materialize path now branches by delta kind in `_active_chain`
+> order: transformer deltas are applied by **exact tensor name
+> only** (never substring), re-validated with SI-9a validation
+> before any factor is trusted, with arithmetic mirroring
+> `si.apply.load_applied_tensor` (`W + (alpha/rank)·B@A` for
+> `lora`; `w + d` for `additive` only when `allow_additive` is
+> literally true, otherwise export refuses). Any transformer delta
+> that cannot be validated/applied fails closed with
+> `si.export.ExportError` — no partial GGUF file, no export journal
+> entry. Mixed demo+transformer stacks apply both kinds in chain
+> order, each by its own rules (documented choice in SI-11). The
+> demo-delta export path is unchanged. Honest limits stand:
+> materialisation still loads the whole base as float32, so a
+> full-Glimmer export remains out of scope (§5.4), and `si serve`
+> is still 501 for transformer bundles. The "Not wired" bullet
+> above is therefore superseded for `si export` only, as of SI-11.
+
 ---
 
 ## 6. Phased plan
