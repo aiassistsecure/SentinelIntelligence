@@ -11,19 +11,39 @@ Pipeline (fail closed at every step):
 
 1. Resolve the active chain (``bundle._active_chain``) and split it into
    S (to squash) and K (to keep). ``L <= keep`` prints "nothing to squash"
-   and returns ``{"squashed": False}``.
-2. SI-3 scope is single-tensor bases (the demo seed's one ``W``). A
+   and returns ``{"squashed": False}`` — a no-op that involves no delta
+   of any kind, so it returns before every refusal below.
+2. SI-12: TRANSFORMER DELTAS FAIL CLOSED. If the resolved active chain
+   contains any record with ``kind == "transformer-delta-v1"`` — in S,
+   in K, or both (a mixed stack) — raise SquashError BEFORE any blob is
+   written, any gate/journal activity, or any manifest change.
+   Transformer squash (composition over named tensors) is NOT
+   implemented; it is an explicit non-goal (RFC SI-9 §6.4), and a
+   transformer delta must never be silently converted to a demo delta.
+   The whole resolved chain is checked, not only S, because a squash
+   also *involves* K: the kept tail is materialized for the tolerance
+   verify and loaded as demo factors by the gate stack machinery
+   (``loop._load_stack`` expects ``delta.B``/``delta.A`` and a
+   record-level ``rank``/``alpha`` a transformer record does not carry)
+   — reproduced pre-SI-12 behaviour (raw ``KeyError: 'rank'`` /
+   ``SafetensorError``, plus an orphaned demo-format candidate blob
+   written before the crash) is documented in
+   ``docs/SI-12-squash-transformer-fail-closed.md``. Records that are
+   NOT on the resolved active chain (rolled back, superseded history,
+   beyond the head) are not involved in a squash and do not block one:
+   ``_active_chain`` never loads, applies, or gates them.
+3. SI-3 scope is single-tensor bases (the demo seed's one ``W``). A
    multi-tensor base raises SquashError: squashing across named tensors
    would need a per-target layout this format does not have yet, and we
    refuse to guess it.
-3. The combined update of S is ``materialize_head(sub-head at S[-1]) -
+4. The combined update of S is ``materialize_head(sub-head at S[-1]) -
    base``. The exporter's delta math is reused, never reimplemented.
-4. Truncated SVD at rank r (``--rank``, else the max rank in S):
+5. Truncated SVD at rank r (``--rank``, else the max rank in S):
    B = U_r·√Σ_r, A = √Σ_r·V_rᵀ, stored with ``alpha = rank = r``
    (scale = 1 — see "The scale=1 choice" below). Blob layout keeps the
    legacy ``delta.B``/``delta.A`` convention so export/loop need no
    format changes.
-5. TOLERANCE VERIFY, before anything is journaled or committed: the head
+6. TOLERANCE VERIFY, before anything is journaled or committed: the head
    is materialized with d_new substituted for S (an in-memory manifest
    copy — S marked ``superseded_by``, d_new appended, head unchanged)
    and the max abs diff against the pre-squash materialized head must be
@@ -32,7 +52,7 @@ Pipeline (fail closed at every step):
    written to its content-addressed path before this step so the
    exporter can load it through the substituted manifest; on violation
    it is deleted again unless the identical blob already existed.)
-6. GATE: a squash is a delta intent and takes the full five checks like
+7. GATE: a squash is a delta intent and takes the full five checks like
    any self-write. The gate's BundleContext sees the post-squash stack
    (squashed delta + kept tail); the capability baseline is measured on
    the pre-squash stack; ``stack_depth()`` reports the pre-candidate
@@ -40,12 +60,12 @@ Pipeline (fail closed at every step):
    ``source_seqs`` are the journal seqs of the squashed deltas' own
    records — the causal events this squash exists because of (the gate
    requires non-empty ``source_seqs``; inventing them would be lying).
-7. REJECT/ESCALATE: journaled exactly the way the loop journals
+8. REJECT/ESCALATE: journaled exactly the way the loop journals
    rejections (self-edit + verdict + report, result rejected/escalated,
    checkpoint + manifest re-anchor). Nothing else is written. The
    candidate blob stays on disk as evidence, mirroring the loop's
    "rejected blobs stay on disk as evidence" guarantee.
-8. ADMIT: the squash is journaled (self-edit ADMIT, ``squashed_from``
+9. ADMIT: the squash is journaled (self-edit ADMIT, ``squashed_from``
    provenance, delta record, result materialized), every squashed delta
    is marked ``superseded_by`` in the manifest, the new record is
    appended, and the manifest is checkpointed + re-anchored.
@@ -93,6 +113,7 @@ from si.loop import (
     _save_and_anchor,
     _write_blob,
 )
+from si.transformer_delta import KIND as TRANSFORMER_DELTA_KIND
 
 
 class SquashError(ValueError):
@@ -154,7 +175,11 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
     gate refuses), else ``{"squashed": True, "delta_id", "edit_id",
     "verdict": "ADMIT", "head"}``. Raises SquashError (fail closed) on a
     multi-tensor base, a bad rank, or a tolerance violation — in which
-    case nothing is written anywhere.
+    case nothing is written anywhere. Also raises SquashError (SI-12)
+    when the resolved active chain contains any transformer-delta-v1
+    record (in the squash segment, the kept tail, or both): transformer
+    squash is not implemented, and that refusal happens before any
+    blob, journal, or manifest write.
     """
     if keep < 0:
         raise SquashError(f"keep must be >= 0, got {keep!r}")
@@ -173,7 +198,33 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
     S = chain[:L - keep]   # oldest: recompress these
     K = chain[L - keep:]   # newest: leave untouched
 
-    # -- 2. SI-3 scope: single-tensor bases only ------------------------
+    # -- 2. SI-12: transformer deltas on the active chain fail closed ---
+    # The check is over the WHOLE resolved chain (S + K), not only S:
+    # K is involved in a squash — it is materialized for the tolerance
+    # verify and loaded as demo factors by _load_stack for the gate —
+    # and a transformer record has no demo rank/alpha or delta.B/delta.A
+    # keys for that machinery. Refusing here, before _load_base_tensors,
+    # any SVD, any blob write, any journal open, or any manifest change,
+    # is what makes the refusal fail closed: nothing is left behind,
+    # and no transformer delta is ever converted to a demo delta.
+    # Records not on the resolved chain (rolled back / superseded /
+    # beyond the head) are not checked: _active_chain never involves
+    # them in a squash.
+    transformer_ids = [d["id"] for d in chain
+                       if d.get("kind") == TRANSFORMER_DELTA_KIND]
+    if transformer_ids:
+        raise SquashError(
+            "si squash does not support transformer deltas: the active "
+            "chain contains transformer-delta-v1 delta(s) "
+            f"{', '.join(transformer_ids)} (in the squash segment and/or "
+            "the kept tail); transformer squash is not implemented — "
+            "it is deferred (RFC SI-9 §6.4; see "
+            "docs/SI-12-squash-transformer-fail-closed.md). Refusing "
+            "before any blob, journal, or manifest write, and refusing "
+            "to convert a transformer delta to a demo delta"
+        )
+
+    # -- 3. SI-3 scope: single-tensor bases only ------------------------
     base_tensors = _load_base_tensors(bundle_dir, manifest)
     if len(base_tensors) != 1:
         raise SquashError(
@@ -182,14 +233,14 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
         )
     (tname,) = base_tensors.keys()
 
-    # -- 3. combined update of S: sub-head at S[-1] minus the base ------
+    # -- 4. combined update of S: sub-head at S[-1] minus the base ------
     sub_manifest = dict(manifest)
     sub_manifest["head"] = S[-1]["id"]
     sub_tensors = materialize_head(bundle_dir, sub_manifest)
     update = (sub_tensors[tname].astype(np.float64)
               - base_tensors[tname].astype(np.float64))
 
-    # -- 4. truncated SVD: B = U_r·√Σ_r, A = √Σ_r·V_rᵀ, alpha = rank = r --
+    # -- 5. truncated SVD: B = U_r·√Σ_r, A = √Σ_r·V_rᵀ, alpha = rank = r --
     U, svals, Vt = np.linalg.svd(update, full_matrices=False)
     r_want = int(rank) if rank is not None else max(int(d["rank"]) for d in S)
     r = max(1, min(r_want, svals.shape[0]))
@@ -223,7 +274,7 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
     blob_preexisted = os.path.isfile(blob_path)
     _write_blob(bundle_dir, blob_bytes)  # content-addressed; idempotent
 
-    # -- 5. tolerance verify BEFORE gate/commit -------------------------
+    # -- 6. tolerance verify BEFORE gate/commit -------------------------
     pre_tensors = materialize_head(bundle_dir, manifest)
     squashed_ids = {d["id"] for d in S}
     verify_deltas = []
@@ -256,7 +307,7 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
             f"({len(S)} deltas -> {delta_id} at rank {r}); nothing written"
         )
 
-    # -- 6+7. gate (full five checks, like any delta self-write) --------
+    # -- 7+8. gate (full five checks, like any delta self-write) --------
     journal = open_journal(bundle_dir, manifest)
     try:
         # Provenance sources: the journal seqs of the squashed deltas' own
@@ -313,7 +364,7 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
             return {"squashed": False, "verdict": report.verdict,
                     "edit_id": edit_id}
 
-        # -- 8. commit (ADMIT only) --------------------------------------
+        # -- 9. commit (ADMIT only) --------------------------------------
         edit_id = journal.record_self_edit(
             "delta", intent.to_dict(), intent.reason,
             "ADMIT", report.to_dict())
