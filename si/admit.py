@@ -47,9 +47,18 @@ FLOW (journal before materialise, append-only, existing semantics):
    candidate must be a transformer-delta candidate (SI-9b contract:
    ``{"record": ..., "blob_bytes": ...}``).
 2. Re-validate: the SI-9b gate evaluates the intent + candidate
-   against a minimal manifest/stack context (the gate's transformer
-   path reads the base manifest and the stack depth only — it never
-   runs probes, and this context's probe methods raise if touched).
+   against a manifest/stack context. For a non-miniature bundle
+   that is the minimal context below, whose probe methods raise if
+   touched — probes are NOT evaluated for such bundles, exactly as
+   before. For a *miniature* bundle (SI-16) it is
+   ``si.probes.ProbeContext``: the gate runs checks 3/4 for real
+   in SHADOW MODE (verdict still ESCALATE), and the journaled gate
+   report plus the ``operator_admission`` block's
+   ``shadow_probe_results`` carry those measured results with the
+   admission (RFC SI-13 §6.5) — the operator saw evidence, and the
+   record says what it was. The basis below stays literally true
+   in both cases: admission is the operator's decision, never the
+   gate's ADMIT, and a shadow probe result is not an admission.
    REJECT -> the refusal is journaled (self-edit, verdict REJECT,
    result "rejected", operator attached) and anchored, exactly the
    way the loop journals rejections; then AdmitError is raised and
@@ -161,22 +170,23 @@ class _AdmissionContext:
     def identity_probes(self):
         raise AssertionError(
             "admission gate evaluation must not run identity probes: "
-            "no transformer probe harness exists")
+            "no probe harness exists for this (non-miniature) bundle")
 
     def capability_suite(self):
         raise AssertionError(
             "admission gate evaluation must not run capability probes: "
-            "no transformer probe harness exists")
+            "no probe harness exists for this (non-miniature) bundle")
 
     def capability_baseline(self):
         raise AssertionError(
             "admission gate evaluation must not read a capability "
-            "baseline: no transformer probe harness exists")
+            "baseline: no probe harness exists for this bundle")
 
     def forward_candidate(self, x, candidate):
         raise AssertionError(
             "admission gate evaluation must not run a forward pass: "
-            "this runtime has no transformer forward pass")
+            "this context serves a non-miniature bundle, for which "
+            "no forward pass exists")
 
 
 def _stack_depth(manifest: dict) -> int:
@@ -263,12 +273,23 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
 
     # -- re-validate at admission: the SI-9b gate, fresh, now --------
     gate = gate or Gate(load_policy(bundle_dir))
-    ctx = _AdmissionContext(manifest, _stack_depth(manifest))
+    from si.probes import ProbeContext, is_miniature_probe_bundle
+    if is_miniature_probe_bundle(manifest):
+        # SI-16 (§6.5): a miniature bundle's admission re-evaluation
+        # runs through the probe context, so shadow-mode probe
+        # results are measured fresh at admission time and journaled
+        # with the admission (in the gate report verbatim, and in
+        # the operator_admission block below). The verdict is still
+        # ESCALATE-or-REJECT: shadow probes never admit.
+        ctx = ProbeContext(bundle_dir, manifest,
+                           policy=load_policy(bundle_dir))
+    else:
+        ctx = _AdmissionContext(manifest, _stack_depth(manifest))
     report = gate.evaluate(intent, candidate, ctx)
 
     admitted_at = _loop._utcnow()
     intent_dict = intent.to_dict()
-    intent_dict["operator_admission"] = {
+    admission_block = {
         "operator": operator,
         "reason": reason,
         "candidate_delta_id": candidate_delta_id,
@@ -276,6 +297,26 @@ def admit_transformer_delta(bundle_dir: str, candidate, intent: Intent,
         "basis": ADMISSION_BASIS,
         "gate_verdict_at_admission": report.verdict,
     }
+    # §6.5 labelling: if checks 3/4 were genuinely evaluated (a
+    # miniature bundle in shadow mode), journal the measured probe
+    # results alongside the basis — distinguished from both the
+    # not-evaluated report and any probe pass claim. Absent for
+    # non-miniature bundles, whose admission record is unchanged.
+    probe_results = {
+        c.name: c.to_dict() for c in report.checks
+        if c.name in ("identity_continuity", "capability_floor")
+        and c.measured is not None}
+    if probe_results:
+        admission_block["shadow_probe_results"] = {
+            "mode": "shadow (RFC SI-13 §6.4: verdict held at "
+                    "ESCALATE regardless of probe outcome)",
+            "checks": probe_results,
+            "note": "measured by the SI-16 probe harness at "
+                    "admission time; the operator's admission — "
+                    "not these results — is the basis for this "
+                    "delta landing",
+        }
+    intent_dict["operator_admission"] = admission_block
 
     journal = open_journal(bundle_dir, manifest)
     try:

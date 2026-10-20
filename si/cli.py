@@ -366,12 +366,27 @@ def cmd_admit_transformer_delta(args) -> int:
     print(f"verified:  {res['verified']} "
           "(transformer-apply-smoke: shape + finiteness only)")
     print(f"rolled_back: {res['rolled_back']}")
-    print("note: admission is the operator acting as the "
-          "identity/capability check — identity/capability probes "
-          "were NOT evaluated (no transformer probe harness exists) "
-          "and this is not a probe pass. --operator is an "
-          "attribution/authorization record in the journal, NOT "
-          "cryptographic authentication (see si/admit.py)")
+    _probe_checks = {c["name"]: c for c in
+                     res["gate_report"]["checks"]}
+    if any(_probe_checks.get(n, {}).get("measured") is not None
+           for n in ("identity_continuity", "capability_floor")):
+        # SI-16: a miniature bundle's probes WERE evaluated, in
+        # shadow mode — say so, and say what admission still is.
+        print("note: admission is the operator acting as the "
+              "identity/capability check. For this miniature bundle "
+              "the SI-16 probe harness DID evaluate checks 3/4 in "
+              "shadow mode (verdict held at ESCALATE); the measured "
+              "results are journaled with this admission and are "
+              "not the basis for it. --operator is an "
+              "attribution/authorization record in the journal, NOT "
+              "cryptographic authentication (see si/admit.py)")
+    else:
+        print("note: admission is the operator acting as the "
+              "identity/capability check — identity/capability probes "
+              "were NOT evaluated (no transformer probe harness exists) "
+              "and this is not a probe pass. --operator is an "
+              "attribution/authorization record in the journal, NOT "
+              "cryptographic authentication (see si/admit.py)")
     return 0
 
 

@@ -29,6 +29,14 @@ from si.bundle import (
 from si.gate import Gate, Intent
 from si.journal import Journal, open_journal
 
+# SI-16: the miniature probe context lives in si.probes (the
+# loop/admit layer's third BundleContext sibling, next to
+# LoopContext below and si.admit._AdmissionContext). Re-exported
+# here so the loop layer names all three in one place. It is not
+# constructed by run_cycle: the autonomous loop gains no admission
+# power from shadow-mode probes (RFC SI-13 §6.4 staging).
+from si.probes import ProbeContext  # noqa: F401
+
 
 # -- bundle context for the gate -------------------------------------------
 class LoopContext:
