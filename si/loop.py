@@ -13,6 +13,8 @@ Guarantees:
 """
 from __future__ import annotations
 
+import copy
+import json
 import os
 
 from safetensors import safe_open
@@ -32,9 +34,11 @@ from si.journal import Journal, open_journal
 # SI-16: the miniature probe context lives in si.probes (the
 # loop/admit layer's third BundleContext sibling, next to
 # LoopContext below and si.admit._AdmissionContext). Re-exported
-# here so the loop layer names all three in one place. It is not
-# constructed by run_cycle: the autonomous loop gains no admission
-# power from shadow-mode probes (RFC SI-13 §6.4 staging).
+# here so the loop layer names all three in one place.
+# SI-17: run_cycle DOES construct it now — for miniature bundles
+# only, where §6.4's verdict mapping is live (recorded decision,
+# docs/SI-17-admission-flip.md). Non-miniature bundles keep the
+# LoopContext path below, byte-for-byte.
 from si.probes import ProbeContext  # noqa: F401
 
 
@@ -150,6 +154,15 @@ def run_cycle(bundle_path: str, mind, gate: Gate | None = None) -> dict:
     manifest = load_bundle(bundle_dir)
     journal = open_journal(bundle_dir, manifest)
     try:
+        # SI-17: a miniature probe bundle runs its transformer
+        # cycles through the probe context (the LoopContext below
+        # is demo-shaped: it loads a demo "W" base tensor and a
+        # demo delta stack, neither of which a miniature bundle
+        # has). Every other bundle takes the path below unchanged.
+        from si.probes import is_miniature_probe_bundle
+        if is_miniature_probe_bundle(manifest):
+            return _run_miniature_cycle(bundle_dir, manifest, journal,
+                                          mind, gate)
         # PERCEIVE (read-only).
         perceptions = mind.perceive(journal)
         ctx = LoopContext(bundle_dir, manifest, journal, mind)
@@ -274,6 +287,270 @@ def run_cycle(bundle_path: str, mind, gate: Gate | None = None) -> dict:
         journal.close()
 
 
+def _verify_probe_head(bundle_dir: str, manifest: dict,
+                       policy: dict | None = None,
+                       baseline: dict | None = None):
+    """§6.6 VERIFY for a miniature bundle: re-run the REAL probes
+    against the landed head (base + active chain, no candidate).
+
+    Returns (ok, probe_report) in ``_verify_head``'s shape, with
+    the report labelled ``transformer-probe-verify`` so a journal
+    reader can never mistake it for the apply-smoke report or a
+    demo probe report (§6.5). Identity is judged vs the seed's
+    expected logits within ``identity_tol``; capability is judged
+    as (a) worst regression vs ``baseline`` — the PRE-CYCLE head's
+    errors, captured by the caller before materialisation (the
+    demo ``_verify_head`` semantics); when no baseline is given,
+    the recorded seed baselines (0.0 by construction) are used —
+    plus (b) the §5.3 echo accuracy arm vs the recorded floor.
+    Every measured value in the report is real, and each arm is
+    labelled measured-pass / measured-fail. A harness that cannot
+    run (binding/startup failure, any exception) is a FAILED
+    verify (fail closed -> the caller rolls back), labelled
+    not-evaluated — never a pass.
+    """
+    import numpy as np
+
+    policy = policy if policy is not None else load_policy(bundle_dir)
+    report: dict = {"kind": "transformer-probe-verify",
+                    "head": manifest.get("head"), "passed": False}
+    try:
+        ctx = ProbeContext(bundle_dir, manifest, policy=policy)
+        ok_status, reason = ctx.probe_status()
+        report["probe_artifact_hash"] = ctx.probe_artifact_hash
+        if not ok_status:
+            report.update({
+                "label": "not-evaluated",
+                "note": f"probe harness not evaluated at verify: {reason}",
+            })
+            return False, report
+        id_tol = float(policy.get("identity_tol", 0.0))
+        worst_id, worst_id_q = 0.0, ""
+        for qid, x, expected in ctx.identity_probes():
+            err = _probe_err(ctx.forward_head(x), expected)
+            if err > worst_id:
+                worst_id, worst_id_q = err, qid
+        id_passed = worst_id <= id_tol
+        eps = float(policy.get("capability_eps", 0.0))
+        if baseline is None:
+            baseline = {cid: 0.0 for cid, _x, _e in ctx.capability_suite()}
+            report["baseline_source"] = "recorded seed baselines (0.0)"
+        else:
+            report["baseline_source"] = "pre-cycle head (caller-captured)"
+        targets = ctx.capability_targets()
+        floor = float(ctx.echo_floor())
+        worst_reg, worst_reg_c = -1e18, ""
+        correct = 0
+        suite = ctx.capability_suite()
+        for cid, x, expected in suite:
+            logits = ctx.forward_head(x)
+            err = _probe_err(logits, expected)
+            regress = err - float(baseline.get(cid, 0.0))
+            if regress > worst_reg:
+                worst_reg, worst_reg_c = regress, cid
+            if int(np.argmax(np.asarray(logits))) == int(targets[cid]):
+                correct += 1
+        accuracy = correct / len(suite) if suite else 0.0
+        reg_passed = worst_reg <= eps
+        acc_passed = accuracy >= floor
+        cap_passed = reg_passed and acc_passed
+        report.update({
+            "identity": {"max_drift": worst_id, "tol": id_tol,
+                         "worst_probe": worst_id_q, "passed": id_passed,
+                         "label": "measured-pass" if id_passed
+                                  else "measured-fail"},
+            "capability": {"max_regression": worst_reg, "eps": eps,
+                           "worst_eval": worst_reg_c,
+                           "passed": reg_passed,
+                           "echo_accuracy": accuracy,
+                           "echo_floor": floor,
+                           "echo_passed": acc_passed,
+                           "label": "measured-pass" if cap_passed
+                                    else "measured-fail"},
+            "passed": bool(id_passed and cap_passed),
+            "note": "real probe VERIFY (RFC SI-13 §6.6, SI-17): "
+                    "identity + capability (regression and echo "
+                    "accuracy arms) re-run against the landed head "
+                    "through the SI-15 forward path; NOT the "
+                    "transformer-apply-smoke test",
+        })
+        return report["passed"], report
+    except Exception as err:  # verify failed closed, never a pass
+        report.update({
+            "label": "not-evaluated",
+            "note": f"probe VERIFY raised ({type(err).__name__}: {err}); "
+                    "fail closed — the measurement failed, so the "
+                    "landed state is not verified",
+        })
+        return False, report
+
+
+def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
+                         mind, gate: Gate | None = None) -> dict:
+    """One autonomous cycle on a miniature probe bundle (SI-17).
+
+    Same serial shape as :func:`run_cycle` — PERCEIVE -> PROPOSE
+    -> GATE -> JOURNAL -> MATERIALIZE -> VERIFY — with the probe
+    context as the gate's context and transformer materialise /
+    §6.6 probe VERIFY semantics:
+
+    - REJECT / ESCALATE are journaled and halt the cycle, exactly
+      as the demo path journals them (nothing materialises). A
+      probe-failed delta REJECTs here (§6.4); a blind-only or
+      not-evaluated delta ESCALATEs.
+    - ADMIT (measured probe pass only) journals first, then
+      materialises with the SI-10 transformer semantics (fresh
+      runtime delta id, content-addressed blob, head advances,
+      ``record_transformer_delta``), then VERIFYs with REAL
+      probes (:func:`_verify_probe_head`). A failed VERIFY rolls
+      back through the existing rollback core (cause
+      ``verify-failed``, the probe report journaled with the
+      rollback) — the delta is never left silently active.
+    - Non-transformer intents keep their ordinary meanings
+      (memory journals only; a mind-proposed rollback delegates
+      to the rollback core with ``mind=None`` — the core's demo
+      probe re-check cannot run on a miniature bundle, and
+      claiming it did would be fabrication).
+    """
+    from si.transformer_delta import KIND as TF_KIND
+
+    policy = load_policy(bundle_dir)
+    gate = gate or Gate(policy)
+    ctx = ProbeContext(bundle_dir, manifest, policy=policy)
+
+    perceptions = mind.perceive(journal)
+    intent = mind.propose(perceptions, ctx)
+    candidate = None
+    if intent.kind in ("delta", TF_KIND) \
+            and intent.reason and intent.reason.strip():
+        candidate = mind.train_delta(intent)
+
+    report = gate.evaluate(intent, candidate, ctx)
+
+    if report.verdict in ("REJECT", "ESCALATE"):
+        edit_id = journal.record_self_edit(
+            intent.kind, intent.to_dict(), intent.reason,
+            report.verdict, report.to_dict())
+        journal.set_edit_result(
+            edit_id, "rejected" if report.verdict == "REJECT" else "escalated")
+        manifest = _save_and_anchor(
+            bundle_dir, journal, manifest,
+            note=f"{report.verdict.lower()} {edit_id}")
+        return {"verdict": report.verdict, "edit_id": edit_id,
+                "delta_id": None, "head": manifest["head"],
+                "verified": False, "rolled_back": False}
+
+    # ADMIT: journal intent + verdict + provenance BEFORE materialize.
+    is_tf = intent.kind == TF_KIND
+    delta_id = _next_delta_id(manifest) if is_tf else None
+    edit_id = journal.record_self_edit(
+        intent.kind, intent.to_dict(), intent.reason, "ADMIT",
+        report.to_dict())
+    journal.record_provenance(
+        child=delta_id or edit_id,
+        parents=list(intent.parents),
+        relation="learned_from",
+        note=(intent.reason or "")[:200])
+    if intent.source_seqs:
+        journal.record_provenance(
+            child=edit_id, parents=list(intent.source_seqs),
+            relation="learned_from", note="source journal sequences")
+
+    prev_head = manifest["head"]
+    if is_tf:
+        # Pre-cycle capability baseline for §6.6 VERIFY (measured
+        # at the head the candidate lands on, before it lands).
+        pre_baseline = None
+        ok_status, _reason = ctx.probe_status()
+        if ok_status:
+            pre_baseline = ctx.capability_baseline()
+        record_in = candidate["record"]
+        blob_hex, byte_len = _write_blob(bundle_dir, candidate["blob_bytes"])
+        if "sha256:" + blob_hex != record_in.get("blob") \
+                or byte_len != record_in.get("bytes"):
+            # Unreachable after a passing gate; fail closed rather
+            # than materialise a record that disagrees with its blob
+            # (the SI-10 admission precedent).
+            journal.set_edit_result(edit_id, "rejected")
+            manifest = _save_and_anchor(
+                bundle_dir, journal, manifest,
+                note=f"miniature cycle aborted {edit_id}: "
+                     "record/blob binding mismatch")
+            return {"verdict": "REJECT", "edit_id": edit_id,
+                    "delta_id": None, "head": manifest["head"],
+                    "verified": False, "rolled_back": False}
+        delta_rec = copy.deepcopy(record_in)
+        delta_rec["id"] = delta_id
+        delta_rec["parent"] = prev_head
+        delta_rec["self_edit_id"] = edit_id
+        manifest["deltas"].append(delta_rec)
+        manifest["head"] = delta_id
+        journal.record_transformer_delta(
+            delta_id, prev_head, "sha256:" + blob_hex, byte_len,
+            float(delta_rec["norm"]), edit_id, list(intent.source_seqs),
+            delta_rec["targets"])
+        journal.set_edit_result(edit_id, "materialized", delta_id=delta_id)
+        manifest = _save_and_anchor(
+            bundle_dir, journal, manifest,
+            note=f"post-materialize {delta_id}")
+
+        # VERIFY (§6.6): real probes against the landed state.
+        ok, probe_report = _verify_probe_head(
+            bundle_dir, manifest, policy=policy, baseline=pre_baseline)
+        journal.record_provenance(
+            child=delta_id, parents=[edit_id],
+            relation=probe_report.get("kind", "transformer-probe-verify"),
+            note=json.dumps(probe_report, sort_keys=True))
+        if ok:
+            manifest = _save_and_anchor(
+                bundle_dir, journal, manifest,
+                note=f"post-verify {delta_id} transformer-probe-verify "
+                     "VERIFIED")
+            return {"verdict": "ADMIT", "edit_id": edit_id,
+                    "delta_id": delta_id, "head": manifest["head"],
+                    "verified": True, "rolled_back": False}
+        manifest, rb_edit_id, _probes_ok = _do_rollback(
+            bundle_dir, journal, manifest, gate,
+            to=prev_head,
+            reason=f"probe verify failed after {delta_id}",
+            mind=None, operator=None,
+            cause="verify-failed",
+            probe_report=probe_report,
+            rolled_back_edit_id=edit_id)
+        return {"verdict": "ADMIT", "edit_id": rb_edit_id,
+                "delta_id": delta_id, "head": manifest["head"],
+                "verified": False, "rolled_back": True}
+    if intent.kind == "memory":
+        rec = intent.record or {}
+        journal.record_experience(rec.get("kind", "observation"), rec, edit_id)
+        journal.set_edit_result(edit_id, "materialized")
+        manifest = _save_and_anchor(
+            bundle_dir, journal, manifest,
+            note=f"post-materialize {edit_id}")
+        return {"verdict": "ADMIT", "edit_id": edit_id,
+                "delta_id": None, "head": manifest["head"],
+                "verified": True, "rolled_back": False}
+    if intent.kind == "rollback":
+        journal.set_edit_result(edit_id, "materialized")
+        target = intent.target or _previous_head(manifest, prev_head)
+        manifest, rb_edit_id, _probes_ok = _do_rollback(
+            bundle_dir, journal, manifest, gate,
+            to=target, reason=intent.reason,
+            mind=None, operator=None, cause="mind-proposed")
+        return {"verdict": "ADMIT", "edit_id": rb_edit_id,
+                "delta_id": None, "head": manifest["head"],
+                "verified": True, "rolled_back": True}
+    # Any other ADMITted kind on a miniature bundle: nothing in
+    # this runtime materialises it (the gate's ADMIT for a
+    # transformer-shaped intent is the only landing path here).
+    journal.set_edit_result(edit_id, "materialized")
+    manifest = _save_and_anchor(
+        bundle_dir, journal, manifest, note=f"post-materialize {edit_id}")
+    return {"verdict": "ADMIT", "edit_id": edit_id,
+            "delta_id": None, "head": manifest["head"],
+            "verified": False, "rolled_back": False}
+
+
 def _utcnow() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -347,7 +624,10 @@ def _verify_transformer_apply(bundle_dir: str, manifest: dict,
     operator admits an escalated delta and it materialises, that
     path runs exactly this check and journals the report under the
     ``transformer-apply-smoke`` label; a failed smoke rolls the
-    admission back. The autonomous loop still never calls it.
+    admission back. The autonomous loop still never calls it:
+    since SI-17 the loop's miniature branch VERIFYs with real
+    probes instead (``_verify_probe_head``, §6.6), and
+    non-miniature deltas are never materialised by the loop.
     """
     import numpy as np
 

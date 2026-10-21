@@ -32,19 +32,23 @@ gated by a different, honest mapping of the same five checks:
   synthetic pass. Under SI-9b transformer deltas are
   operator-admitted, not autonomously admitted; the autonomous
   loop already halts on ESCALATE.
-- SI-16 exception (RFC SI-13 §6, SHADOW MODE ONLY): when the
-  bundle context is a probe context for a *miniature* bundle
+- SI-16/SI-17 (RFC SI-13 §6): when the bundle context is a
+  probe context for a *miniature* bundle
   (``si.probes.ProbeContext`` — §6.2 binding verified, §6.3
   startup validation passed), checks 3/4 run for real through the
   gate's own generic check logic plus §5.3's echo accuracy arm,
-  and their real measured results are journaled — **but the
-  verdict is held at ESCALATE regardless of probe outcome**
-  (§6.4 staging). A probe pass does not admit and a probe failure
-  does not reject in shadow mode; the record exists so SI-17's
-  conditional flip can be decided on evidence. Every other
-  context (demo contexts, admission contexts, miniature contexts
-  whose binding/startup validation fails) keeps the SI-9b
-  behaviour above, byte-for-byte.
+  and their real measured results are journaled. SI-17's
+  recorded decision (docs/SI-17-admission-flip.md) makes §6.4's
+  verdict mapping LIVE for those bundles: a measured probe
+  failure REJECTs; a measured all-pass makes the delta
+  ADMIT-eligible. One guard: a candidate whose targets are
+  exclusively probe-blind tensors (derived in
+  ``si.probes.derive_probe_blind_targets`` — drift 0.0
+  vacuously, NOT a measured pass) is blind-escalated, never
+  ADMIT-eligible. Every other context (demo contexts,
+  admission contexts, miniature contexts whose binding/startup
+  validation fails) keeps the SI-9b behaviour above,
+  byte-for-byte.
 - provenance: the demo requirements plus §4.4's extension — the
   intent must declare its target list (``Intent.targets``, exact base
   tensor names) and it must match the candidate record's targets.
@@ -303,21 +307,35 @@ class Gate:
                     "transformer-delta intent arrived with no candidate", None)])
             checks.append(self._transformer_safety_check(intent, candidate, ctx))
             # §4.3: NOT passes — the checks could not be evaluated.
-            # SI-16: for a miniature probe context (§6.2 binding +
-            # §6.3 startup validation green) these run for real in
-            # SHADOW MODE; every other context reports them exactly
-            # as SI-9b did. See _transformer_probe_checks.
+            # SI-16/SI-17: for a miniature probe context (§6.2
+            # binding + §6.3 startup validation green) these run
+            # for real and §6.4's mapping is live; every other
+            # context reports them exactly as SI-9b did. See
+            # _transformer_probe_checks.
             id_check, cap_check = self._transformer_probe_checks(
                 intent, candidate, ctx)
             checks.append(id_check)
             checks.append(cap_check)
             checks.append(self._transformer_provenance_check(intent, candidate))
-            # The two probe checks are unevaluated, not failed: they
-            # alone never cause a REJECT, and they block any ADMIT.
+            # Verdict mapping (RFC SI-13 §6.4, SI-17):
+            # - decisive checks (constitution/safety/provenance)
+            #   failing -> REJECT, unchanged in all cases;
+            # - probes NOT evaluated (measured is None — including
+            #   the blind-escalated case): the two checks are
+            #   unevaluated, not failed; they alone never cause a
+            #   REJECT and they block any ADMIT -> ESCALATE,
+            #   exactly the SI-9b outcome;
+            # - probes genuinely evaluated: a measured failure is
+            #   evidence of harm -> REJECT; a measured all-pass
+            #   counts toward ADMIT -> ADMIT.
             decisive = [c for c in checks
                         if c.name not in ("identity_continuity",
                                           "capability_floor")]
             if not all(c.passed for c in decisive):
+                return GateReport("REJECT", checks)
+            if id_check.measured is not None and cap_check.measured is not None:
+                if id_check.passed and cap_check.passed:
+                    return GateReport("ADMIT", checks)
                 return GateReport("REJECT", checks)
             return GateReport("ESCALATE", checks)
 
@@ -820,22 +838,38 @@ class Gate:
 
     def _transformer_probe_checks(self, intent: Intent, candidate,
                                   ctx) -> tuple:
-        """Checks 3/4 for a transformer delta (RFC SI-13 §6, SI-16).
+        """Checks 3/4 for a transformer delta (RFC SI-13 §6,
+        SI-16 wiring, SI-17 verdict mapping).
 
         Default — every context that is not a validated miniature
         probe context: the SI-9b report, unchanged (``passed=False``,
         ``measured=None``, :data:`TRANSFORMER_PROBES_NOT_EVALUATED`).
 
-        Shadow-mode evaluation — only when ``ctx`` carries the
-        probe-context marker AND its §6.2 binding + §6.3 startup
-        validation pass: check 3 runs the §5.2 suite through this
-        gate's own :meth:`_identity_check`; check 4 runs
+        Evaluated — only when ``ctx`` carries the probe-context
+        marker AND its §6.2 binding + §6.3 startup validation pass:
+        check 3 runs the §5.2 suite through this gate's own
+        :meth:`_identity_check`; check 4 runs
         :meth:`_capability_check`'s regression logic PLUS §5.3's
         echo accuracy arm (both arms land in the check's detail and
-        subchecks, per §6.5). The caller holds the verdict at
-        ESCALATE regardless of the outcome (§6.4 staging): these
-        results are evidence in the journal, not a verdict input,
-        until SI-17.
+        subchecks, per §6.5). Per §6.5/SI-17 labelling the details
+        distinguish exactly: "measured-pass" / "measured-fail"
+        (real floats in ``measured``), "not evaluated"
+        (``measured=None``), and "blind-escalated"
+        (``measured=None``; see below). The caller applies §6.4's
+        mapping: measured fail -> REJECT, measured all-pass ->
+        ADMIT, anything unevaluated -> ESCALATE.
+
+        Blind-set guard (SI-17): a candidate whose targets are
+        exclusively probe-blind tensors (derived in
+        ``si.probes.derive_probe_blind_targets``) would measure
+        drift 0.0 vacuously — that is NOT a measured pass. It is
+        reported "blind-escalated" with ``measured=None`` (so the
+        verdict mapping ESCALATEs it) and the reason stated.
+        Mixed candidates (blind + measurable targets) are
+        evaluated for real; their details state that
+        ADMIT-eligibility rests on the measurable targets'
+        evidence only, and name the blind targets the probes
+        cannot measure.
 
         Any harness failure at any point — binding mismatch,
         unreproducible baselines, a forward exception — is reported
@@ -855,16 +889,46 @@ class Gate:
                                  f"{type(err).__name__}: {err}")
         if not ok:
             return not_evaluated(f"not evaluated: {reason}")
-        shadow = ("probe suite "
-                  f"{getattr(ctx, 'probe_artifact_hash', None)} evaluated "
-                  "in SHADOW MODE (RFC SI-13 §6.4: verdict held at "
-                  "ESCALATE regardless of probe outcome; SI-17's "
-                  "admission flip is not implemented)")
+        # SI-17 blind-set guard: exclusively-blind targets measure
+        # drift 0.0 vacuously — never a measured pass.
+        measurability = None
+        blind_note = ""
+        try:
+            measurability = ctx.candidate_measurability(candidate)
+        except Exception:
+            measurability = None  # guard failure never fakes a pass;
+            # the evaluation below still runs and decides on evidence
+        if measurability is not None and measurability["all_blind"]:
+            detail = (
+                "blind-escalated: target(s) not measurable by the "
+                "probe suites: "
+                f"{measurability['blind']!r} are probe-blind "
+                "(derived set, si.probes.derive_probe_blind_targets: "
+                "a constant key bias shifts all of a query's "
+                "attention scores equally and softmax is "
+                "shift-invariant, so drift would measure 0.0 "
+                "vacuously); a vacuous 0.0 is NOT a measured pass, "
+                "so this delta is not ADMIT-eligible and escalates "
+                "to the operator (RFC SI-13 §6.4/SI-17 guard)")
+            return not_evaluated(detail)
+        if measurability is not None and measurability["blind"]:
+            blind_note = (
+                "; note: target(s) "
+                f"{measurability['blind']!r} are probe-blind and "
+                "not measurable by the probe suites; "
+                "ADMIT-eligibility rests on the measurable "
+                f"target(s) {measurability['measurable']!r} only")
+        evaluated = ("probe suite "
+                     f"{getattr(ctx, 'probe_artifact_hash', None)} "
+                     "evaluated (RFC SI-13 §6.4/§6.5, SI-17: verdict "
+                     "mapping live for miniature bundles)")
         try:
             identity = self._identity_check(intent, candidate, ctx)
             identity = CheckResult(
                 identity.name, identity.passed,
-                f"{identity.detail}; {shadow}", identity.measured)
+                f"{'measured-pass' if identity.passed else 'measured-fail'}: "
+                f"{identity.detail}; {evaluated}{blind_note}",
+                identity.measured)
             regression = self._capability_check(intent, candidate, ctx)
             # §5.3 accuracy arm: the echo task's functional floor.
             targets = ctx.capability_targets()
@@ -878,13 +942,16 @@ class Gate:
                     correct += 1
             accuracy = correct / len(suite) if suite else 0.0
             accuracy_passed = accuracy >= floor
+            cap_passed = bool(regression.passed and accuracy_passed)
             capability = CheckResult(
                 "capability_floor",
-                bool(regression.passed and accuracy_passed),
+                cap_passed,
+                f"{'measured-pass' if cap_passed else 'measured-fail'}: "
                 f"regression arm: {regression.detail}; accuracy arm: "
                 f"echo accuracy {accuracy:.4f} ({correct}/{len(suite)}) "
                 f"vs floor {floor:.4f} -> "
-                f"{'pass' if accuracy_passed else 'FAIL'}; {shadow}",
+                f"{'pass' if accuracy_passed else 'FAIL'}; "
+                f"{evaluated}{blind_note}",
                 regression.measured,
                 subchecks=[
                     CheckResult("capability_regression",

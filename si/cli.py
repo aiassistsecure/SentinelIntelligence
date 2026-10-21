@@ -370,16 +370,28 @@ def cmd_admit_transformer_delta(args) -> int:
                      res["gate_report"]["checks"]}
     if any(_probe_checks.get(n, {}).get("measured") is not None
            for n in ("identity_continuity", "capability_floor")):
-        # SI-16: a miniature bundle's probes WERE evaluated, in
-        # shadow mode — say so, and say what admission still is.
+        # SI-17: a miniature bundle's probes WERE evaluated for
+        # real and the §6.4 verdict mapping is live — say so.
+        print("note: for this miniature bundle the probe harness "
+              "DID evaluate checks 3/4 for real (measured results, "
+              "gate verdict "
+              f"{res['gate_verdict']}); the measured results are "
+              "journaled with this admission. This admission is "
+              "the operator's recorded decision via the operator "
+              "path. --operator is an attribution/authorization "
+              "record in the journal, NOT cryptographic "
+              "authentication (see si/admit.py)")
+    elif any("blind-escalated" in _probe_checks.get(n, {}).get("detail", "")
+             for n in ("identity_continuity", "capability_floor")):
+        # SI-17 blind guard: targets not measurable — the operator
+        # acted as the check for them; no measured pass exists.
         print("note: admission is the operator acting as the "
-              "identity/capability check. For this miniature bundle "
-              "the SI-16 probe harness DID evaluate checks 3/4 in "
-              "shadow mode (verdict held at ESCALATE); the measured "
-              "results are journaled with this admission and are "
-              "not the basis for it. --operator is an "
-              "attribution/authorization record in the journal, NOT "
-              "cryptographic authentication (see si/admit.py)")
+              "identity/capability check for target(s) the probe "
+              "suites cannot measure (blind-escalated: drift would "
+              "be 0.0 vacuously, which is not a measured pass). "
+              "--operator is an attribution/authorization record "
+              "in the journal, NOT cryptographic authentication "
+              "(see si/admit.py)")
     else:
         print("note: admission is the operator acting as the "
               "identity/capability check — identity/capability probes "
