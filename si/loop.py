@@ -121,6 +121,34 @@ def _next_delta_id(manifest: dict) -> str:
     return f"d{n:04d}"
 
 
+def _record_training_hyperparams(journal: Journal, candidate,
+                                 child: str, parents: list) -> None:
+    """SI-21: journal a trained candidate's hyperparams, when it
+    carries any, as a provenance note (relation
+    ``training-hyperparams``).
+
+    RFC SI-20 §10.2 requires every cycle's hyperparams to record
+    the head trained against, the target-source head, and the
+    stack depth; for a REJECTed cycle the journal is the only
+    durable record of what was trained, so the hyperparams are
+    journaled on BOTH verdict paths of the miniature cycle (on
+    ADMIT under the landed delta id, on REJECT/ESCALATE under
+    the self-edit id). Candidates without hyperparams (scripted
+    fixture minds) journal nothing here — no fabricated fields.
+    The note is the hyperparams dict verbatim, including its one
+    labelled non-deterministic field (``wall_time_seconds``).
+    """
+    if not isinstance(candidate, dict):
+        return
+    hp = candidate.get("hyperparams")
+    if not isinstance(hp, dict) or not hp:
+        return
+    journal.record_provenance(
+        child=child, parents=list(parents),
+        relation="training-hyperparams",
+        note=json.dumps(hp, sort_keys=True))
+
+
 def _write_blob(bundle_dir: str, blob_bytes: bytes) -> tuple[str, int]:
     """Write an immutable content-addressed blob. Returns (hex, byte_len)."""
     hexpart = sha256_hex(blob_bytes)
@@ -411,6 +439,11 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
       to the rollback core with ``mind=None`` — the core's demo
       probe re-check cannot run on a miniature bundle, and
       claiming it did would be fabrication).
+    - SI-21: a trained candidate's hyperparams are journaled as
+      a ``training-hyperparams`` provenance note on both verdict
+      paths (see :func:`_record_training_hyperparams`), so a
+      second cycle's head / target-source / stack-depth record
+      survives even when the gate REJECTs the cycle.
     """
     from si.transformer_delta import KIND as TF_KIND
 
@@ -433,6 +466,7 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
             report.verdict, report.to_dict())
         journal.set_edit_result(
             edit_id, "rejected" if report.verdict == "REJECT" else "escalated")
+        _record_training_hyperparams(journal, candidate, edit_id, [])
         manifest = _save_and_anchor(
             bundle_dir, journal, manifest,
             note=f"{report.verdict.lower()} {edit_id}")
@@ -490,6 +524,8 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
             float(delta_rec["norm"]), edit_id, list(intent.source_seqs),
             delta_rec["targets"])
         journal.set_edit_result(edit_id, "materialized", delta_id=delta_id)
+        _record_training_hyperparams(journal, candidate, delta_id,
+                                     [edit_id])
         manifest = _save_and_anchor(
             bundle_dir, journal, manifest,
             note=f"post-materialize {delta_id}")
