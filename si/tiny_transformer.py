@@ -43,6 +43,19 @@ What this is and is not (honest labels):
   training itself lives in ``si/tiny_training.py``; this module's
   forward path is unchanged, and anything outside the named
   signal still refuses explicitly rather than fabricate.
+- **SI-21 freshness contract (RFC SI-20 §4.2/§4.3.1, §9.1):**
+  exactly one manifest trains in a cycle — the bundle's current
+  verified manifest. ``train_delta`` refreshes the mind's
+  manifest from the bundle on disk (``load_bundle``, fully
+  verified) before delegating, in exactly one place
+  (:meth:`TinyTransformerMind.refresh_manifest`, called only
+  from ``train_delta``). The SI-19 behaviour — training from
+  the construction-time ``self._manifest`` snapshot — is
+  closed: a mind object reused across cycles (the
+  ``si.run.run_cycles`` shape) can no longer silently retrain
+  from the base in cycle 2. ``propose`` already preferred the
+  cycle context's manifest; after the refresh, training and
+  proposing look at the same head inside one cycle.
 
 Arithmetic discipline (§4.3, recorded per the SI-15 brief):
 
@@ -466,21 +479,48 @@ class TinyTransformerMind:
             targets=[TARGET_NAME],
         )
 
-    def train_delta(self, intent) -> dict:
-        """Train the named signal's candidate (SI-19).
+    def refresh_manifest(self) -> dict:
+        """Reload the verified manifest from the bundle on disk.
 
-        Delegates to :func:`si.tiny_training.train_candidate`:
-        real CPU gradient-based training of one LoRA target on
-        the named signal, returned as a
-        ``construct_transformer_delta`` candidate pair. Refuses
-        explicitly — never fabricates — when this mind is not
-        bundle-backed, the signal is unknown, the intent declares
-        other targets or a different rank/alpha, or the trained
-        candidate's held-out loss does not improve.
+        THE freshness contract's one place (SI-21, RFC SI-20
+        §4.3.1): the manifest that trains is the bundle's
+        current verified manifest — never the construction-time
+        snapshot this adapter was built with. ``load_bundle``
+        re-verifies the bundle (journal anchor, hashes) on every
+        call, so a tampered or half-written bundle fails closed
+        here rather than training against a fantasy head. The
+        refreshed manifest replaces ``self._manifest``, so the
+        adapter's forward surface also reads at the fresh head
+        after a training call. Called only from
+        :meth:`train_delta`; no other code path in this adapter
+        chooses a training manifest.
         """
         self._require_bundle()
+        from si.bundle import load_bundle
+
+        self._manifest = load_bundle(self._bundle_dir)
+        return self._manifest
+
+    def train_delta(self, intent) -> dict:
+        """Train the named signal's candidate (SI-19; SI-21
+        freshness contract).
+
+        Refreshes the manifest first (see
+        :meth:`refresh_manifest` — the cycle's verified manifest
+        is the one that trains), then delegates to
+        :func:`si.tiny_training.train_candidate`: real CPU
+        gradient-based training of one LoRA target on the named
+        signal, returned as a ``construct_transformer_delta``
+        candidate pair. Refuses explicitly — never fabricates —
+        when this mind is not bundle-backed, the signal is
+        unknown, the intent declares other targets or a
+        different rank/alpha, or the trained candidate's
+        held-out loss does not improve.
+        """
+        self._require_bundle()
+        manifest = self.refresh_manifest()
         from si.tiny_training import train_candidate
 
         return train_candidate(
-            self._bundle_dir, self._manifest, intent,
+            self._bundle_dir, manifest, intent,
             policy=self._policy)

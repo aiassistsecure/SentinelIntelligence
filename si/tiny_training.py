@@ -82,6 +82,37 @@ admission: the gate's verdict on an authored candidate is
 reported as measured, whatever it is. CPU only, existing
 dependencies only (numpy), no autograd framework (RFC §4.4
 route (iii) rejected). This is machine learning infrastructure.
+
+SI-21 (RFC SI-20 §4.3.2/§9.2) — sequential authorship semantics,
+named here before any second cycle trained:
+
+- **Signal definition unchanged.** Same id
+  (``tiny-successor-lean-001``), same stream
+  (``MINI_SEED + 11``), same correction scale, same partitions.
+  SI-21 changes *which head trains*, never what the signal is.
+- **Target anchoring: weights-under-training (head-relative).**
+  ``build_training_signal(weights)`` derives each example's
+  target from the weight set it is given — the bundle's applied
+  weights at the head under training — plus the recorded
+  successor-lean correction. At head = base this is exactly
+  SI-19's definition. At cycle >= 2 the readout is therefore
+  asked to lean a further correction-step from where the head
+  already leans; the target SOURCE moves with the head. The
+  alternative — **base-anchored** targets (derived from the
+  seed base's logits at every cycle, later cycles correcting
+  the residual toward a fixed destination) — was considered
+  and NOT chosen: changing the signal definition in the same
+  slice that tests composition would confound the experiment
+  (RFC SI-20 §4.3.2). The choice is recorded in code as
+  :data:`TARGET_ANCHORING` and in every candidate's
+  hyperparams (``target_anchoring``, ``head``,
+  ``target_source_head``, ``stack_depth``), so a head-relative
+  number can never be mistaken for a base fact (RFC SI-20
+  §12.8): cycle 2's ``base_held_out_loss`` field — kept under
+  its SI-19 name for continuity — is the loss of the *weights
+  under training* (at its head) against targets derived from
+  those same weights, and the as-built doc says so wherever
+  the figure appears.
 """
 from __future__ import annotations
 
@@ -90,7 +121,7 @@ import time
 import numpy as np
 
 from si.apply import fold_target
-from si.bundle import sha256_hex
+from si.bundle import _active_chain, sha256_hex
 from si.tiny_seed import (
     EMBED_NAME,
     FINAL_NORM_NAME,
@@ -115,6 +146,7 @@ __all__ = [
     "RANK",
     "SIGNAL_SEED_OFFSET",
     "STEPS",
+    "TARGET_ANCHORING",
     "TARGET_NAME",
     "TRAINING_SIGNAL_ID",
     "analytic_gradients",
@@ -131,6 +163,14 @@ __all__ = [
 #: The one training signal this slice authors against (RFC §4.3:
 #: a mind serves exactly the signal(s) its design names).
 TRAINING_SIGNAL_ID = "tiny-successor-lean-001"
+
+#: SI-21 target anchoring (RFC SI-20 §4.3.2), named in code:
+#: targets are derived from the weights under training — the
+#: bundle's applied weights at the head being trained against —
+#: plus the recorded correction. The alternative (targets
+#: anchored to the seed base's logits at every cycle) is NOT
+#: the semantics of this signal id; see the module docstring.
+TARGET_ANCHORING = "weights-under-training"
 
 #: The one LoRA target trained per candidate (RFC §4.5).
 TARGET_NAME = LM_HEAD_NAME
@@ -216,11 +256,15 @@ def build_training_signal(weights: dict) -> dict:
     """The full signal against a base weight set: inputs + targets.
 
     ``weights`` is the miniature's full applied weight set (the
-    SI-15 forward's input). Each example's target is the base's
-    own last-position logits (through the existing forward) plus
-    the recorded successor-lean correction. Returns
-    ``{"train": [(seq, target_logits)], "held_out": [...],
-    "last_tokens": [...]}`` with float64 target logits.
+    SI-15 forward's input) — at SI-19's only head, the base; at
+    cycle >= 2 (SI-21), the landed head's applied weights.
+    Anchoring (:data:`TARGET_ANCHORING`): each example's target
+    is THOSE weights' own last-position logits (through the
+    existing forward) plus the recorded successor-lean
+    correction — the target source is the weights under
+    training, never silently the seed base on a non-base head.
+    Returns ``{"train": [(seq, target_logits)], "held_out":
+    [...], "last_tokens": [...]}`` with float64 target logits.
     """
     train_seqs, held_out_seqs, last_tokens = signal_sequences()
 
@@ -446,6 +490,12 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     candidate built by ``construct_transformer_delta`` against
     the verified manifest (callers never supply the base
     binding; construction never emits an invalid delta).
+    SI-21: ``manifest`` is whatever verified manifest the
+    caller supplies — the freshness contract (exactly one
+    manifest trains, the cycle's) is enforced by the adapter
+    in ``si.tiny_transformer``; this function assembles at
+    ``manifest``'s head and records that head in the
+    hyperparams (see the module docstring's anchoring note).
     """
     from si.tiny_transformer import assemble_weights
     from si.transformer_delta import construct_transformer_delta
@@ -538,6 +588,18 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     wall_time = time.perf_counter() - started
     hyperparams = {
         "training_signal_id": TRAINING_SIGNAL_ID,
+        # SI-21 (RFC SI-20 §10.2): every cycle records the head
+        # it trained against, the target-source head, and the
+        # stack depth at training time, alongside the SI-19
+        # fields. Under TARGET_ANCHORING the target source IS
+        # the head trained against (targets derive from the
+        # weights under training); both fields are recorded so
+        # the identity is explicit, not assumed. "stack_depth"
+        # is the active chain's length at that head (0 at base).
+        "head": manifest["head"],
+        "target_source_head": manifest["head"],
+        "target_anchoring": TARGET_ANCHORING,
+        "stack_depth": len(_active_chain(manifest)),
         "target": TARGET_NAME,
         "rank": RANK,
         "alpha": ALPHA,
