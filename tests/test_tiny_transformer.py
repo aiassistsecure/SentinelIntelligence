@@ -27,7 +27,9 @@ stated arithmetic discipline: float32 weights/factors, float64
 compute mirroring the seed-time helper, float32 logits out); the
 candidate overlay validates before trusting factors and never reads
 the candidate for untargeted tensors; the adapter's train_delta
-refuses explicitly (§4.4); nothing is wired to gate/loop/serve.
+refused explicitly in SI-15 (§4.4) — SI-19 supersedes that
+refusal for its one named signal (tests/test_tiny_training.py),
+and the refusal assertion below now checks the SI-19 contract.
 """
 import copy
 import json
@@ -583,7 +585,14 @@ def test_adapter_surface_and_explicit_refusals(tmp_path):
         forward_from_bundle(bundle_dir, manifest, [7], candidate=cand))
 
     from si.gate import Intent
-    with pytest.raises(NotImplementedError, match="refuses"):
+    # SI-15's §4.4 refusal stood until SI-19: train_delta now
+    # authors for exactly one named signal, so an intent naming
+    # no signal still refuses (ValueError, the DemoMind
+    # precedent), and propose emits that signal's deterministic
+    # transformer intent instead of refusing. Full SI-19
+    # coverage lives in tests/test_tiny_training.py.
+    with pytest.raises(ValueError, match="unknown training signal"):
         mind.train_delta(Intent(kind="delta", reason="x"))
-    with pytest.raises(NotImplementedError, match="does not propose"):
-        mind.propose([], None)
+    intent = mind.propose([], None)
+    assert intent.training_signal_id == "tiny-successor-lean-001"
+    assert intent.targets == ["lm_head.weight"]
