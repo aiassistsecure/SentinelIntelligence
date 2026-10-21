@@ -34,10 +34,15 @@ What this is and is not (honest labels):
   than §3.1's (as recorded by SI-14) is refused, and the pure
   ``forward`` refuses any weight set that is not exactly the
   miniature's 30-tensor inventory at its pinned shapes.
-- **No training, no authorship** (RFC §4.4): no gradient code, no
-  optimiser, no loss, and no way to construct a delta. The mind
-  adapter's ``train_delta`` (and ``propose``) refuse explicitly
-  rather than fabricate a candidate or an intent.
+- **Authorship arrived in SI-19, scoped exactly as RFC SI-18
+  §4/§7 designs it**: the mind adapter's ``train_delta`` now
+  trains ONE LoRA target (``lm_head.weight``) on ONE named,
+  deterministically constructed signal with real analytic
+  gradients (finite-difference checked), and ``propose`` emits
+  exactly that signal's deterministic transformer intent. The
+  training itself lives in ``si/tiny_training.py``; this module's
+  forward path is unchanged, and anything outside the named
+  signal still refuses explicitly rather than fabricate.
 
 Arithmetic discipline (§4.3, recorded per the SI-15 brief):
 
@@ -338,11 +343,15 @@ class TinyTransformerMind:
     bundle's ``probe_suite.json``. It is wired to NOTHING in SI-15:
     no gate, loop, or serve path constructs it.
 
-    §4.4 honesty: this mind cannot train and cannot propose.
-    ``train_delta`` and ``propose`` raise ``NotImplementedError``
-    explicitly rather than fabricate a candidate or an intent —
-    delta authorship for the miniature remains hand-built test
-    fixtures, exactly as the RFC leaves it.
+    SI-19 honesty (RFC SI-18 §4): this mind CAN now train and
+    propose — for exactly one named signal and one LoRA target,
+    implemented in ``si.tiny_training``. ``train_delta`` refuses
+    (``ValueError``) any other signal, any other declared target
+    list, and any candidate whose held-out signal loss does not
+    improve; ``propose`` emits the named signal's deterministic
+    transformer intent and nothing else. Authorship is not
+    admission: the gate judges an authored candidate exactly as
+    it judges a fixture.
     """
 
     def __init__(self, bundle_dir: str | None = None,
@@ -414,16 +423,64 @@ class TinyTransformerMind:
         return []  # read-only; nothing to perceive in this adapter
 
     def propose(self, perceptions: list, ctx):
-        raise NotImplementedError(
-            "TinyTransformerMind does not propose intents: delta "
-            "authorship for the miniature is out of scope (RFC "
-            "SI-13 §4.4) — refusing explicitly rather than "
-            "fabricating a proposal")
+        """The ONE deterministic intent this mind proposes
+        (SI-19, RFC SI-18 §4.5): the named training signal's
+        transformer intent, mirroring ``DemoMind.propose``'s
+        fixed-intent shape. Head / last journal seq are read from
+        the context's manifest when it carries one (the loop's
+        ``ProbeContext`` does), else from this mind's own bundle,
+        else the seed-time defaults."""
+        from si.gate import Intent
+        from si.tiny_training import (
+            ALPHA,
+            RANK,
+            TARGET_NAME,
+            TRAINING_SIGNAL_ID,
+        )
+        from si.transformer_delta import KIND as TF_KIND
+
+        manifest = getattr(ctx, "manifest", None)
+        if not isinstance(manifest, dict):
+            manifest = self._manifest
+        head = "base"
+        last_seq = 0
+        if isinstance(manifest, dict):
+            head = manifest.get("head", "base")
+            journal = manifest.get("journal")
+            if isinstance(journal, dict):
+                last_seq = int(journal.get("last_seq", 0) or 0)
+        return Intent(
+            kind=TF_KIND,
+            reason=("Train the named signal "
+                    f"{TRAINING_SIGNAL_ID} as a small rank-{RANK} "
+                    f"LoRA correction on {TARGET_NAME} (CPU "
+                    "gradient descent on a constructed, "
+                    "probe-disjoint signal; the gate judges the "
+                    "candidate)."),
+            target_modules=[TARGET_NAME],
+            rank=RANK,
+            alpha=ALPHA,
+            parents=[head],
+            source_seqs=[last_seq] if last_seq else [],
+            training_signal_id=TRAINING_SIGNAL_ID,
+            targets=[TARGET_NAME],
+        )
 
     def train_delta(self, intent) -> dict:
-        raise NotImplementedError(
-            "TinyTransformerMind.train_delta refuses: this forward "
-            "path is inference-only in the narrowest sense — it "
-            "evaluates and contains no gradient, optimiser, or "
-            "delta-authorship code (RFC SI-13 §4.4); refusing "
-            "explicitly rather than fabricating a candidate")
+        """Train the named signal's candidate (SI-19).
+
+        Delegates to :func:`si.tiny_training.train_candidate`:
+        real CPU gradient-based training of one LoRA target on
+        the named signal, returned as a
+        ``construct_transformer_delta`` candidate pair. Refuses
+        explicitly — never fabricates — when this mind is not
+        bundle-backed, the signal is unknown, the intent declares
+        other targets or a different rank/alpha, or the trained
+        candidate's held-out loss does not improve.
+        """
+        self._require_bundle()
+        from si.tiny_training import train_candidate
+
+        return train_candidate(
+            self._bundle_dir, self._manifest, intent,
+            policy=self._policy)
