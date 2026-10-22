@@ -113,6 +113,37 @@ named here before any second cycle trained:
   under training* (at its head) against targets derived from
   those same weights, and the as-built doc says so wherever
   the figure appears.
+
+SI-23 (RFC SI-22 §§5, 9, 10) — a second authored signal:
+
+- **Registry/dispatch.** ``train_candidate`` dispatches on
+  ``intent.training_signal_id`` through :data:`SIGNAL_REGISTRY`,
+  which serves exactly two signals and refuses every other id
+  with the existing ``ValueError`` discipline. Foreign-target
+  and foreign-rank/alpha refusals apply per signal, unchanged.
+  Selection is explicit and recorded: ``TinyTransformerMind``
+  is configured with the signal it will propose (constructor
+  choice, default signal 1); there is no autonomous, learned,
+  depth-driven, or alternating selection.
+- **Signal 2: ``tiny-predecessor-lean-001``.** Same form
+  (target-logits MSE), same target (``lm_head.weight``), rank
+  8, alpha 8, 2,000 steps, lr 1.0, norm budget 0.9, correction
+  scale 0.15 — differing only in correction direction, stream,
+  and drawn sequences: ``v = 0.15 * (onehot(predecessor) -
+  onehot(last_token))`` with ``predecessor = (last_token - 1)
+  % 32``. Its sequences stream is ``MINI_SEED + 23``
+  (:data:`SIGNAL2_SEED_OFFSET`) and its factor-init stream is
+  ``MINI_SEED + 29`` (:data:`INIT2_SEED_OFFSET`) — neither
+  reuses +2, +3, +11, or +17. Its rejection draws reject
+  against the union of both probe suites, signal 1's full 48
+  sequences, and its own draws so far (RFC §5.4).
+- **Anchoring unchanged.** Signal 2 inherits
+  :data:`TARGET_ANCHORING` unchanged; its pre-training
+  held-out loss at any head is the closed form
+  ``2 * 0.15**2 / 32 = 0.00140625`` by construction under
+  weights-under-training anchoring (targets derive from the
+  weights under training), labelled with its head wherever
+  it appears — not fresh evidence about the base.
 """
 from __future__ import annotations
 
@@ -137,18 +168,23 @@ __all__ = [
     "ALPHA",
     "CANDIDATE_CREATED_AT",
     "CORRECTION_SCALE",
+    "INIT2_SEED_OFFSET",
     "INIT_SCALE",
+    "INIT_SEED_OFFSET",
     "LEARNING_RATE",
     "N_HELD_OUT",
     "N_LAST_TOKENS",
     "N_TRAIN",
     "NORM_BUDGET",
     "RANK",
+    "SIGNAL2_SEED_OFFSET",
+    "SIGNAL_REGISTRY",
     "SIGNAL_SEED_OFFSET",
     "STEPS",
     "TARGET_ANCHORING",
     "TARGET_NAME",
     "TRAINING_SIGNAL_ID",
+    "TRAINING_SIGNAL_ID_2",
     "analytic_gradients",
     "build_training_signal",
     "factor_loss",
@@ -156,13 +192,18 @@ __all__ = [
     "forward_with_final_hidden",
     "initial_factors",
     "signal_loss",
+    "signal_spec",
     "signal_sequences",
     "train_candidate",
 ]
 
-#: The one training signal this slice authors against (RFC §4.3:
-#: a mind serves exactly the signal(s) its design names).
+#: The first training signal (SI-19; RFC SI-18 §4.3: a mind
+#: serves exactly the signal(s) its design names).
 TRAINING_SIGNAL_ID = "tiny-successor-lean-001"
+
+#: The second training signal (SI-23; RFC SI-22 §5.6.2): the
+#: directional counterpart of signal 1 — predecessor-lean.
+TRAINING_SIGNAL_ID_2 = "tiny-predecessor-lean-001"
 
 #: SI-21 target anchoring (RFC SI-20 §4.3.2), named in code:
 #: targets are derived from the weights under training — the
@@ -200,6 +241,52 @@ SIGNAL_SEED_OFFSET = 11
 #: training RNG is its own stream, seed + 101 there, + 17 here).
 INIT_SEED_OFFSET = 17
 
+#: SI-23: signal 2's sequence stream offset — a NEW offset,
+#: distinct from the probe offsets (+2, +3) and signal 1's pair
+#: (+11, +17) (RFC SI-22 §5.3). Reusing +11 would make signal
+#: 2's sequences signal 1's; reusing a probe stream would
+#: collide with the suites the draws must stay disjoint from.
+SIGNAL2_SEED_OFFSET = 23
+
+#: SI-23: signal 2's factor-initialisation stream offset —
+#: likewise new and distinct. Reusing +17 would start signal
+#: 2's factors at signal 1's initial point.
+INIT2_SEED_OFFSET = 29
+
+#: SI-23 signal registry (RFC SI-22 §5.2): the per-signal record
+#: ``train_candidate`` dispatches on. Exactly two signals are
+#: served; any other id is refused. Each record carries the
+#: stream offsets, the correction direction (+1 successor,
+#: -1 predecessor, applied modulo the vocabulary), and the
+#: pinned rank/alpha/target shared by both signals.
+SIGNAL_REGISTRY = {
+    TRAINING_SIGNAL_ID: {
+        "signal_id": TRAINING_SIGNAL_ID,
+        "seed_offset": SIGNAL_SEED_OFFSET,
+        "init_offset": INIT_SEED_OFFSET,
+        "direction": 1,
+    },
+    TRAINING_SIGNAL_ID_2: {
+        "signal_id": TRAINING_SIGNAL_ID_2,
+        "seed_offset": SIGNAL2_SEED_OFFSET,
+        "init_offset": INIT2_SEED_OFFSET,
+        "direction": -1,
+    },
+}
+
+
+def signal_spec(signal_id: str) -> dict:
+    """The registry record for ``signal_id``.
+
+    Raises ``ValueError`` with the existing unknown-signal
+    discipline for any id not in :data:`SIGNAL_REGISTRY` —
+    the one refusal every dispatch path shares.
+    """
+    spec = SIGNAL_REGISTRY.get(signal_id)
+    if spec is None:
+        raise ValueError(f"unknown training signal {signal_id!r}")
+    return spec
+
 N_TRAIN = 32
 N_HELD_OUT = 16
 N_LAST_TOKENS = 8
@@ -221,21 +308,35 @@ _EPS = 1e-5
 
 # -- the signal (RFC §4.3) ----------------------------------------------------
 
-def signal_sequences():
-    """The signal's raw inputs, deterministically constructed.
+def signal_sequences(signal_id: str = TRAINING_SIGNAL_ID):
+    """A signal's raw inputs, deterministically constructed.
 
     Returns ``(train_seqs, held_out_seqs, last_tokens)``: 32 + 16
     token-id sequences (lengths 2..8, vocabulary 32) whose last
     tokens cycle round-robin through the 8 ``last_tokens`` drawn
-    first from the signal stream. Draws that duplicate an earlier
-    signal sequence or collide with ANY probe-suite input
-    (identity or capability) are rejected and redrawn from the
-    same stream, so the construction is disjoint by construction
-    as well as by test.
+    first from the signal's own stream. Draws that duplicate an
+    earlier sequence of the same signal or collide with ANY
+    probe-suite input (identity or capability) are rejected and
+    redrawn from the same stream, so the construction is
+    disjoint by construction as well as by test.
+
+    SI-23 (RFC SI-22 §5.4): signal 2's draws additionally reject
+    against signal 1's full 48 sequences (32 train + 16
+    held-out), so its reject set is the union of both probe
+    suites, signal 1's full partition set, and its own draws
+    so far — all five §5.4 obligations hold by construction.
+    The default (no argument) is signal 1, byte-for-byte
+    SI-19's construction.
     """
-    rng = np.random.default_rng(MINI_SEED + SIGNAL_SEED_OFFSET)
+    spec = signal_spec(signal_id)
+    rng = np.random.default_rng(MINI_SEED + spec["seed_offset"])
     probe_seqs = {tuple(s) for s in identity_inputs()} \
         | {tuple(s) for s in capability_inputs()}
+    reject = set(probe_seqs)
+    if signal_id == TRAINING_SIGNAL_ID_2:
+        s1_train, s1_held, _ = signal_sequences(TRAINING_SIGNAL_ID)
+        reject |= {tuple(s) for s in s1_train} \
+            | {tuple(s) for s in s1_held}
     last_tokens = [int(x) for x in
                    rng.choice(_V, size=N_LAST_TOKENS, replace=False)]
     seqs: list = []
@@ -245,14 +346,15 @@ def signal_sequences():
         seq = [int(x) for x in rng.integers(0, _V, size=length)]
         seq[-1] = last_tokens[len(seqs) % N_LAST_TOKENS]
         key = tuple(seq)
-        if key in probe_seqs or key in seen:
+        if key in reject or key in seen:
             continue
         seen.add(key)
         seqs.append(seq)
     return seqs[:N_TRAIN], seqs[N_TRAIN:], last_tokens
 
 
-def build_training_signal(weights: dict) -> dict:
+def build_training_signal(weights: dict,
+                          signal_id: str = TRAINING_SIGNAL_ID) -> dict:
     """The full signal against a base weight set: inputs + targets.
 
     ``weights`` is the miniature's full applied weight set (the
@@ -260,20 +362,24 @@ def build_training_signal(weights: dict) -> dict:
     cycle >= 2 (SI-21), the landed head's applied weights.
     Anchoring (:data:`TARGET_ANCHORING`): each example's target
     is THOSE weights' own last-position logits (through the
-    existing forward) plus the recorded successor-lean
-    correction — the target source is the weights under
-    training, never silently the seed base on a non-base head.
+    existing forward) plus the signal's recorded correction —
+    successor-lean for signal 1 (``(last + 1) % 32``),
+    predecessor-lean for signal 2 (``(last - 1) % 32``) — the
+    target source is the weights under training, never
+    silently the seed base on a non-base head.
     Returns ``{"train": [(seq, target_logits)], "held_out":
     [...], "last_tokens": [...]}`` with float64 target logits.
     """
-    train_seqs, held_out_seqs, last_tokens = signal_sequences()
+    spec = signal_spec(signal_id)
+    direction = int(spec["direction"])
+    train_seqs, held_out_seqs, last_tokens = signal_sequences(signal_id)
 
     def with_targets(seqs):
         out = []
         for seq in seqs:
             base_logits = forward(seq, weights)[-1].astype(np.float64)
             correction = np.zeros(_V, dtype=np.float64)
-            correction[(seq[-1] + 1) % _V] += CORRECTION_SCALE
+            correction[(seq[-1] + direction) % _V] += CORRECTION_SCALE
             correction[seq[-1]] -= CORRECTION_SCALE
             out.append((list(seq), base_logits + correction))
         return out
@@ -393,10 +499,13 @@ def factor_loss(weights: dict, A: np.ndarray, B: np.ndarray,
 
 # -- analytic gradients (RFC §4.4 route (i)) -----------------------------------
 
-def initial_factors():
-    """The pinned initial factors ``(A, B)`` (float64): one
-    dedicated stream, A drawn before B, ``INIT_SCALE``-scaled."""
-    rng = np.random.default_rng(MINI_SEED + INIT_SEED_OFFSET)
+def initial_factors(signal_id: str = TRAINING_SIGNAL_ID):
+    """The pinned initial factors ``(A, B)`` (float64) for a
+    signal: its own dedicated init stream (signal 1: +17,
+    signal 2: +29), A drawn before B, ``INIT_SCALE``-scaled.
+    The default is signal 1, byte-for-byte SI-19's factors."""
+    spec = signal_spec(signal_id)
+    rng = np.random.default_rng(MINI_SEED + spec["init_offset"])
     A = rng.standard_normal((RANK, _D)) * INIT_SCALE
     B = rng.standard_normal((_D, RANK)) * INIT_SCALE
     return A, B
@@ -501,26 +610,28 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     from si.transformer_delta import construct_transformer_delta
 
     signal_id = getattr(intent, "training_signal_id", "")
-    if signal_id != TRAINING_SIGNAL_ID:
-        raise ValueError(f"unknown training signal {signal_id!r}")
+    # SI-23 dispatch (RFC SI-22 §5.2): the registry serves
+    # exactly the two named signals; signal_spec raises the
+    # existing ValueError discipline for any other id.
+    signal_spec(signal_id)
     declared = list(getattr(intent, "targets", None) or [])
     if declared and declared != [TARGET_NAME]:
         raise ValueError(
             f"intent declares targets {declared!r}: "
-            f"{TRAINING_SIGNAL_ID} trains exactly {[TARGET_NAME]!r} "
+            f"{signal_id} trains exactly {[TARGET_NAME]!r} "
             "and never silently retargets (RFC SI-18 §8.6)")
     rank = int(getattr(intent, "rank", 0) or 0)
     alpha = int(getattr(intent, "alpha", 0) or 0)
     if (rank and rank != RANK) or (alpha and alpha != ALPHA):
         raise ValueError(
             f"intent requests rank={rank} alpha={alpha}: "
-            f"{TRAINING_SIGNAL_ID} is pinned at rank={RANK} "
+            f"{signal_id} is pinned at rank={RANK} "
             f"alpha={ALPHA} and refuses a resized candidate "
             "(RFC SI-18 §8.6)")
 
     started = time.perf_counter()
     weights = assemble_weights(bundle_dir, manifest, policy)
-    signal = build_training_signal(weights)
+    signal = build_training_signal(weights, signal_id)
     train_ex, held_ex = signal["train"], signal["held_out"]
     lm_head = np.asarray(weights[TARGET_NAME], dtype=np.float64)
     hiddens = {tuple(seq): final_hidden(weights, seq)
@@ -531,7 +642,7 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     base_train_loss = signal_loss(weights, train_ex)
     base_held_out_loss = signal_loss(weights, held_ex)
 
-    A, B = initial_factors()
+    A, B = initial_factors(signal_id)
     scale = float(ALPHA) / float(RANK)
     train_loss_initial, _, _ = analytic_gradients(
         A, B, train_ex, hiddens, lm_head)
@@ -554,7 +665,7 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     if not held_out_after < base_held_out_loss:
         raise ValueError(
             f"train_delta refuses its own candidate: held-out loss "
-            f"on signal {TRAINING_SIGNAL_ID} did not improve "
+            f"on signal {signal_id} did not improve "
             f"(base {base_held_out_loss:.6f} -> trained "
             f"{held_out_after:.6f}); a non-improving candidate is a "
             "failed experiment, not authorship (RFC SI-18 §8.4)")
@@ -587,7 +698,7 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     validate_transformer_delta(record, blob_bytes, manifest)
     wall_time = time.perf_counter() - started
     hyperparams = {
-        "training_signal_id": TRAINING_SIGNAL_ID,
+        "training_signal_id": signal_id,
         # SI-21 (RFC SI-20 §10.2): every cycle records the head
         # it trained against, the target-source head, and the
         # stack depth at training time, alongside the SI-19
