@@ -43,6 +43,11 @@ What this is and is not (honest labels):
   training itself lives in ``si/tiny_training.py``; this module's
   forward path is unchanged, and anything outside the named
   signal still refuses explicitly rather than fabricate.
+  **SI-23 (RFC SI-22 §5.2)** widens the named set to exactly
+  two signals served through a registry in
+  ``si/tiny_training.py``; the mind is configured with the
+  signal it proposes (explicit recorded selection, default
+  signal 1) and serves no other signal.
 - **SI-21 freshness contract (RFC SI-20 §4.2/§4.3.1, §9.1):**
   exactly one manifest trains in a cycle — the bundle's current
   verified manifest. ``train_delta`` refreshes the mind's
@@ -365,11 +370,18 @@ class TinyTransformerMind:
     transformer intent and nothing else. Authorship is not
     admission: the gate judges an authored candidate exactly as
     it judges a fixture.
+
+    SI-23: the named-signal set is now exactly two (the SI-23
+    registry in ``si.tiny_training``); this mind proposes the
+    ONE signal it is configured with (see ``__init__`` /
+    ``set_training_signal``) and refuses every other signal
+    through the same dispatch.
     """
 
     def __init__(self, bundle_dir: str | None = None,
                  manifest: dict | None = None,
-                 policy: dict | None = None):
+                 policy: dict | None = None,
+                 training_signal_id: str | None = None):
         if bundle_dir is not None and manifest is None:
             from si.bundle import load_bundle
             manifest = load_bundle(bundle_dir)
@@ -378,10 +390,42 @@ class TinyTransformerMind:
         self._bundle_dir = bundle_dir
         self._manifest = manifest
         self._policy = policy
+        # SI-23 (RFC SI-22 §5.2): explicit, recorded selection.
+        # The mind is configured with the signal it will propose;
+        # the default is signal 1. Validation is through the
+        # registry (unknown id -> ValueError, the existing
+        # discipline). There is no autonomous selection.
+        from si.tiny_training import TRAINING_SIGNAL_ID, signal_spec
+
+        chosen = training_signal_id if training_signal_id is not None \
+            else TRAINING_SIGNAL_ID
+        signal_spec(chosen)
+        self._training_signal_id = chosen
 
     @property
     def name(self) -> str:
         return TINY_MIND_NAME
+
+    @property
+    def training_signal_id(self) -> str:
+        """The explicitly configured signal this mind proposes
+        (SI-23 recorded selection; see :meth:`set_training_signal`)."""
+        return self._training_signal_id
+
+    def set_training_signal(self, signal_id: str) -> None:
+        """Explicitly reconfigure the proposed signal (SI-23).
+
+        This is the driver saying, in code, which signal the
+        next cycle proposes — the journal then records it in
+        that cycle's ``training-hyperparams``. It is not a
+        choice the mind makes: no perception, depth, or
+        alternation rule calls this. Unknown ids refuse with
+        the registry's ``ValueError`` discipline.
+        """
+        from si.tiny_training import signal_spec
+
+        signal_spec(signal_id)
+        self._training_signal_id = signal_id
 
     def _require_bundle(self) -> None:
         if self._bundle_dir is None or self._manifest is None:
@@ -436,9 +480,11 @@ class TinyTransformerMind:
         return []  # read-only; nothing to perceive in this adapter
 
     def propose(self, perceptions: list, ctx):
-        """The ONE deterministic intent this mind proposes
-        (SI-19, RFC SI-18 §4.5): the named training signal's
-        transformer intent, mirroring ``DemoMind.propose``'s
+        """The deterministic intent this mind proposes: the
+        CONFIGURED training signal's transformer intent (SI-19
+        shape; SI-23 recorded selection — the signal is the
+        constructor / :meth:`set_training_signal` choice, never
+        an autonomous one), mirroring ``DemoMind.propose``'s
         fixed-intent shape. Head / last journal seq are read from
         the context's manifest when it carries one (the loop's
         ``ProbeContext`` does), else from this mind's own bundle,
@@ -448,10 +494,10 @@ class TinyTransformerMind:
             ALPHA,
             RANK,
             TARGET_NAME,
-            TRAINING_SIGNAL_ID,
         )
         from si.transformer_delta import KIND as TF_KIND
 
+        signal_id = self._training_signal_id
         manifest = getattr(ctx, "manifest", None)
         if not isinstance(manifest, dict):
             manifest = self._manifest
@@ -465,7 +511,7 @@ class TinyTransformerMind:
         return Intent(
             kind=TF_KIND,
             reason=("Train the named signal "
-                    f"{TRAINING_SIGNAL_ID} as a small rank-{RANK} "
+                    f"{signal_id} as a small rank-{RANK} "
                     f"LoRA correction on {TARGET_NAME} (CPU "
                     "gradient descent on a constructed, "
                     "probe-disjoint signal; the gate judges the "
@@ -475,7 +521,7 @@ class TinyTransformerMind:
             alpha=ALPHA,
             parents=[head],
             source_seqs=[last_seq] if last_seq else [],
-            training_signal_id=TRAINING_SIGNAL_ID,
+            training_signal_id=signal_id,
             targets=[TARGET_NAME],
         )
 
