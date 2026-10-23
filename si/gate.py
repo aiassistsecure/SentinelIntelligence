@@ -145,6 +145,13 @@ class Intent:
     parents: list = field(default_factory=list)
     source_seqs: list = field(default_factory=list)
     training_signal_id: str = ""
+    # SI-25 (RFC SI-24 §5.3): the target anchoring the driver
+    # configured for this cycle — exactly "weights-under-training"
+    # (the default, SI-21 semantics) or "base-anchored". Carried on
+    # the intent so train_candidate dispatches on it and every
+    # cycle's hyperparams record it; validated in si.tiny_training
+    # against exactly those two values (any other value refuses).
+    target_anchoring: str = "weights-under-training"
     # memory fields
     collection: str = ""
     record: dict = field(default_factory=dict)
@@ -166,6 +173,7 @@ class Intent:
             "parents": list(self.parents),
             "source_seqs": list(self.source_seqs),
             "training_signal_id": self.training_signal_id,
+            "target_anchoring": self.target_anchoring,
             "collection": self.collection,
             "record": self.record,
             "target": self.target,
