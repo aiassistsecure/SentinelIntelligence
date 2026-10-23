@@ -422,13 +422,26 @@ class TinyTransformerMind:
     recorded in every cycle's hyperparams. No autonomous,
     learned, depth-driven, or verdict-driven anchoring
     selection exists.
+
+    SI-27: the mind is likewise configured with the
+    COMPOSITION configuration it will train under (see
+    ``__init__`` / ``set_composition_config``) — a third
+    explicit, recorded, per-cycle driver configuration
+    beside signal selection and anchoring, defaulting to
+    ``"none"`` (the unpenalised SI-25 path). The
+    configuration is carried on the proposed intent and
+    recorded in every cycle's hyperparams with its λ and
+    the penalty's measured values. No autonomous, learned,
+    depth-driven, or verdict-driven composition selection
+    exists, and λ is not independently settable.
     """
 
     def __init__(self, bundle_dir: str | None = None,
                  manifest: dict | None = None,
                  policy: dict | None = None,
                  training_signal_id: str | None = None,
-                 target_anchoring: str | None = None):
+                 target_anchoring: str | None = None,
+                 composition_config: str | None = None):
         if bundle_dir is not None and manifest is None:
             from si.bundle import load_bundle
             manifest = load_bundle(bundle_dir)
@@ -443,9 +456,11 @@ class TinyTransformerMind:
         # registry (unknown id -> ValueError, the existing
         # discipline). There is no autonomous selection.
         from si.tiny_training import (
+            DEFAULT_COMPOSITION_CONFIG,
             TARGET_ANCHORING,
             TRAINING_SIGNAL_ID,
             signal_spec,
+            validate_composition_config,
             validate_target_anchoring,
         )
 
@@ -462,6 +477,14 @@ class TinyTransformerMind:
             else TARGET_ANCHORING
         validate_target_anchoring(anchoring)
         self._target_anchoring = anchoring
+        # SI-27 (RFC SI-26 §7.4): explicit, recorded composition
+        # configuration, mirroring both axes above. The default
+        # is "none"; validation serves exactly the two named
+        # configurations and refuses every other value.
+        comp = composition_config if composition_config is not None \
+            else DEFAULT_COMPOSITION_CONFIG
+        validate_composition_config(comp)
+        self._composition_config = comp
 
     @property
     def name(self) -> str:
@@ -511,6 +534,34 @@ class TinyTransformerMind:
 
         validate_target_anchoring(anchoring)
         self._target_anchoring = anchoring
+
+    @property
+    def composition_config(self) -> str:
+        """The explicitly configured composition configuration
+        this mind trains under (SI-27 recorded configuration;
+        see :meth:`set_composition_config`)."""
+        return self._composition_config
+
+    def set_composition_config(self, config: str) -> None:
+        """Explicitly reconfigure the composition
+        configuration (SI-27).
+
+        This is the driver saying, in code, which composition
+        configuration the next cycle trains under — the journal
+        then records it in that cycle's ``training-hyperparams``
+        as ``composition_config`` / ``composition_lambda`` with
+        the penalty's measured values. It is not a choice the
+        mind makes: no perception, depth, alternation, or
+        verdict rule calls this. Any value outside the two
+        named configurations refuses with the existing
+        ``ValueError`` discipline. λ cannot be set through
+        this (or any) call: it is the configuration's
+        definition (1.0 under ``"movement-composition"``).
+        """
+        from si.tiny_training import validate_composition_config
+
+        validate_composition_config(config)
+        self._composition_config = config
 
     def _require_bundle(self) -> None:
         if self._bundle_dir is None or self._manifest is None:
@@ -576,7 +627,10 @@ class TinyTransformerMind:
         fixed-intent shape. Head / last journal seq are read from
         the context's manifest when it carries one (the loop's
         ``ProbeContext`` does), else from this mind's own bundle,
-        else the seed-time defaults."""
+        else the seed-time defaults. SI-27: the intent also
+        carries the configured composition configuration
+        (``composition_config``), exactly as it carries the
+        configured signal and anchoring."""
         from si.gate import Intent
         from si.tiny_training import (
             ALPHA,
@@ -611,6 +665,7 @@ class TinyTransformerMind:
             source_seqs=[last_seq] if last_seq else [],
             training_signal_id=signal_id,
             target_anchoring=self._target_anchoring,
+            composition_config=self._composition_config,
             targets=[TARGET_NAME],
         )
 
