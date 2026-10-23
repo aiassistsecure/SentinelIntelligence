@@ -144,6 +144,47 @@ SI-23 (RFC SI-22 §§5, 9, 10) — a second authored signal:
   weights-under-training anchoring (targets derive from the
   weights under training), labelled with its head wherever
   it appears — not fresh evidence about the base.
+
+SI-25 (RFC SI-24 §§5, 9, 10) — base-anchored targets:
+
+- **Anchoring as a recorded configuration (§5.3).** The mind
+  is configured with the anchoring it will train under
+  (constructor-level ``target_anchoring`` on
+  ``TinyTransformerMind``, defaulting to
+  :data:`TARGET_ANCHORING` = ``"weights-under-training"``),
+  settable between cycles by the explicit driver call
+  ``set_target_anchoring(...)``. The value is validated
+  against exactly :data:`TARGET_ANCHORINGS` by
+  :func:`validate_target_anchoring` (any other value refuses
+  with the existing ``ValueError`` discipline), carried on
+  the intent (``Intent.target_anchoring``), dispatched on by
+  :func:`train_candidate`, and recorded in every cycle's
+  hyperparams as ``target_anchoring`` / ``target_source_head``.
+  :data:`TARGET_ANCHORING` survives as the *default's* name,
+  not as a description of every cycle. No autonomous,
+  learned, depth-driven, or verdict-driven anchoring
+  selection exists.
+- **Only the target-source role splits (§5.2/§5.4).**
+  ``train_candidate`` still assembles the weights under
+  training at the cycle's verified manifest head — hidden
+  states, the readout under training, candidate construction,
+  the gate, and VERIFY all use that set, unchanged. Under
+  ``"base-anchored"`` the signal's *targets* alone derive
+  from a second set: the frozen seed base, assembled by
+  ``si.tiny_transformer.assemble_base_weights`` from the
+  same verified manifest with its active chain truncated to
+  empty, through hash-verified apply-at-load reads, with no
+  bytes copied or stored and the manifest never mutated. A
+  failed base assembly refuses training — there is NO
+  fallback to head-derived targets. Under
+  ``"weights-under-training"`` the target source IS the
+  weights under training, exactly as before (byte-for-byte).
+- **Echo-trap records change character (§5.5).** Under
+  base-anchoring a non-base head's pre-training held-out
+  loss is the head's loss against *base-derived* targets —
+  a genuine measurement, never the closed form
+  ``0.00140625`` (which holds only where the two weight sets
+  coincide: at head = ``base``, under either anchoring).
 """
 from __future__ import annotations
 
@@ -181,7 +222,9 @@ __all__ = [
     "SIGNAL_REGISTRY",
     "SIGNAL_SEED_OFFSET",
     "STEPS",
+    "BASE_ANCHORED",
     "TARGET_ANCHORING",
+    "TARGET_ANCHORINGS",
     "TARGET_NAME",
     "TRAINING_SIGNAL_ID",
     "TRAINING_SIGNAL_ID_2",
@@ -195,6 +238,7 @@ __all__ = [
     "signal_spec",
     "signal_sequences",
     "train_candidate",
+    "validate_target_anchoring",
 ]
 
 #: The first training signal (SI-19; RFC SI-18 §4.3: a mind
@@ -212,6 +256,32 @@ TRAINING_SIGNAL_ID_2 = "tiny-predecessor-lean-001"
 #: anchored to the seed base's logits at every cycle) is NOT
 #: the semantics of this signal id; see the module docstring.
 TARGET_ANCHORING = "weights-under-training"
+
+#: SI-25 (RFC SI-24 §5.3): the second named anchoring — targets
+#: derived from the frozen seed base's logits at every cycle.
+BASE_ANCHORED = "base-anchored"
+
+#: SI-25: exactly the two named anchorings the configuration
+#: serves. Any other value refuses (see
+#: :func:`validate_target_anchoring`).
+TARGET_ANCHORINGS = (TARGET_ANCHORING, BASE_ANCHORED)
+
+
+def validate_target_anchoring(anchoring: str) -> str:
+    """Return ``anchoring`` iff it is one of the two named
+    anchorings in :data:`TARGET_ANCHORINGS`.
+
+    Raises ``ValueError`` with the existing refusal discipline
+    for any other value — the one refusal every anchoring
+    dispatch path shares (constructor, setter, and
+    ``train_candidate``), mirroring :func:`signal_spec`.
+    """
+    if anchoring not in TARGET_ANCHORINGS:
+        raise ValueError(
+            f"unknown target anchoring {anchoring!r}: "
+            f"exactly {list(TARGET_ANCHORINGS)!r} are served "
+            "(RFC SI-24 §5.3)")
+    return anchoring
 
 #: The one LoRA target trained per candidate (RFC §4.5).
 TARGET_NAME = LM_HEAD_NAME
@@ -357,16 +427,22 @@ def build_training_signal(weights: dict,
                           signal_id: str = TRAINING_SIGNAL_ID) -> dict:
     """The full signal against a base weight set: inputs + targets.
 
-    ``weights`` is the miniature's full applied weight set (the
-    SI-15 forward's input) — at SI-19's only head, the base; at
-    cycle >= 2 (SI-21), the landed head's applied weights.
-    Anchoring (:data:`TARGET_ANCHORING`): each example's target
-    is THOSE weights' own last-position logits (through the
-    existing forward) plus the signal's recorded correction —
-    successor-lean for signal 1 (``(last + 1) % 32``),
-    predecessor-lean for signal 2 (``(last - 1) % 32``) — the
-    target source is the weights under training, never
-    silently the seed base on a non-base head.
+    ``weights`` is the TARGET SOURCE: the miniature's full
+    applied weight set (the SI-15 forward's input) whose
+    last-position logits the targets derive from. Under
+    weights-under-training anchoring (SI-19/SI-21/SI-23) the
+    caller passes the weights under training — at SI-19's only
+    head, the base; at cycle >= 2, the landed head's applied
+    weights. Under SI-25 base-anchoring the caller passes the
+    frozen seed base's weight set instead (assembled by
+    ``assemble_base_weights``); this function itself is
+    anchoring-agnostic — it derives targets from whatever
+    weight set it is given, and the caller records which set
+    that was. Each example's target is the given weights' own
+    last-position logits (through the existing forward) plus
+    the signal's recorded correction — successor-lean for
+    signal 1 (``(last + 1) % 32``), predecessor-lean for
+    signal 2 (``(last - 1) % 32``).
     Returns ``{"train": [(seq, target_logits)], "held_out":
     [...], "last_tokens": [...]}`` with float64 target logits.
     """
@@ -605,8 +681,17 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     in ``si.tiny_transformer``; this function assembles at
     ``manifest``'s head and records that head in the
     hyperparams (see the module docstring's anchoring note).
+    SI-25: the intent's ``target_anchoring`` is validated
+    against exactly the two named anchorings and dispatched
+    on here — under ``"base-anchored"`` only the signal's
+    targets derive from the frozen seed base (see the module
+    docstring); every other role stays with the weights under
+    training. An intent carrying no anchoring field at all
+    (a duck-typed pre-SI-25 intent) trains under the default,
+    :data:`TARGET_ANCHORING`; an intent carrying any other
+    value refuses.
     """
-    from si.tiny_transformer import assemble_weights
+    from si.tiny_transformer import assemble_base_weights, assemble_weights
     from si.transformer_delta import construct_transformer_delta
 
     signal_id = getattr(intent, "training_signal_id", "")
@@ -614,6 +699,12 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     # exactly the two named signals; signal_spec raises the
     # existing ValueError discipline for any other id.
     signal_spec(signal_id)
+    # SI-25 dispatch (RFC SI-24 §5.3): exactly the two named
+    # anchorings; validate_target_anchoring raises the same
+    # ValueError discipline for any other value.
+    _raw_anchoring = getattr(intent, "target_anchoring", None)
+    anchoring = validate_target_anchoring(
+        TARGET_ANCHORING if _raw_anchoring is None else _raw_anchoring)
     declared = list(getattr(intent, "targets", None) or [])
     if declared and declared != [TARGET_NAME]:
         raise ValueError(
@@ -631,7 +722,25 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
 
     started = time.perf_counter()
     weights = assemble_weights(bundle_dir, manifest, policy)
-    signal = build_training_signal(weights, signal_id)
+    # SI-25 (§5.2/§5.4): split ONLY the target-source role.
+    # The weights under training (``weights``) still supply the
+    # hidden states, the readout under training, candidate
+    # construction, and every loss evaluation below. Under
+    # base-anchoring the targets alone derive from the frozen
+    # seed base, assembled from THIS verified manifest with its
+    # active chain truncated to empty. Fail closed: a failed
+    # base assembly raises here and refuses training — there
+    # is deliberately NO try/except fallback to head-derived
+    # targets (a silent fallback would train a head-relative
+    # candidate wearing a base-anchored label).
+    if anchoring == BASE_ANCHORED:
+        target_weights = assemble_base_weights(
+            bundle_dir, manifest, policy)
+        target_source_head = "base"
+    else:
+        target_weights = weights
+        target_source_head = manifest["head"]
+    signal = build_training_signal(target_weights, signal_id)
     train_ex, held_ex = signal["train"], signal["held_out"]
     lm_head = np.asarray(weights[TARGET_NAME], dtype=np.float64)
     hiddens = {tuple(seq): final_hidden(weights, seq)
@@ -702,14 +811,25 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
         # SI-21 (RFC SI-20 §10.2): every cycle records the head
         # it trained against, the target-source head, and the
         # stack depth at training time, alongside the SI-19
-        # fields. Under TARGET_ANCHORING the target source IS
-        # the head trained against (targets derive from the
-        # weights under training); both fields are recorded so
-        # the identity is explicit, not assumed. "stack_depth"
-        # is the active chain's length at that head (0 at base).
+        # fields. SI-25: the two head fields are read from the
+        # cycle's own configuration — under
+        # "weights-under-training" the target source IS the
+        # head trained against; under "base-anchored" the
+        # target source is "base" at every head, so the fields
+        # disagree exactly when the new semantics ran. A
+        # cycle's anchoring is read from THIS record, never
+        # inferred from the TARGET_ANCHORING constant (which
+        # now names only the default). "stack_depth" is the
+        # active chain's length at that head (0 at base).
+        # Note (§5.5): under base-anchoring at a non-base head,
+        # "base_held_out_loss" below means the pre-training
+        # held-out loss of the weights under training (at
+        # "head") against targets derived from the recorded
+        # target source — a genuine measurement, not the
+        # closed form.
         "head": manifest["head"],
-        "target_source_head": manifest["head"],
-        "target_anchoring": TARGET_ANCHORING,
+        "target_source_head": target_source_head,
+        "target_anchoring": anchoring,
         "stack_depth": len(_active_chain(manifest)),
         "target": TARGET_NAME,
         "rank": RANK,

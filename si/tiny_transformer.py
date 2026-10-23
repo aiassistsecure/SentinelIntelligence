@@ -111,6 +111,7 @@ __all__ = [
     "TinyTransformerError",
     "TinyTransformerMind",
     "applied_tensor_with_candidate",
+    "assemble_base_weights",
     "assemble_weights",
     "assemble_weights_with_candidate",
     "forward",
@@ -313,6 +314,41 @@ def assemble_weights(bundle_dir: str, manifest: dict,
             for name in tiny_tensor_shapes()}
 
 
+def assemble_base_weights(bundle_dir: str, manifest: dict,
+                          policy: dict | None = None) -> dict:
+    """The frozen seed base's full applied weight set (SI-25).
+
+    RFC SI-24 §5.4: the base view of the cycle's OWN verified
+    manifest — the applied weight set at head ``base``, i.e.
+    the base tensors with the active chain truncated to empty.
+    This is the ONE place the base weight set is assembled for
+    training's target-source role; it lives beside
+    :func:`assemble_weights` and nowhere else.
+
+    - Derived, never stored: the derivation is an in-memory
+      manifest view (a shallow copy of ``manifest`` with its
+      ``head`` set to ``"base"``); the verified manifest itself
+      is never mutated, re-headed, or written.
+    - Hash-verified reads only, no new bytes: every tensor
+      still comes through :func:`si.apply.load_applied_tensor`
+      — with the truncated (empty) chain it folds nothing, so
+      each value is a hash-verified read of the frozen base.
+      No tensor is copied, materialised to disk, or stored:
+      the never-duplicate-bytes rule holds by construction.
+    - Fail closed: the same architecture / tensor-map refusals
+      as :func:`assemble_weights`, and any failed base read
+      raises — callers must NOT fall back to head-derived
+      targets (RFC §5.4).
+    """
+    _manifest_architecture(manifest)
+    _check_tensor_map(manifest)
+    base_manifest = dict(manifest)
+    base_manifest["head"] = "base"
+    return {name: load_applied_tensor(bundle_dir, base_manifest, name,
+                                      policy)
+            for name in tiny_tensor_shapes()}
+
+
 def assemble_weights_with_candidate(bundle_dir: str, manifest: dict,
                                     candidate,
                                     policy: dict | None = None) -> dict:
@@ -376,12 +412,23 @@ class TinyTransformerMind:
     ONE signal it is configured with (see ``__init__`` /
     ``set_training_signal``) and refuses every other signal
     through the same dispatch.
+
+    SI-25: the mind is likewise configured with the target
+    ANCHORING it will train under (see ``__init__`` /
+    ``set_target_anchoring``) — an explicit, recorded,
+    per-cycle driver configuration beside the signal
+    selection, defaulting to ``"weights-under-training"``.
+    The anchoring is carried on the proposed intent and
+    recorded in every cycle's hyperparams. No autonomous,
+    learned, depth-driven, or verdict-driven anchoring
+    selection exists.
     """
 
     def __init__(self, bundle_dir: str | None = None,
                  manifest: dict | None = None,
                  policy: dict | None = None,
-                 training_signal_id: str | None = None):
+                 training_signal_id: str | None = None,
+                 target_anchoring: str | None = None):
         if bundle_dir is not None and manifest is None:
             from si.bundle import load_bundle
             manifest = load_bundle(bundle_dir)
@@ -395,12 +442,26 @@ class TinyTransformerMind:
         # the default is signal 1. Validation is through the
         # registry (unknown id -> ValueError, the existing
         # discipline). There is no autonomous selection.
-        from si.tiny_training import TRAINING_SIGNAL_ID, signal_spec
+        from si.tiny_training import (
+            TARGET_ANCHORING,
+            TRAINING_SIGNAL_ID,
+            signal_spec,
+            validate_target_anchoring,
+        )
 
         chosen = training_signal_id if training_signal_id is not None \
             else TRAINING_SIGNAL_ID
         signal_spec(chosen)
         self._training_signal_id = chosen
+        # SI-25 (RFC SI-24 §5.3): explicit, recorded anchoring
+        # configuration, mirroring the signal selection above.
+        # The default is TARGET_ANCHORING ("weights-under-
+        # training"); validation serves exactly the two named
+        # anchorings and refuses every other value.
+        anchoring = target_anchoring if target_anchoring is not None \
+            else TARGET_ANCHORING
+        validate_target_anchoring(anchoring)
+        self._target_anchoring = anchoring
 
     @property
     def name(self) -> str:
@@ -426,6 +487,30 @@ class TinyTransformerMind:
 
         signal_spec(signal_id)
         self._training_signal_id = signal_id
+
+    @property
+    def target_anchoring(self) -> str:
+        """The explicitly configured target anchoring this mind
+        trains under (SI-25 recorded configuration; see
+        :meth:`set_target_anchoring`)."""
+        return self._target_anchoring
+
+    def set_target_anchoring(self, anchoring: str) -> None:
+        """Explicitly reconfigure the target anchoring (SI-25).
+
+        This is the driver saying, in code, which anchoring the
+        next cycle trains under — the journal then records it
+        in that cycle's ``training-hyperparams`` as
+        ``target_anchoring`` / ``target_source_head``. It is
+        not a choice the mind makes: no perception, depth,
+        alternation, or verdict rule calls this. Any value
+        outside the two named anchorings refuses with the
+        existing ``ValueError`` discipline.
+        """
+        from si.tiny_training import validate_target_anchoring
+
+        validate_target_anchoring(anchoring)
+        self._target_anchoring = anchoring
 
     def _require_bundle(self) -> None:
         if self._bundle_dir is None or self._manifest is None:
@@ -484,7 +569,10 @@ class TinyTransformerMind:
         CONFIGURED training signal's transformer intent (SI-19
         shape; SI-23 recorded selection — the signal is the
         constructor / :meth:`set_training_signal` choice, never
-        an autonomous one), mirroring ``DemoMind.propose``'s
+        an autonomous one; SI-25 recorded anchoring — the
+        anchoring is likewise the constructor /
+        :meth:`set_target_anchoring` choice, carried on the
+        intent), mirroring ``DemoMind.propose``'s
         fixed-intent shape. Head / last journal seq are read from
         the context's manifest when it carries one (the loop's
         ``ProbeContext`` does), else from this mind's own bundle,
@@ -522,6 +610,7 @@ class TinyTransformerMind:
             parents=[head],
             source_seqs=[last_seq] if last_seq else [],
             training_signal_id=signal_id,
+            target_anchoring=self._target_anchoring,
             targets=[TARGET_NAME],
         )
 
