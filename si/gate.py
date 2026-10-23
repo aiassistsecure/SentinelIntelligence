@@ -152,6 +152,15 @@ class Intent:
     # cycle's hyperparams record it; validated in si.tiny_training
     # against exactly those two values (any other value refuses).
     target_anchoring: str = "weights-under-training"
+    # SI-27 (RFC SI-26 §7.4): the composition configuration the
+    # driver configured for this cycle — exactly "none" (the
+    # default, SI-25 semantics) or "movement-composition".
+    # Carried on the intent so train_candidate dispatches on
+    # it and every cycle's hyperparams record it; validated in
+    # si.tiny_training against exactly those two values (any
+    # other value refuses). λ is NOT carried here: it is the
+    # configuration's definition, not a per-cycle value.
+    composition_config: str = "none"
     # memory fields
     collection: str = ""
     record: dict = field(default_factory=dict)
@@ -174,6 +183,7 @@ class Intent:
             "source_seqs": list(self.source_seqs),
             "training_signal_id": self.training_signal_id,
             "target_anchoring": self.target_anchoring,
+            "composition_config": self.composition_config,
             "collection": self.collection,
             "record": self.record,
             "target": self.target,

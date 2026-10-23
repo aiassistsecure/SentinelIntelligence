@@ -185,6 +185,59 @@ SI-25 (RFC SI-24 §§5, 9, 10) — base-anchored targets:
   a genuine measurement, never the closed form
   ``0.00140625`` (which holds only where the two weight sets
   coincide: at head = ``base``, under either anchoring).
+
+SI-27 (RFC SI-26 §§7, 14, 15) — movement-composition-aware
+training:
+
+- **Composition as a recorded configuration (§7.4).** The
+  mind is configured with the composition configuration it
+  will train under (constructor-level ``composition_config``
+  on ``TinyTransformerMind``, defaulting to
+  :data:`DEFAULT_COMPOSITION_CONFIG` = ``"none"``), settable
+  between cycles by the explicit driver call
+  ``set_composition_config(...)``. The value is validated
+  against exactly :data:`COMPOSITION_CONFIGS` by
+  :func:`validate_composition_config` (any other value
+  refuses with the existing ``ValueError`` discipline),
+  carried on the intent (``Intent.composition_config``),
+  dispatched on by :func:`train_candidate`, and recorded in
+  every cycle's hyperparams as ``composition_config`` /
+  ``composition_lambda`` beside the penalty's measured
+  values. No autonomous, learned, depth-driven, or
+  verdict-driven configuration selection exists, and the
+  weight is NOT independently settable: ``λ = 1.0``
+  (:data:`COMPOSITION_LAMBDA`) is part of the
+  ``"movement-composition"`` configuration's definition
+  (§7.2(ii) — fixed by parity of units, in advance, never
+  swept).
+- **Exactly one added term (§7.2).** Under
+  ``"movement-composition"`` the loss is ``signal_MSE +
+  λ · mean_x p(x)`` over the signal's 32 TRAINING sequences
+  only, where ``p(x) = (1/32) Σ_c m1_c(x) · m2_c(x)``,
+  ``m1(x)`` is the landed head's realised movement at ``x``
+  (landed-head last-position logits minus the frozen base's,
+  both through the existing forwards, computed once —
+  constants during optimisation), and ``m2(x)`` is the
+  candidate's movement at ``x`` (candidate-head minus
+  landed-head last-position logits). No probe input, probe
+  logit, probe-derived quantity, or held-out sequence
+  enters the loss, the penalty, factor initialisation,
+  early stopping, or candidate selection (invariant 9);
+  the penalty's value on the held-out partition is
+  *reported only* (initial and final), never optimised.
+  Under ``"none"`` the training path is byte-for-byte
+  SI-25's: no base assembly is performed for the penalty
+  and no penalty quantity is computed.
+- **Gradient shape (§7.3).** The penalty is linear in the
+  folded update: ``m2(x) = ΔW · h_final(x)`` over the same
+  cached hidden states the signal loss reads, so its
+  gradient is the fixed matrix ``mean_x (1/32) ·
+  outer(m1(x), h_final(x))`` carried through the same
+  readout fold as the signal gradient — no new backward
+  machinery. At head = ``base``, ``m1`` is identically zero,
+  the penalty and its gradient vanish, and penalised
+  training coincides with SI-25's unpenalised training
+  byte-for-byte (measured by test, not asserted).
 """
 from __future__ import annotations
 
@@ -223,21 +276,32 @@ __all__ = [
     "SIGNAL_SEED_OFFSET",
     "STEPS",
     "BASE_ANCHORED",
+    "COMPOSITION_CONFIGS",
+    "COMPOSITION_LAMBDA",
+    "COMPOSITION_NONE",
+    "DEFAULT_COMPOSITION_CONFIG",
+    "MOVEMENT_COMPOSITION",
     "TARGET_ANCHORING",
     "TARGET_ANCHORINGS",
     "TARGET_NAME",
     "TRAINING_SIGNAL_ID",
     "TRAINING_SIGNAL_ID_2",
     "analytic_gradients",
+    "analytic_gradients_penalised",
     "build_training_signal",
+    "composition_penalty",
+    "existing_movements",
     "factor_loss",
     "final_hidden",
     "forward_with_final_hidden",
     "initial_factors",
+    "movement_composition_record",
+    "penalised_factor_loss",
     "signal_loss",
     "signal_spec",
     "signal_sequences",
     "train_candidate",
+    "validate_composition_config",
     "validate_target_anchoring",
 ]
 
@@ -282,6 +346,53 @@ def validate_target_anchoring(anchoring: str) -> str:
             f"exactly {list(TARGET_ANCHORINGS)!r} are served "
             "(RFC SI-24 §5.3)")
     return anchoring
+
+#: SI-27 (RFC SI-26 §7.4): the default composition
+#: configuration — the unpenalised SI-25 training path.
+COMPOSITION_NONE = "none"
+
+#: SI-27: the composition-penalised configuration — the
+#: signal loss gains exactly one composition-penalty term
+#: (see the module docstring and :data:`COMPOSITION_LAMBDA`).
+MOVEMENT_COMPOSITION = "movement-composition"
+
+#: SI-27: exactly the two named composition configurations
+#: the configuration serves. Any other value refuses (see
+#: :func:`validate_composition_config`).
+COMPOSITION_CONFIGS = (COMPOSITION_NONE, MOVEMENT_COMPOSITION)
+
+#: SI-27: the default composition configuration's name —
+#: cycles train unpenalised unless the driver explicitly
+#: configures otherwise (§7.4's consequence: with the
+#: default ``"none"``, the unpenalised path remains
+#: byte-for-byte the SI-25 path).
+DEFAULT_COMPOSITION_CONFIG = COMPOSITION_NONE
+
+#: SI-27 (RFC SI-26 §7.2(ii)): the composition penalty's
+#: weight, fixed by parity of units in advance — one unit
+#: of per-coordinate mean movement product weighs exactly
+#: as one unit of per-coordinate mean squared target error.
+#: Part of the ``"movement-composition"`` configuration's
+#: DEFINITION: not a per-cycle dial, never swept in SI-27.
+COMPOSITION_LAMBDA = 1.0
+
+
+def validate_composition_config(config: str) -> str:
+    """Return ``config`` iff it is one of the two named
+    composition configurations in :data:`COMPOSITION_CONFIGS`.
+
+    Raises ``ValueError`` with the existing refusal discipline
+    for any other value — the one refusal every composition
+    dispatch path shares (constructor, setter, and
+    ``train_candidate``), mirroring
+    :func:`validate_target_anchoring`.
+    """
+    if config not in COMPOSITION_CONFIGS:
+        raise ValueError(
+            f"unknown composition configuration {config!r}: "
+            f"exactly {list(COMPOSITION_CONFIGS)!r} are served "
+            "(RFC SI-26 §7.4)")
+    return config
 
 #: The one LoRA target trained per candidate (RFC §4.5).
 TARGET_NAME = LM_HEAD_NAME
@@ -618,6 +729,166 @@ def analytic_gradients(A: np.ndarray, B: np.ndarray, examples,
     return total / len(examples), grad_A, grad_B
 
 
+# -- SI-27: the composition penalty (RFC SI-26 §7.2/§7.3) ----------------------
+# m1 is a CONSTANT during a cycle's optimisation (two forwards
+# of fixed weight sets, computed once — exactly as the targets
+# are computed once). m2 is the folded update applied to the
+# cached final hidden state, so the penalty is linear in the
+# folded update and its gradient is a fixed matrix carried
+# through the same readout fold as the signal gradient.
+
+def existing_movements(head_weights: dict, base_weights: dict,
+                       seqs) -> dict:
+    """``m1`` per sequence (RFC SI-26 §7.2): the landed head's
+    realised movement — landed-head last-position logits minus
+    the frozen base's last-position logits, both through the
+    existing SI-15 forward, in float64. Returns
+    ``{tuple(seq): m1_vector}``. At head = ``base`` every
+    vector is identically zero (the landed head IS the base)."""
+    out = {}
+    for seq in seqs:
+        head_logits = forward(seq, head_weights)[-1].astype(np.float64)
+        base_logits = forward(seq, base_weights)[-1].astype(np.float64)
+        out[tuple(seq)] = head_logits - base_logits
+    return out
+
+
+def composition_penalty(A: np.ndarray, B: np.ndarray, seqs,
+                        hiddens: dict, m1_map: dict) -> float:
+    """The penalty term's value at factors ``(A, B)`` (float64,
+    analytic path): ``mean_x (1/32) Σ_c m1_c(x) · m2_c(x)``
+    with ``m2(x) = (scale · B @ A) @ h_final(x)`` over the
+    cached hidden states. Signed by construction (§7.2(i)):
+    a negative value IS aggregate opposition, in the
+    diagnostic's own units (logit²)."""
+    scale = float(ALPHA) / float(RANK)
+    A = np.asarray(A, dtype=np.float64)
+    B = np.asarray(B, dtype=np.float64)
+    delta_w = scale * (B @ A)
+    total = 0.0
+    for seq in seqs:
+        m2 = delta_w @ hiddens[tuple(seq)]
+        total += float(np.mean(m1_map[tuple(seq)] * m2))
+    return total / len(seqs)
+
+
+def analytic_gradients_penalised(A: np.ndarray, B: np.ndarray,
+                                 examples, hiddens: dict,
+                                 lm_head: np.ndarray, m1_map: dict,
+                                 lam: float = COMPOSITION_LAMBDA):
+    """``(total_loss, signal_loss, penalty, grad_A, grad_B)``
+    for the composition-penalised loss (RFC SI-26 §7.2):
+    ``total = signal_MSE + lam · penalty``, where the signal
+    part is :func:`analytic_gradients`' loss exactly and the
+    penalty part is :func:`composition_penalty`. The penalty's
+    contribution to ``d loss / d W_eff`` is the fixed matrix
+    ``lam · mean_x (1/32) · outer(m1(x), h_final(x))`` (§7.3);
+    both parts then share the one readout-fold chain rule.
+    With ``m1`` identically zero (head = ``base``) the penalty,
+    its gradient, and the difference from the unpenalised
+    gradients are all identically zero."""
+    scale = float(ALPHA) / float(RANK)
+    A = np.asarray(A, dtype=np.float64)
+    B = np.asarray(B, dtype=np.float64)
+    W_eff = np.asarray(lm_head, dtype=np.float64) + scale * (B @ A)
+    grad_W = np.zeros((_V, _D), dtype=np.float64)
+    grad_pen = np.zeros((_V, _D), dtype=np.float64)
+    total_signal = 0.0
+    total_pen = 0.0
+    for seq, target in examples:
+        h = hiddens[tuple(seq)]
+        logits = h @ W_eff.T
+        diff = logits - np.asarray(target, dtype=np.float64)
+        total_signal += float(np.mean(diff * diff))
+        grad_W += np.outer((2.0 / _V) * diff, h)
+        m1 = m1_map[tuple(seq)]
+        m2 = (W_eff - np.asarray(lm_head, dtype=np.float64)) @ h
+        total_pen += float(np.mean(m1 * m2))
+        grad_pen += np.outer((1.0 / _V) * m1, h)
+    n = len(examples)
+    grad_W = grad_W / n + float(lam) * (grad_pen / n)
+    grad_B = scale * (grad_W @ A.T)
+    grad_A = scale * (B.T @ grad_W)
+    signal_loss_value = total_signal / n
+    penalty_value = total_pen / n
+    return (signal_loss_value + float(lam) * penalty_value,
+            signal_loss_value, penalty_value, grad_A, grad_B)
+
+
+def penalised_factor_loss(head_weights: dict, base_weights: dict,
+                          A: np.ndarray, B: np.ndarray, examples,
+                          lam: float = COMPOSITION_LAMBDA) -> float:
+    """The penalised loss of the candidate factors ``(A, B)``
+    measured through the float32 shared fold and the existing
+    forwards — the penalised counterpart of :func:`factor_loss`
+    and the function the SI-27 finite-difference gradient check
+    differentiates: the signal part is ``factor_loss`` of the
+    weights under training against ``examples``' targets; the
+    penalty part is ``lam · mean_x mean_c m1_c(x) · m2_c(x)``
+    with ``m1`` = landed-head minus base forwards and ``m2`` =
+    candidate minus landed-head forwards, all at last
+    positions."""
+    signal = factor_loss(head_weights, A, B, examples)
+    cand_weights = _folded_weights(
+        head_weights,
+        np.ascontiguousarray(A, dtype=np.float32),
+        np.ascontiguousarray(B, dtype=np.float32))
+    total_pen = 0.0
+    for seq, _target in examples:
+        f_head = forward(seq, head_weights)[-1].astype(np.float64)
+        f_base = forward(seq, base_weights)[-1].astype(np.float64)
+        f_cand = forward(seq, cand_weights)[-1].astype(np.float64)
+        total_pen += float(np.mean((f_head - f_base) * (f_cand - f_head)))
+    return signal + float(lam) * (total_pen / len(examples))
+
+
+def movement_composition_record(head_weights: dict,
+                                base_weights: dict,
+                                candidate_weights: dict,
+                                seqs) -> dict:
+    """The alignment diagnostic on ALLOWED inputs (RFC SI-26
+    §7.5/§14 item 5): per-input and aggregate inner products,
+    sign agreements, and movement norms for ``m1`` (landed
+    head minus base) and ``m2`` (candidate minus landed head),
+    under the §7.2 movement definitions — the same definitions
+    the probe diagnostics use, computed here on a named,
+    non-probe input set (a signal's train or held-out
+    partition). Every figure is a derivation from measured
+    forwards. The aggregate penalty mean (``mean_p``) is the
+    penalty term's value for ``candidate_weights`` on this
+    input set, in logit²."""
+    per_input = []
+    m1_all, m2_all = [], []
+    for seq in seqs:
+        f_head = forward(seq, head_weights)[-1].astype(np.float64)
+        f_base = forward(seq, base_weights)[-1].astype(np.float64)
+        f_cand = forward(seq, candidate_weights)[-1].astype(np.float64)
+        m1, m2 = f_head - f_base, f_cand - f_head
+        m1_all.append(m1)
+        m2_all.append(m2)
+        per_input.append({
+            "seq": [int(x) for x in seq],
+            "inner_product": float(np.dot(m1, m2)),
+            "p": float(np.mean(m1 * m2)),
+            "sign_agreement": float(np.mean(np.sign(m1) == np.sign(m2))),
+            "m1_norm": float(np.linalg.norm(m1)),
+            "m2_norm": float(np.linalg.norm(m2)),
+            "m1_max_abs": float(np.max(np.abs(m1))),
+            "m2_max_abs": float(np.max(np.abs(m2))),
+        })
+    a_all = np.concatenate(m1_all)
+    b_all = np.concatenate(m2_all)
+    return {
+        "per_input": per_input,
+        "aggregate_inner_product": float(np.dot(a_all, b_all)),
+        "aggregate_sign_agreement": float(
+            np.mean(np.sign(a_all) == np.sign(b_all))),
+        "mean_p": float(np.mean([r["p"] for r in per_input])),
+        "m1_norm": float(np.linalg.norm(a_all)),
+        "m2_norm": float(np.linalg.norm(b_all)),
+    }
+
+
 # -- deterministic blob serialisation (§8.5) -----------------------------------
 # construct_transformer_delta serialises through safetensors'
 # save(), whose header emits the __metadata__ mapping in hash-map
@@ -690,6 +961,18 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     (a duck-typed pre-SI-25 intent) trains under the default,
     :data:`TARGET_ANCHORING`; an intent carrying any other
     value refuses.
+    SI-27: the intent's ``composition_config`` is validated
+    against exactly the two named composition configurations
+    and dispatched on here — under ``"movement-composition"``
+    exactly one penalty term is added to the loss (see the
+    module docstring); under ``"none"`` nothing about the
+    SI-25 path changes. An intent carrying no composition
+    field at all trains under the default,
+    :data:`DEFAULT_COMPOSITION_CONFIG`; an intent carrying
+    any other value refuses. λ is never read from the intent:
+    it is the configured value's definition
+    (:data:`COMPOSITION_LAMBDA` under
+    ``"movement-composition"``, 0.0 under ``"none"``).
     """
     from si.tiny_transformer import assemble_base_weights, assemble_weights
     from si.transformer_delta import construct_transformer_delta
@@ -705,6 +988,18 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     _raw_anchoring = getattr(intent, "target_anchoring", None)
     anchoring = validate_target_anchoring(
         TARGET_ANCHORING if _raw_anchoring is None else _raw_anchoring)
+    # SI-27 dispatch (RFC SI-26 §7.4): exactly the two named
+    # composition configurations; validate_composition_config
+    # raises the same ValueError discipline for any other
+    # value. λ follows from the configuration's definition —
+    # it is never taken from the intent or any other caller
+    # input, so no per-cycle λ dial exists.
+    _raw_comp = getattr(intent, "composition_config", None)
+    comp_config = validate_composition_config(
+        DEFAULT_COMPOSITION_CONFIG if _raw_comp is None else _raw_comp)
+    comp_lambda = COMPOSITION_LAMBDA if comp_config == MOVEMENT_COMPOSITION \
+        else 0.0
+    penalised = comp_config == MOVEMENT_COMPOSITION
     declared = list(getattr(intent, "targets", None) or [])
     if declared and declared != [TARGET_NAME]:
         raise ValueError(
@@ -746,6 +1041,35 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     hiddens = {tuple(seq): final_hidden(weights, seq)
                for seq, _ in train_ex}
 
+    # SI-27 (§7.2): under "movement-composition" ONLY, the
+    # penalty's constants are prepared here — m1 on the
+    # signal's TRAIN partition, from the landed head's and
+    # the frozen base's forwards (the base assembly is the
+    # SI-25 one: under base-anchoring it IS target_weights;
+    # under head-relative anchoring it is assembled here for
+    # the movement role alone, fail-closed with no fallback).
+    # Held-out m1 / hidden states are prepared ONLY so the
+    # penalty's held-out value can be REPORTED (initial and
+    # final, §7.2/§14 item 5); they never enter the loss, the
+    # gradients, stopping, or selection. Under "none" none of
+    # this runs: no base assembly, no penalty quantity — the
+    # SI-25 path, byte-for-byte.
+    m1_train = None
+    held_hiddens = None
+    m1_held = None
+    if penalised:
+        if anchoring == BASE_ANCHORED:
+            base_weights = target_weights
+        else:
+            base_weights = assemble_base_weights(
+                bundle_dir, manifest, policy)
+        m1_train = existing_movements(
+            weights, base_weights, [seq for seq, _ in train_ex])
+        held_hiddens = {tuple(seq): final_hidden(weights, seq)
+                        for seq, _ in held_ex}
+        m1_held = existing_movements(
+            weights, base_weights, [seq for seq, _ in held_ex])
+
     # The base's scores, recorded BEFORE training (RFC §8.1/§8.4):
     # the zero-delta losses of the frozen applied weights.
     base_train_loss = signal_loss(weights, train_ex)
@@ -753,20 +1077,44 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
 
     A, B = initial_factors(signal_id)
     scale = float(ALPHA) / float(RANK)
-    train_loss_initial, _, _ = analytic_gradients(
-        A, B, train_ex, hiddens, lm_head)
+    penalty_train_initial = None
+    penalty_held_initial = None
+    if penalised:
+        _total_initial, train_loss_initial, penalty_train_initial, \
+            _gA, _gB = analytic_gradients_penalised(
+                A, B, train_ex, hiddens, lm_head, m1_train, comp_lambda)
+        penalty_held_initial = composition_penalty(
+            A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held)
+    else:
+        train_loss_initial, _, _ = analytic_gradients(
+            A, B, train_ex, hiddens, lm_head)
     projection_activations = 0
     for _step in range(STEPS):
-        _loss, grad_A, grad_B = analytic_gradients(
-            A, B, train_ex, hiddens, lm_head)
+        if penalised:
+            _loss, _sig, _pen, grad_A, grad_B = \
+                analytic_gradients_penalised(
+                    A, B, train_ex, hiddens, lm_head, m1_train,
+                    comp_lambda)
+        else:
+            _loss, grad_A, grad_B = analytic_gradients(
+                A, B, train_ex, hiddens, lm_head)
         B = B - LEARNING_RATE * grad_B
         A = A - LEARNING_RATE * grad_A
         norm = float(np.linalg.norm(scale * (B @ A)))
         if norm > NORM_BUDGET:
             B = B * (NORM_BUDGET / norm)
             projection_activations += 1
-    train_loss_final, _, _ = analytic_gradients(
-        A, B, train_ex, hiddens, lm_head)
+    penalty_train_final = None
+    penalty_held_final = None
+    if penalised:
+        _total_final, train_loss_final, penalty_train_final, \
+            _gA, _gB = analytic_gradients_penalised(
+                A, B, train_ex, hiddens, lm_head, m1_train, comp_lambda)
+        penalty_held_final = composition_penalty(
+            A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held)
+    else:
+        train_loss_final, _, _ = analytic_gradients(
+            A, B, train_ex, hiddens, lm_head)
 
     A32 = np.ascontiguousarray(A, dtype=np.float32)
     B32 = np.ascontiguousarray(B, dtype=np.float32)
@@ -830,6 +1178,46 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
         "head": manifest["head"],
         "target_source_head": target_source_head,
         "target_anchoring": anchoring,
+        # SI-27 (RFC SI-26 §7.4): every cycle records the
+        # composition configuration it trained under and the
+        # λ that configuration defines (1.0 under
+        # "movement-composition", 0.0 under "none" — λ is the
+        # configuration's definition, never a dial). Under
+        # "movement-composition" the penalty's measured values
+        # are recorded beside the signal loss's: on the train
+        # partition (optimised) and on the held-out partition
+        # (REPORTED ONLY — never an optimisation input), at
+        # initialisation and at the end of training, plus the
+        # total (signal + λ·penalty) train loss at both points
+        # — the two terms separately, as §7.2(iii) requires
+        # (the total can be negative; that is expected and is
+        # not hidden). "train_loss_initial/final" above remain
+        # the SIGNAL loss alone under both configurations, and
+        # the non-improvement refusal still judges the signal
+        # held-out loss alone. Under "none" the penalty fields
+        # are null (not measured — the unpenalised path
+        # computes no penalty quantity) and the totals equal
+        # the signal losses.
+        "composition_config": comp_config,
+        "composition_lambda": float(comp_lambda),
+        "penalty_train_initial": (
+            None if penalty_train_initial is None
+            else float(penalty_train_initial)),
+        "penalty_train_final": (
+            None if penalty_train_final is None
+            else float(penalty_train_final)),
+        "penalty_held_out_initial": (
+            None if penalty_held_initial is None
+            else float(penalty_held_initial)),
+        "penalty_held_out_final": (
+            None if penalty_held_final is None
+            else float(penalty_held_final)),
+        "total_train_loss_initial": float(
+            train_loss_initial if not penalised else
+            train_loss_initial + comp_lambda * penalty_train_initial),
+        "total_train_loss_final": float(
+            train_loss_final if not penalised else
+            train_loss_final + comp_lambda * penalty_train_final),
         "stack_depth": len(_active_chain(manifest)),
         "target": TARGET_NAME,
         "rank": RANK,
