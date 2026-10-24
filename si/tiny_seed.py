@@ -130,6 +130,10 @@ EMBED_NAME = "model.language_model.embed_tokens.weight"
 POS_NAME = "model.language_model.embed_positions.weight"
 FINAL_NORM_NAME = "model.language_model.norm.weight"
 LM_HEAD_NAME = "lm_head.weight"
+#: SI-33 (RFC SI-32 §12.1): the final layer's MLP down-projection
+#: — the one non-default authorship target's tensor, named here
+#: beside the readout it sits upstream of.
+FINAL_MLP_DOWN_NAME = "model.language_model.layers.1.mlp.down_proj.weight"
 
 
 def _layer_prefix(i: int) -> str:
