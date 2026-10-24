@@ -293,7 +293,8 @@ def _land_d0001(tmp_path, name="tiny27"):
 def test_composition_configuration_and_refusals(tmp_path):
     # Exactly the two named configurations are served; the
     # default's name and λ's definition are pinned constants.
-    assert tt.COMPOSITION_CONFIGS == ("none", "movement-composition")
+    assert tt.COMPOSITION_CONFIGS == ("none", "movement-composition",
+                                      "worst-input-composition")  # SI-29: third value added
     assert tt.DEFAULT_COMPOSITION_CONFIG == "none"
     assert tt.COMPOSITION_NONE == "none"
     assert tt.MOVEMENT_COMPOSITION == "movement-composition"
@@ -1016,7 +1017,7 @@ def test_unwind_honesty_and_untouched_scope(tmp_path):
     assert tt.CORRECTION_SCALE == 0.15
     assert tt.N_TRAIN == 32 and tt.N_HELD_OUT == 16
     assert copy.deepcopy(tt.COMPOSITION_CONFIGS) == \
-        ("none", "movement-composition")
+        ("none", "movement-composition", "worst-input-composition")
     # Squash still fails closed on the transformer stack
     # (SI-12).
     with pytest.raises(SquashError):

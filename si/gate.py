@@ -152,14 +152,16 @@ class Intent:
     # cycle's hyperparams record it; validated in si.tiny_training
     # against exactly those two values (any other value refuses).
     target_anchoring: str = "weights-under-training"
-    # SI-27 (RFC SI-26 §7.4): the composition configuration the
-    # driver configured for this cycle — exactly "none" (the
-    # default, SI-25 semantics) or "movement-composition".
-    # Carried on the intent so train_candidate dispatches on
-    # it and every cycle's hyperparams record it; validated in
-    # si.tiny_training against exactly those two values (any
-    # other value refuses). λ is NOT carried here: it is the
-    # configuration's definition, not a per-cycle value.
+    # SI-27 (RFC SI-26 §7.4) / SI-29 (RFC SI-28 §6.4): the
+    # composition configuration the driver configured for
+    # this cycle — exactly "none" (the default, SI-25
+    # semantics), "movement-composition", or
+    # "worst-input-composition". Carried on the intent so
+    # train_candidate dispatches on it and every cycle's
+    # hyperparams record it; validated in si.tiny_training
+    # against exactly those three values (any other value
+    # refuses). λ, λ_w, and k are NOT carried here: they are
+    # the configurations' definitions, not per-cycle values.
     composition_config: str = "none"
     # memory fields
     collection: str = ""
