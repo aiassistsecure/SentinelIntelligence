@@ -434,6 +434,14 @@ class TinyTransformerMind:
     the penalty's measured values. No autonomous, learned,
     depth-driven, or verdict-driven composition selection
     exists, and λ is not independently settable.
+
+    SI-29 (RFC SI-28 §6.4): exactly three composition
+    configurations are served, the third being
+    ``"worst-input-composition"`` — the worst-input term
+    (λ_w = 1.0, k = 4) entering the loss in place of the
+    mean-penalty term, prepared and recorded exactly as
+    above. Still no autonomous selection, and λ_w/k are
+    not independently settable.
     """
 
     def __init__(self, bundle_dir: str | None = None,

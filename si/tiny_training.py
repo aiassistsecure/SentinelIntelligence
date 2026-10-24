@@ -238,6 +238,46 @@ training:
   the penalty and its gradient vanish, and penalised
   training coincides with SI-25's unpenalised training
   byte-for-byte (measured by test, not asserted).
+
+SI-29 (RFC SI-28 §§6, 14, 15) — worst-input composition-aware
+training:
+
+- **A third recorded composition configuration (§6.4).**
+  :data:`COMPOSITION_CONFIGS` gains exactly
+  ``"worst-input-composition"`` beside ``"none"`` and
+  ``"movement-composition"``; the same constructor / setter /
+  intent / ``train_candidate`` validation and refusal
+  discipline serves all three. λ_w = 1.0
+  (:data:`WORST_INPUT_LAMBDA`) and k = 4
+  (:data:`WORST_INPUT_K`, top-k form chosen in Phase 0 — see
+  ``docs/SI-29-worst-input-composition-training.md``) are part
+  of the new value's DEFINITION, recorded in hyperparams,
+  never read from an intent or caller input, and never swept.
+  No autonomous, learned, depth-driven, verdict-driven, or
+  probe-driven selection exists.
+- **Exactly one added term (§6.2).** Under
+  ``"worst-input-composition"`` the loss is ``signal_MSE +
+  λ_w · W(m2)`` where ``W`` is the mean of the k largest
+  per-input ``p(x)`` values over the signal's 32 TRAINING
+  sequences only, ``p``/``m1``/``m2`` exactly as SI-27 defines
+  them (``m1`` train partition only, constants during
+  optimisation). Held-out worst-input values are REPORTED
+  only. Under ``"none"`` the path is byte-for-byte SI-25's;
+  under ``"movement-composition"`` byte-for-byte SI-27's. No
+  probe input, probe logit, held-out sequence, or
+  probe-derived quantity enters the loss under any
+  configuration. The non-improvement refusal still judges
+  the *signal* held-out loss alone.
+- **Gradient shape (§6.3).** On any region where the top-k
+  set is fixed, ``W`` is a mean of fixed per-input penalty
+  terms, so its gradient is the mean of the selected inputs'
+  SI-27 fixed-matrix gradients through the same readout
+  fold. The selected set is a function of the factors; its
+  membership at the finite-difference check points is
+  reported with the check (as-built doc). At head =
+  ``base``, ``m1`` is identically zero, ``W`` and its
+  gradient vanish, and worst-input training coincides with
+  SI-25's at-base run byte-for-byte (measured by test).
 """
 from __future__ import annotations
 
@@ -281,6 +321,9 @@ __all__ = [
     "COMPOSITION_NONE",
     "DEFAULT_COMPOSITION_CONFIG",
     "MOVEMENT_COMPOSITION",
+    "WORST_INPUT_COMPOSITION",
+    "WORST_INPUT_K",
+    "WORST_INPUT_LAMBDA",
     "TARGET_ANCHORING",
     "TARGET_ANCHORINGS",
     "TARGET_NAME",
@@ -288,6 +331,7 @@ __all__ = [
     "TRAINING_SIGNAL_ID_2",
     "analytic_gradients",
     "analytic_gradients_penalised",
+    "analytic_gradients_worst_input",
     "build_training_signal",
     "composition_penalty",
     "existing_movements",
@@ -297,6 +341,10 @@ __all__ = [
     "initial_factors",
     "movement_composition_record",
     "penalised_factor_loss",
+    "worst_input_composition",
+    "worst_input_composition_record",
+    "worst_input_factor_loss",
+    "worst_input_selection",
     "signal_loss",
     "signal_spec",
     "signal_sequences",
@@ -356,10 +404,18 @@ COMPOSITION_NONE = "none"
 #: (see the module docstring and :data:`COMPOSITION_LAMBDA`).
 MOVEMENT_COMPOSITION = "movement-composition"
 
-#: SI-27: exactly the two named composition configurations
-#: the configuration serves. Any other value refuses (see
+#: SI-29: the worst-input composition configuration — the
+#: signal loss gains exactly one worst-input term (see the
+#: module docstring and :data:`WORST_INPUT_LAMBDA` /
+#: :data:`WORST_INPUT_K`).
+WORST_INPUT_COMPOSITION = "worst-input-composition"
+
+#: SI-27/SI-29: exactly the named composition configurations
+#: the configuration serves (two in SI-27, three in SI-29).
+#: Any other value refuses (see
 #: :func:`validate_composition_config`).
-COMPOSITION_CONFIGS = (COMPOSITION_NONE, MOVEMENT_COMPOSITION)
+COMPOSITION_CONFIGS = (COMPOSITION_NONE, MOVEMENT_COMPOSITION,
+                       WORST_INPUT_COMPOSITION)
 
 #: SI-27: the default composition configuration's name —
 #: cycles train unpenalised unless the driver explicitly
@@ -376,9 +432,25 @@ DEFAULT_COMPOSITION_CONFIG = COMPOSITION_NONE
 #: DEFINITION: not a per-cycle dial, never swept in SI-27.
 COMPOSITION_LAMBDA = 1.0
 
+#: SI-29 (RFC SI-28 §6.2): the worst-input term's weight,
+#: fixed by the same parity-of-units argument as
+#: :data:`COMPOSITION_LAMBDA` — part of the
+#: ``"worst-input-composition"`` configuration's DEFINITION:
+#: not a per-cycle dial, never swept in SI-29.
+WORST_INPUT_LAMBDA = 1.0
+
+#: SI-29 (RFC SI-28 §6.2, Phase 0 form choice): the top-k
+#: form's k — ``W`` is the mean of the k largest per-input
+#: ``p(x)`` values over the train partition (4 of 32: large
+#: enough that the gradient combines several inputs' cached
+#: hidden states, small enough that the term prices the
+#: tail, not the bulk). Part of the configuration's
+#: DEFINITION, like :data:`WORST_INPUT_LAMBDA`.
+WORST_INPUT_K = 4
+
 
 def validate_composition_config(config: str) -> str:
-    """Return ``config`` iff it is one of the two named
+    """Return ``config`` iff it is one of the named
     composition configurations in :data:`COMPOSITION_CONFIGS`.
 
     Raises ``ValueError`` with the existing refusal discipline
@@ -391,7 +463,7 @@ def validate_composition_config(config: str) -> str:
         raise ValueError(
             f"unknown composition configuration {config!r}: "
             f"exactly {list(COMPOSITION_CONFIGS)!r} are served "
-            "(RFC SI-26 §7.4)")
+            "(RFC SI-28 §6.4)")
     return config
 
 #: The one LoRA target trained per candidate (RFC §4.5).
@@ -889,6 +961,180 @@ def movement_composition_record(head_weights: dict,
     }
 
 
+# -- SI-29: the worst-input composition term (RFC SI-28 §6.2/§6.3) -------------
+# W(m2) is a worst-case reduction of SI-27's p(x) over a named
+# allowed population: the mean of the k largest per-input p
+# values (top-k form, k = WORST_INPUT_K). On any region where
+# the top-k set is fixed, W is a mean of fixed per-input terms
+# and its gradient is the mean of the selected inputs' SI-27
+# fixed-matrix gradients — no new backward machinery beyond
+# the selection and weighting of existing per-input gradients.
+
+def _per_input_p(A: np.ndarray, B: np.ndarray, seqs,
+                 hiddens: dict, m1_map: dict) -> list:
+    """Per-input ``p(x)`` values (analytic path, float64) in
+    ``seqs`` order: ``p(x) = mean_c m1_c(x) · m2_c(x)`` with
+    ``m2(x) = (scale · B @ A) @ h_final(x)``."""
+    scale = float(ALPHA) / float(RANK)
+    delta_w = scale * (np.asarray(B, dtype=np.float64)
+                       @ np.asarray(A, dtype=np.float64))
+    return [float(np.mean(m1_map[tuple(seq)]
+                          * (delta_w @ hiddens[tuple(seq)])))
+            for seq in seqs]
+
+
+def worst_input_selection(A: np.ndarray, B: np.ndarray, seqs,
+                          hiddens: dict, m1_map: dict,
+                          k: int = WORST_INPUT_K) -> dict:
+    """The worst-input selection at factors ``(A, B)`` over
+    ``seqs``: per-input ``p`` values, the top-k index set
+    (indices into ``seqs``, ordered by descending ``p`` with
+    index tie-break — deterministic), the top-k mean ``W``,
+    and the single worst input (largest ``p``) by its index
+    in this population. The population is whatever the caller
+    names (train partition in the loss; held-out partition
+    for reported-only values) — never a probe population."""
+    p_values = _per_input_p(A, B, seqs, hiddens, m1_map)
+    order = sorted(range(len(seqs)), key=lambda i: (-p_values[i], i))
+    topk = order[:min(int(k), len(seqs))]
+    return {
+        "p_values": p_values,
+        "topk_indices": topk,
+        "worst_index": int(order[0]) if order else None,
+        "value": float(np.mean([p_values[i] for i in topk])) if topk
+        else 0.0,
+    }
+
+
+def worst_input_composition(A: np.ndarray, B: np.ndarray, seqs,
+                            hiddens: dict, m1_map: dict,
+                            k: int = WORST_INPUT_K) -> float:
+    """``W`` at factors ``(A, B)`` (float64, analytic path):
+    the mean of the k largest per-input ``p(x)`` values over
+    ``seqs`` — SI-29's worst-case reduction of SI-27's
+    ``p(x)``. Signed: a negative value IS worst-case
+    opposition on this population, in logit²."""
+    return worst_input_selection(A, B, seqs, hiddens, m1_map, k)["value"]
+
+
+def analytic_gradients_worst_input(A: np.ndarray, B: np.ndarray,
+                                   examples, hiddens: dict,
+                                   lm_head: np.ndarray,
+                                   m1_map: dict,
+                                   lam_w: float = WORST_INPUT_LAMBDA,
+                                   k: int = WORST_INPUT_K):
+    """``(total_loss, signal_loss, worst_value, grad_A, grad_B)``
+    for the worst-input loss (RFC SI-28 §6.2):
+    ``total = signal_MSE + lam_w · W``, where the signal part
+    is :func:`analytic_gradients`' loss exactly and ``W`` is
+    :func:`worst_input_composition` over ``examples`` (the
+    train partition). The worst term's contribution to
+    ``d loss / d W_eff`` is ``lam_w`` times the mean, over
+    the selected top-k inputs, of SI-27's per-input fixed
+    matrix ``(1/32) · outer(m1(x), h_final(x))`` (§6.3); both
+    parts then share the one readout-fold chain rule. With
+    ``m1`` identically zero (head = ``base``) ``W``, its
+    gradient, and the difference from the unpenalised
+    gradients are all identically zero."""
+    scale = float(ALPHA) / float(RANK)
+    A = np.asarray(A, dtype=np.float64)
+    B = np.asarray(B, dtype=np.float64)
+    lm = np.asarray(lm_head, dtype=np.float64)
+    W_eff = lm + scale * (B @ A)
+    seqs = [seq for seq, _ in examples]
+    selection = worst_input_selection(A, B, seqs, hiddens, m1_map, k)
+    selected = set(selection["topk_indices"])
+    n = len(examples)
+    total_signal = 0.0
+    grad_signal = np.zeros((_V, _D), dtype=np.float64)
+    grad_worst = np.zeros((_V, _D), dtype=np.float64)
+    for idx, (seq, target) in enumerate(examples):
+        h = hiddens[tuple(seq)]
+        logits = h @ W_eff.T
+        diff = logits - np.asarray(target, dtype=np.float64)
+        total_signal += float(np.mean(diff * diff))
+        grad_signal += np.outer((2.0 / _V) * diff, h)
+        if idx in selected:
+            grad_worst += np.outer((1.0 / _V) * m1_map[tuple(seq)], h)
+    # The signal gradient is the mean over ALL examples; the
+    # worst-input gradient is lam_w times the mean over the
+    # SELECTED top-k inputs only — the two means have
+    # different denominators by the term's definition.
+    grad_W = grad_signal / n \
+        + float(lam_w) * (grad_worst / len(selected))
+    grad_B = scale * (grad_W @ A.T)
+    grad_A = scale * (B.T @ grad_W)
+    signal_loss_value = total_signal / n
+    worst_value = selection["value"]
+    return (signal_loss_value + float(lam_w) * worst_value,
+            signal_loss_value, worst_value, grad_A, grad_B)
+
+
+def worst_input_factor_loss(head_weights: dict, base_weights: dict,
+                            A: np.ndarray, B: np.ndarray, examples,
+                            lam_w: float = WORST_INPUT_LAMBDA,
+                            k: int = WORST_INPUT_K) -> float:
+    """The worst-input loss of the candidate factors ``(A, B)``
+    measured through the float32 shared fold and the existing
+    forwards — the worst-input counterpart of
+    :func:`factor_loss` / :func:`penalised_factor_loss` and
+    the function the SI-29 finite-difference gradient check
+    differentiates: the signal part is ``factor_loss`` of the
+    weights under training against ``examples``' targets; the
+    worst part is ``lam_w · W`` with per-input ``p`` from
+    ``m1`` = landed-head minus base forwards and ``m2`` =
+    candidate minus landed-head forwards, all at last
+    positions, reduced by the top-k mean over ``examples``."""
+    signal = factor_loss(head_weights, A, B, examples)
+    cand_weights = _folded_weights(
+        head_weights,
+        np.ascontiguousarray(A, dtype=np.float32),
+        np.ascontiguousarray(B, dtype=np.float32))
+    p_values = []
+    for seq, _target in examples:
+        f_head = forward(seq, head_weights)[-1].astype(np.float64)
+        f_base = forward(seq, base_weights)[-1].astype(np.float64)
+        f_cand = forward(seq, cand_weights)[-1].astype(np.float64)
+        p_values.append(float(np.mean((f_head - f_base)
+                                      * (f_cand - f_head))))
+    topk = sorted(p_values, reverse=True)[:min(int(k), len(p_values))]
+    return signal + float(lam_w) * float(np.mean(topk))
+
+
+def worst_input_composition_record(head_weights: dict,
+                                   base_weights: dict,
+                                   candidate_weights: dict,
+                                   seqs,
+                                   k: int = WORST_INPUT_K) -> dict:
+    """The worst-input composition record on ALLOWED inputs:
+    :func:`movement_composition_record` for the same weights
+    and population, plus the worst-case reduction of its
+    per-input ``p`` values — ``max_p`` (the worst allowed
+    input's ``p``), its index and sequence in this population
+    (an allowed input, named as one — never a probe),
+    ``topk_indices`` / ``topk_mean_p`` (``W`` for this
+    candidate on this population), beside the record's
+    aggregates. Every figure is a derivation from measured
+    forwards."""
+    record = movement_composition_record(
+        head_weights, base_weights, candidate_weights, seqs)
+    p_values = [r["p"] for r in record["per_input"]]
+    order = sorted(range(len(seqs)), key=lambda i: (-p_values[i], i))
+    topk = order[:min(int(k), len(seqs))]
+    record = dict(record)
+    record.update({
+        "k": int(k),
+        "max_p": float(p_values[order[0]]),
+        "max_inner_product": float(
+            record["per_input"][order[0]]["inner_product"]),
+        "worst_index": int(order[0]),
+        "worst_seq": [int(x) for x in seqs[order[0]]],
+        "topk_indices": [int(i) for i in topk],
+        "topk_mean_p": float(np.mean([p_values[i] for i in topk])),
+    })
+    return record
+
+
 # -- deterministic blob serialisation (§8.5) -----------------------------------
 # construct_transformer_delta serialises through safetensors'
 # save(), whose header emits the __metadata__ mapping in hash-map
@@ -973,6 +1219,14 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     it is the configured value's definition
     (:data:`COMPOSITION_LAMBDA` under
     ``"movement-composition"``, 0.0 under ``"none"``).
+    SI-29: the same validation now serves exactly THREE
+    named configurations — under
+    ``"worst-input-composition"`` exactly one worst-input
+    term is added (λ_w = :data:`WORST_INPUT_LAMBDA`, k =
+    :data:`WORST_INPUT_K`, both the configuration's
+    definition, never read from the intent); under the two
+    prior values the paths are byte-for-byte SI-25's /
+    SI-27's respectively.
     """
     from si.tiny_transformer import assemble_base_weights, assemble_weights
     from si.transformer_delta import construct_transformer_delta
@@ -988,18 +1242,25 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     _raw_anchoring = getattr(intent, "target_anchoring", None)
     anchoring = validate_target_anchoring(
         TARGET_ANCHORING if _raw_anchoring is None else _raw_anchoring)
-    # SI-27 dispatch (RFC SI-26 §7.4): exactly the two named
-    # composition configurations; validate_composition_config
-    # raises the same ValueError discipline for any other
-    # value. λ follows from the configuration's definition —
-    # it is never taken from the intent or any other caller
-    # input, so no per-cycle λ dial exists.
+    # SI-27 dispatch (RFC SI-26 §7.4), extended by SI-29
+    # (RFC SI-28 §6.4): exactly the three named composition
+    # configurations; validate_composition_config raises the
+    # same ValueError discipline for any other value. λ / λ_w
+    # / k follow from the configuration's definition — they
+    # are never taken from the intent or any other caller
+    # input, so no per-cycle dial exists for any of them.
     _raw_comp = getattr(intent, "composition_config", None)
     comp_config = validate_composition_config(
         DEFAULT_COMPOSITION_CONFIG if _raw_comp is None else _raw_comp)
     comp_lambda = COMPOSITION_LAMBDA if comp_config == MOVEMENT_COMPOSITION \
         else 0.0
     penalised = comp_config == MOVEMENT_COMPOSITION
+    worst_lambda = WORST_INPUT_LAMBDA \
+        if comp_config == WORST_INPUT_COMPOSITION else 0.0
+    worst_k = WORST_INPUT_K \
+        if comp_config == WORST_INPUT_COMPOSITION else None
+    worst_penalised = comp_config == WORST_INPUT_COMPOSITION
+    composition_active = penalised or worst_penalised
     declared = list(getattr(intent, "targets", None) or [])
     if declared and declared != [TARGET_NAME]:
         raise ValueError(
@@ -1057,7 +1318,7 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     m1_train = None
     held_hiddens = None
     m1_held = None
-    if penalised:
+    if composition_active:
         if anchoring == BASE_ANCHORED:
             base_weights = target_weights
         else:
@@ -1079,12 +1340,28 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     scale = float(ALPHA) / float(RANK)
     penalty_train_initial = None
     penalty_held_initial = None
+    worst_train_initial = None
+    worst_held_initial = None
+    worst_train_selection_initial = None
+    worst_held_selection_initial = None
     if penalised:
         _total_initial, train_loss_initial, penalty_train_initial, \
             _gA, _gB = analytic_gradients_penalised(
                 A, B, train_ex, hiddens, lm_head, m1_train, comp_lambda)
         penalty_held_initial = composition_penalty(
             A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held)
+    elif worst_penalised:
+        _total_initial, train_loss_initial, worst_train_initial, \
+            _gA, _gB = analytic_gradients_worst_input(
+                A, B, train_ex, hiddens, lm_head, m1_train,
+                worst_lambda, WORST_INPUT_K)
+        worst_train_selection_initial = worst_input_selection(
+            A, B, [seq for seq, _ in train_ex], hiddens, m1_train,
+            WORST_INPUT_K)
+        worst_held_selection_initial = worst_input_selection(
+            A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held,
+            WORST_INPUT_K)
+        worst_held_initial = worst_held_selection_initial["value"]
     else:
         train_loss_initial, _, _ = analytic_gradients(
             A, B, train_ex, hiddens, lm_head)
@@ -1095,6 +1372,11 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
                 analytic_gradients_penalised(
                     A, B, train_ex, hiddens, lm_head, m1_train,
                     comp_lambda)
+        elif worst_penalised:
+            _loss, _sig, _worst, grad_A, grad_B = \
+                analytic_gradients_worst_input(
+                    A, B, train_ex, hiddens, lm_head, m1_train,
+                    worst_lambda, WORST_INPUT_K)
         else:
             _loss, grad_A, grad_B = analytic_gradients(
                 A, B, train_ex, hiddens, lm_head)
@@ -1106,12 +1388,28 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
             projection_activations += 1
     penalty_train_final = None
     penalty_held_final = None
+    worst_train_final = None
+    worst_held_final = None
+    worst_train_selection_final = None
+    worst_held_selection_final = None
     if penalised:
         _total_final, train_loss_final, penalty_train_final, \
             _gA, _gB = analytic_gradients_penalised(
                 A, B, train_ex, hiddens, lm_head, m1_train, comp_lambda)
         penalty_held_final = composition_penalty(
             A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held)
+    elif worst_penalised:
+        _total_final, train_loss_final, worst_train_final, \
+            _gA, _gB = analytic_gradients_worst_input(
+                A, B, train_ex, hiddens, lm_head, m1_train,
+                worst_lambda, WORST_INPUT_K)
+        worst_train_selection_final = worst_input_selection(
+            A, B, [seq for seq, _ in train_ex], hiddens, m1_train,
+            WORST_INPUT_K)
+        worst_held_selection_final = worst_input_selection(
+            A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held,
+            WORST_INPUT_K)
+        worst_held_final = worst_held_selection_final["value"]
     else:
         train_loss_final, _, _ = analytic_gradients(
             A, B, train_ex, hiddens, lm_head)
@@ -1212,12 +1510,58 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
         "penalty_held_out_final": (
             None if penalty_held_final is None
             else float(penalty_held_final)),
+        "composition_lambda_w": float(worst_lambda),
+        "composition_worst_k": worst_k,
+        "worst_input_train_initial": (
+            None if worst_train_initial is None
+            else float(worst_train_initial)),
+        "worst_input_train_final": (
+            None if worst_train_final is None
+            else float(worst_train_final)),
+        "worst_input_held_out_initial": (
+            None if worst_held_initial is None
+            else float(worst_held_initial)),
+        "worst_input_held_out_final": (
+            None if worst_held_final is None
+            else float(worst_held_final)),
+        "worst_input_train_topk_indices_initial": (
+            None if worst_train_selection_initial is None else
+            [int(i) for i in
+             worst_train_selection_initial["topk_indices"]]),
+        "worst_input_train_topk_indices_final": (
+            None if worst_train_selection_final is None else
+            [int(i) for i in
+             worst_train_selection_final["topk_indices"]]),
+        "worst_input_train_worst_index_initial": (
+            None if worst_train_selection_initial is None else
+            int(worst_train_selection_initial["worst_index"])),
+        "worst_input_train_worst_index_final": (
+            None if worst_train_selection_final is None else
+            int(worst_train_selection_final["worst_index"])),
+        "worst_input_train_worst_seq_initial": (
+            None if worst_train_selection_initial is None else
+            [int(x) for x in train_ex[
+                worst_train_selection_initial["worst_index"]][0]]),
+        "worst_input_train_worst_seq_final": (
+            None if worst_train_selection_final is None else
+            [int(x) for x in train_ex[
+                worst_train_selection_final["worst_index"]][0]]),
+        "worst_input_held_out_worst_index_initial": (
+            None if worst_held_selection_initial is None else
+            int(worst_held_selection_initial["worst_index"])),
+        "worst_input_held_out_worst_index_final": (
+            None if worst_held_selection_final is None else
+            int(worst_held_selection_final["worst_index"])),
         "total_train_loss_initial": float(
-            train_loss_initial if not penalised else
-            train_loss_initial + comp_lambda * penalty_train_initial),
+            train_loss_initial
+            + (comp_lambda * penalty_train_initial if penalised else 0.0)
+            + (worst_lambda * worst_train_initial
+               if worst_penalised else 0.0)),
         "total_train_loss_final": float(
-            train_loss_final if not penalised else
-            train_loss_final + comp_lambda * penalty_train_final),
+            train_loss_final
+            + (comp_lambda * penalty_train_final if penalised else 0.0)
+            + (worst_lambda * worst_train_final
+               if worst_penalised else 0.0)),
         "stack_depth": len(_active_chain(manifest)),
         "target": TARGET_NAME,
         "rank": RANK,
