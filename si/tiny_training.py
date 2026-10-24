@@ -342,6 +342,54 @@ composition:
   post-training step, not a differentiable path, so
   SI-25's gradient check stands for the training step
   unchanged (RFC SI-30 §14 item 6).
+
+SI-33 (RFC SI-32 §§12.1, 15, 16) — first non-readout authored
+target:
+
+- **Authorship target as a recorded configuration (§12.1).**
+  A fourth recorded axis beside signal, anchoring, and
+  composition: :data:`AUTHORSHIP_TARGETS` serves exactly
+  ``"lm-head"`` (the default; tensor ``lm_head.weight``) and
+  ``"final-mlp-down"`` (tensor
+  ``model.language_model.layers.1.mlp.down_proj.weight``,
+  shape [32, 64]), validated by
+  :func:`validate_authorship_target` with the existing
+  ``ValueError`` discipline at the constructor, the setter,
+  the intent, and the ``train_candidate`` dispatch. The
+  mind is configured constructor-level on
+  ``TinyTransformerMind`` and settable between cycles by
+  ``set_authorship_target(...)``; the intent carries it, so
+  the journal shows all four selections. Rank (8) and alpha
+  (8) are pinned by the axis's definitions exactly as the
+  signals pinned them; neither is separately settable, and
+  the target tensor for each value is named by the
+  definition, never by a caller-supplied tensor name. The
+  target pinning's move from the signals' specs to this
+  recorded axis is the one deliberate definition change
+  (§12.1): both signals' ids, streams, corrections,
+  partitions, loss form, rank, and alpha are unchanged.
+  No autonomous, learned, depth-driven, verdict-driven, or
+  probe-driven target selection exists, and no sweep over
+  targets is run: exactly one non-default target exists.
+- **The training path (§12.1).** Under
+  ``"final-mlp-down"``, ``train_candidate`` trains the
+  signal's factors against SI-25's base-anchored
+  target-logits MSE loss exactly — same loss form, same
+  partitions, same 2,000 steps, learning rate 1.0, norm
+  budget 0.9, correction scale 0.15, non-improvement refusal
+  applied to the trained candidate's signal held-out loss
+  as today — with the gradient taken through the Phase-0
+  derivation (see :func:`analytic_gradients_down`) into the
+  down-projection factors (B [32, 8], A [8, 64]; 768 factor
+  entries). Composition under the new target is ``"none"``
+  only: any other composition configuration refuses —
+  blending a composition mechanism with the target change
+  is a non-goal (RFC §17). Under ``"lm-head"`` every
+  training path is byte-for-byte what it was before SI-33
+  under every anchoring and every composition
+  configuration. No probe input, probe logit, held-out
+  sequence, or probe-derived quantity enters the loss, the
+  gradient, or the refusal under either target.
 """
 from __future__ import annotations
 
@@ -353,6 +401,7 @@ from si.apply import fold_target
 from si.bundle import _active_chain, sha256_hex
 from si.tiny_seed import (
     EMBED_NAME,
+    FINAL_MLP_DOWN_NAME,
     FINAL_NORM_NAME,
     LM_HEAD_NAME,
     MINI_SEED,
@@ -394,18 +443,31 @@ __all__ = [
     "TARGET_ANCHORING",
     "TARGET_ANCHORINGS",
     "TARGET_NAME",
+    "AUTHORSHIP_TARGET_LM_HEAD",
+    "AUTHORSHIP_TARGET_FINAL_MLP_DOWN",
+    "AUTHORSHIP_TARGETS",
+    "AUTHORSHIP_TARGET_TENSORS",
+    "DEFAULT_AUTHORSHIP_TARGET",
+    "DOWN_BASE_SHAPE",
+    "DOWN_TARGET_NAME",
     "TRAINING_SIGNAL_ID",
     "TRAINING_SIGNAL_ID_2",
     "analytic_gradients",
+    "analytic_gradients_down",
     "analytic_gradients_penalised",
     "analytic_gradients_worst_input",
+    "authorship_target_name",
     "build_training_signal",
     "composition_penalty",
+    "down_factor_loss",
+    "down_inputs_for",
     "existing_movements",
     "factor_loss",
     "final_hidden",
+    "forward_to_final_down",
     "forward_with_final_hidden",
     "initial_factors",
+    "initial_factors_down",
     "movement_composition_record",
     "penalised_factor_loss",
     "projection_coefficient",
@@ -418,6 +480,7 @@ __all__ = [
     "signal_spec",
     "signal_sequences",
     "train_candidate",
+    "validate_authorship_target",
     "validate_composition_config",
     "validate_target_anchoring",
 ]
@@ -546,7 +609,70 @@ def validate_composition_config(config: str) -> str:
             "(RFC SI-30 §7.3)")
     return config
 
-#: The one LoRA target trained per candidate (RFC §4.5).
+# -- SI-33: the authorship-target axis (RFC SI-32 §12.1) -----------------------
+# A fourth recorded axis beside signal, anchoring, and
+# composition. Exactly two values are served; the target
+# tensor, rank (8), and alpha (8) for each value are fixed
+# by the value's DEFINITION below and are not separately
+# settable — no caller-facing tensor-name, rank, or alpha
+# argument exists on this axis.
+
+#: SI-33: the default authorship target — every prior run's
+#: target, the readout ``lm_head.weight``.
+AUTHORSHIP_TARGET_LM_HEAD = "lm-head"
+
+#: SI-33: the one non-default authorship target — the final
+#: layer's MLP down-projection (shape [32, 64]).
+AUTHORSHIP_TARGET_FINAL_MLP_DOWN = "final-mlp-down"
+
+#: SI-33: exactly the named authorship targets served.
+AUTHORSHIP_TARGETS = (AUTHORSHIP_TARGET_LM_HEAD,
+                      AUTHORSHIP_TARGET_FINAL_MLP_DOWN)
+
+#: SI-33: the default authorship target's name.
+DEFAULT_AUTHORSHIP_TARGET = AUTHORSHIP_TARGET_LM_HEAD
+
+#: SI-33: the tensor each authorship-target value names, by
+#: definition. A caller never supplies a tensor name.
+AUTHORSHIP_TARGET_TENSORS = {
+    AUTHORSHIP_TARGET_LM_HEAD: LM_HEAD_NAME,
+    AUTHORSHIP_TARGET_FINAL_MLP_DOWN: FINAL_MLP_DOWN_NAME,
+}
+
+#: SI-33: the down-projection tensor's name (the
+#: ``"final-mlp-down"`` value's target).
+DOWN_TARGET_NAME = FINAL_MLP_DOWN_NAME
+
+#: SI-33: the down-projection tensor's pinned base shape.
+DOWN_BASE_SHAPE = [32, 64]
+
+
+def validate_authorship_target(target: str) -> str:
+    """Return ``target`` iff it is one of the two named
+    authorship targets in :data:`AUTHORSHIP_TARGETS`.
+
+    Raises ``ValueError`` with the existing refusal
+    discipline for any other value — the one refusal every
+    authorship-target dispatch path shares (constructor,
+    setter, intent, and ``train_candidate``), mirroring
+    :func:`validate_target_anchoring`.
+    """
+    if target not in AUTHORSHIP_TARGETS:
+        raise ValueError(
+            f"unknown authorship target {target!r}: "
+            f"exactly {list(AUTHORSHIP_TARGETS)!r} are served "
+            "(RFC SI-32 §12.1)")
+    return target
+
+
+def authorship_target_name(target: str) -> str:
+    """The tensor name the authorship-target VALUE names,
+    by its definition (never caller-supplied)."""
+    return AUTHORSHIP_TARGET_TENSORS[validate_authorship_target(target)]
+
+
+#: The one LoRA target trained per candidate under the
+#: default authorship target (RFC §4.5).
 TARGET_NAME = LM_HEAD_NAME
 
 RANK = 8
@@ -636,6 +762,7 @@ _D = 32
 _LAYERS = 2
 _HEADS = 4
 _HEAD_DIM = 8
+_D_FF = 64
 _EPS = 1e-5
 
 
@@ -796,6 +923,80 @@ def final_hidden(weights: dict, seq) -> np.ndarray:
     return forward_with_final_hidden(seq, weights)[1][-1]
 
 
+# -- SI-33: forward replica exposing the final layer's down inputs -------------
+# The down-projection gradient needs, per example, the two
+# quantities the final layer's down-projection consumes and
+# produces around: h_mid (the residual stream entering the
+# final layer's MLP block) and s (the SwiGLU activation's
+# output, the down map's input). Both are computed BEFORE
+# the down-projection in the forward order, so neither
+# depends on the down-projection's factors: for the factor
+# gradients s is a FIXED input (RFC SI-32 §12.1 / §15 item
+# 1(i) — the derivation in docs/SI-33-final-mlp-down-target.md
+# states this line by line against the forward code). This
+# replica repeats si.tiny_transformer.forward's computation
+# in the same operation order and float64 discipline up to
+# that point; tests assert that a forward completed from
+# its outputs reproduces the library forward's logits
+# bit-identically (after the float32 storage cast).
+
+def forward_to_final_down(token_ids, weights: dict):
+    """``(h_mid, s)`` in float64 for the FINAL layer, all
+    positions: ``h_mid`` is the residual stream after the
+    final layer's attention block (the input to its
+    post-attention RMSNorm), and ``s`` is the SwiGLU output
+    ``silu(gate) * up`` (the down-projection's input)."""
+    w = {k: np.asarray(v, dtype=np.float64)
+         for k, v in weights.items()}
+    ids = [int(t) for t in token_ids]
+    t = len(ids)
+    h = w[EMBED_NAME][ids] + w[POS_NAME][:t]
+    causal = np.triu(np.ones((t, t), dtype=bool), k=1)
+    for i in range(_LAYERS):
+        p = _layer_prefix(i)
+        a = _rms_norm(h, w[f"{p}.input_layernorm.weight"])
+        q = (a @ w[f"{p}.self_attn.q_proj.weight"].T
+             + w[f"{p}.self_attn.q_proj.bias"]).reshape(t, _HEADS, _HEAD_DIM)
+        k = (a @ w[f"{p}.self_attn.k_proj.weight"].T
+             + w[f"{p}.self_attn.k_proj.bias"]).reshape(t, _HEADS, _HEAD_DIM)
+        v = (a @ w[f"{p}.self_attn.v_proj.weight"].T
+             + w[f"{p}.self_attn.v_proj.bias"]).reshape(t, _HEADS, _HEAD_DIM)
+        q = np.transpose(q, (1, 0, 2))
+        k = np.transpose(k, (1, 0, 2))
+        v = np.transpose(v, (1, 0, 2))
+        scores = q @ np.transpose(k, (0, 2, 1)) / np.sqrt(float(_HEAD_DIM))
+        scores = np.where(causal, -np.inf, scores)
+        attn = _softmax(scores) @ v                       # [H, t, dh]
+        attn = np.transpose(attn, (1, 0, 2)).reshape(t, _D)
+        h = h + attn @ w[f"{p}.self_attn.o_proj.weight"].T \
+            + w[f"{p}.self_attn.o_proj.bias"]
+        if i == _LAYERS - 1:
+            h_mid = h
+            m = _rms_norm(h, w[f"{p}.post_attention_layernorm.weight"])
+            gate = m @ w[f"{p}.mlp.gate_proj.weight"].T
+            up = m @ w[f"{p}.mlp.up_proj.weight"].T
+            silu = gate / (1.0 + np.exp(-gate))
+            return h_mid, silu * up
+        m = _rms_norm(h, w[f"{p}.post_attention_layernorm.weight"])
+        gate = m @ w[f"{p}.mlp.gate_proj.weight"].T
+        up = m @ w[f"{p}.mlp.up_proj.weight"].T
+        silu = gate / (1.0 + np.exp(-gate))
+        h = h + (silu * up) @ w[f"{p}.mlp.down_proj.weight"].T
+    raise AssertionError("unreachable: the miniature has layers")
+
+
+def down_inputs_for(weights: dict, seqs) -> dict:
+    """``{tuple(seq): (h_mid_last, s_last)}`` — the final
+    layer's down-projection inputs at each sequence's last
+    position, under ``weights`` (the weights under training).
+    Neither quantity depends on the down-projection factors."""
+    out = {}
+    for seq in seqs:
+        h_mid, s = forward_to_final_down(seq, weights)
+        out[tuple(seq)] = (h_mid[-1], s[-1])
+    return out
+
+
 # -- losses (training numbers; labelled with the signal wherever recorded) ----
 
 def signal_loss(weights: dict, examples) -> float:
@@ -875,6 +1076,115 @@ def analytic_gradients(A: np.ndarray, B: np.ndarray, examples,
         diff = logits - np.asarray(target, dtype=np.float64)
         total += float(np.mean(diff * diff))
         grad_W += np.outer((2.0 / _V) * diff, h)
+    grad_W /= len(examples)
+    grad_B = scale * (grad_W @ A.T)
+    grad_A = scale * (B.T @ grad_W)
+    return total / len(examples), grad_A, grad_B
+
+
+# -- SI-33: the down-projection training path (RFC SI-32 §12.1) -----------------
+# The derivation (docs/SI-33-final-mlp-down-target.md,
+# Phase 0): with u = s (the SwiGLU output, a fixed input),
+# y = h_mid + W_eff @ u at the last position, h_final the
+# final RMSNorm of y, and logits = W_lm @ h_final, the
+# target-logits MSE's gradient w.r.t. the effective down
+# weight is G = outer(g_y, u), where g_y is the loss
+# gradient pushed back through the readout and the final
+# RMSNorm; the factor gradients are then the usual LoRA
+# chain rule through W_eff = W + scale * B @ A.
+
+def _folded_weights_down(weights: dict, A: np.ndarray,
+                         B: np.ndarray) -> dict:
+    """``weights`` with the LoRA update folded into the
+    final layer's down-projection — through
+    ``si.apply.fold_target``, the one shared fold, exactly
+    as :func:`_folded_weights` folds into ``lm_head``."""
+    target = {"name": DOWN_TARGET_NAME, "kind": "lora",
+              "factor_keys": ["t0.A", "t0.B"], "rank": RANK,
+              "alpha": ALPHA, "base_shape": list(DOWN_BASE_SHAPE)}
+    factors = {"t0.A": np.ascontiguousarray(A, dtype=np.float32),
+               "t0.B": np.ascontiguousarray(B, dtype=np.float32)}
+    out = dict(weights)
+    out[DOWN_TARGET_NAME] = fold_target(
+        np.array(weights[DOWN_TARGET_NAME], dtype=np.float32,
+                 copy=True),
+        target, factors, allow_additive=False,
+        delta_id="si-33-training")
+    return out
+
+
+def down_factor_loss(weights: dict, A: np.ndarray, B: np.ndarray,
+                     examples) -> float:
+    """The signal loss of down-projection factors ``(A, B)``:
+    the factors are cast to float32 and folded through the
+    shared fold, then measured through the existing forward.
+    This is the loss the SI-33 finite-difference gradient
+    check differentiates."""
+    return signal_loss(_folded_weights_down(weights, A, B), examples)
+
+
+def initial_factors_down(signal_id: str = TRAINING_SIGNAL_ID):
+    """The pinned initial down-projection factors ``(A, B)``
+    (float64) for a signal: the signal's OWN dedicated init
+    stream (signal 1: +17, signal 2: +29 — the same stream
+    offsets :func:`initial_factors` uses), A drawn before B,
+    ``INIT_SCALE``-scaled, at the down target's shapes
+    (A [8, 64], B [32, 8])."""
+    spec = signal_spec(signal_id)
+    rng = np.random.default_rng(MINI_SEED + spec["init_offset"])
+    A = rng.standard_normal((RANK, _D_FF)) * INIT_SCALE
+    B = rng.standard_normal((_D, RANK)) * INIT_SCALE
+    return A, B
+
+
+def analytic_gradients_down(A: np.ndarray, B: np.ndarray, examples,
+                            down_inputs: dict, weights: dict):
+    """``(loss, grad_A, grad_B)`` for the signal loss under
+    the ``"final-mlp-down"`` authorship target, analytically
+    (RFC SI-32 §15 item 1(i)'s derivation).
+
+    ``examples`` is ``[(seq, target_logits)]``; ``down_inputs``
+    maps ``tuple(seq)`` to ``(h_mid_last, s_last)`` under the
+    weights under training (see :func:`down_inputs_for` —
+    both are fixed w.r.t. the factors); ``weights`` supplies
+    the base down-projection, the readout, and the final
+    RMSNorm weight, all under the weights under training.
+    The loss returned is the float64 training loss at these
+    factors (the same quantity :func:`down_factor_loss`
+    measures through the float32 fold, up to the fold's
+    cast).
+
+    Chain, per example (last position only; V = D = 32):
+    ``g_l = 2*(logits - target)/V``;
+    ``g_h = W_lm.T @ g_l``; ``g_n = g_h * w_norm``;
+    ``g_y = g_n / r - y * (g_n . y) / (D * r**3)`` with
+    ``r = sqrt(mean(y*y) + eps)`` (the RMSNorm Jacobian);
+    ``G += outer(g_y, s)``; then ``grad_B = scale * G @ A.T``
+    and ``grad_A = scale * B.T @ G`` with ``G`` averaged
+    over examples.
+    """
+    scale = float(ALPHA) / float(RANK)
+    A = np.asarray(A, dtype=np.float64)
+    B = np.asarray(B, dtype=np.float64)
+    W_down = np.asarray(weights[DOWN_TARGET_NAME], dtype=np.float64)
+    W_lm = np.asarray(weights[LM_HEAD_NAME], dtype=np.float64)
+    w_norm = np.asarray(weights[FINAL_NORM_NAME], dtype=np.float64)
+    W_eff = W_down + scale * (B @ A)
+    grad_W = np.zeros((_D, _D_FF), dtype=np.float64)
+    total = 0.0
+    for seq, target in examples:
+        h_mid, u = down_inputs[tuple(seq)]
+        y = h_mid + W_eff @ u
+        r = float(np.sqrt(np.mean(y * y) + _EPS))
+        h_final = (y / r) * w_norm
+        logits = h_final @ W_lm.T
+        diff = logits - np.asarray(target, dtype=np.float64)
+        total += float(np.mean(diff * diff))
+        g_l = (2.0 / _V) * diff
+        g_h = W_lm.T @ g_l
+        g_n = g_h * w_norm
+        g_y = g_n / r - y * (float(np.dot(g_n, y)) / (_D * r ** 3))
+        grad_W += np.outer(g_y, u)
     grad_W /= len(examples)
     grad_B = scale * (grad_W @ A.T)
     grad_A = scale * (B.T @ grad_W)
@@ -1370,6 +1680,23 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     definition, never read from the intent); under the two
     prior values the paths are byte-for-byte SI-25's /
     SI-27's respectively.
+    SI-33: the intent's ``authorship_target`` is validated
+    against exactly the two named authorship targets and
+    dispatched on here — under ``"final-mlp-down"`` the
+    signal's factors parameterise the final layer's MLP
+    down-projection and are trained through
+    :func:`analytic_gradients_down` against the same
+    base-anchored (or head-relative, per the cycle's
+    anchoring) target-logits MSE; composition under the new
+    target is ``"none"`` only and any other composition
+    configuration refuses (the mechanisms are never blended
+    with the target change, RFC SI-32 §17). An intent
+    carrying no authorship-target field at all (a duck-typed
+    pre-SI-33 intent) trains under the default,
+    :data:`DEFAULT_AUTHORSHIP_TARGET`; an intent carrying
+    any other value refuses. Rank and alpha are pinned by
+    the axis's definitions and are never read as separate
+    per-target values from the intent.
     SI-31: the validation now serves exactly FOUR named
     configurations — under ``"train-partition-projection"``
     the training step is SI-25's exactly and the judged
@@ -1419,11 +1746,36 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     worst_penalised = comp_config == WORST_INPUT_COMPOSITION
     projected = comp_config == TRAIN_PARTITION_PROJECTION
     composition_active = penalised or worst_penalised or projected
+    # SI-33 dispatch (RFC SI-32 §12.1): exactly the two named
+    # authorship targets; validate_authorship_target raises
+    # the same ValueError discipline for any other value.
+    # The tensor each value trains is the value's DEFINITION
+    # (authorship_target_name) — never a caller-supplied
+    # tensor name. Under the new target, composition is
+    # "none" only: blending a composition mechanism with the
+    # target change is a non-goal (RFC SI-32 §17), so any
+    # other composition configuration refuses here.
+    _raw_axis = getattr(intent, "authorship_target", None)
+    authorship_target = validate_authorship_target(
+        DEFAULT_AUTHORSHIP_TARGET if _raw_axis is None else _raw_axis)
+    target_name = authorship_target_name(authorship_target)
+    down_target = (authorship_target
+                   == AUTHORSHIP_TARGET_FINAL_MLP_DOWN)
+    if down_target and comp_config != COMPOSITION_NONE:
+        raise ValueError(
+            f"authorship target {authorship_target!r} trains "
+            f"under composition configuration "
+            f"{COMPOSITION_NONE!r} only: composition "
+            f"{comp_config!r} would blend a composition "
+            "mechanism with the target change (RFC SI-32 §17 "
+            "non-goal)")
     declared = list(getattr(intent, "targets", None) or [])
-    if declared and declared != [TARGET_NAME]:
+    if declared and declared != [target_name]:
         raise ValueError(
             f"intent declares targets {declared!r}: "
-            f"{signal_id} trains exactly {[TARGET_NAME]!r} "
+            f"{signal_id} under authorship target "
+            f"{authorship_target!r} trains exactly "
+            f"{[target_name]!r} "
             "and never silently retargets (RFC SI-18 §8.6)")
     rank = int(getattr(intent, "rank", 0) or 0)
     alpha = int(getattr(intent, "alpha", 0) or 0)
@@ -1459,6 +1811,14 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     lm_head = np.asarray(weights[TARGET_NAME], dtype=np.float64)
     hiddens = {tuple(seq): final_hidden(weights, seq)
                for seq, _ in train_ex}
+    # SI-33: under "final-mlp-down" the gradient's fixed
+    # inputs are the final layer's down inputs per train
+    # example (h_mid, SwiGLU output) under the weights under
+    # training — computed once, exactly as the lm-head path
+    # caches its hidden states. Under "lm-head" none of this
+    # runs.
+    down_inputs = down_inputs_for(weights, [seq for seq, _ in train_ex]) \
+        if down_target else None
 
     # SI-27 (§7.2): under "movement-composition" ONLY, the
     # penalty's constants are prepared here — m1 on the
@@ -1494,7 +1854,8 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     base_train_loss = signal_loss(weights, train_ex)
     base_held_out_loss = signal_loss(weights, held_ex)
 
-    A, B = initial_factors(signal_id)
+    A, B = initial_factors_down(signal_id) if down_target \
+        else initial_factors(signal_id)
     scale = float(ALPHA) / float(RANK)
     penalty_train_initial = None
     penalty_held_initial = None
@@ -1520,6 +1881,9 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
             A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held,
             WORST_INPUT_K)
         worst_held_initial = worst_held_selection_initial["value"]
+    elif down_target:
+        train_loss_initial, _, _ = analytic_gradients_down(
+            A, B, train_ex, down_inputs, weights)
     else:
         train_loss_initial, _, _ = analytic_gradients(
             A, B, train_ex, hiddens, lm_head)
@@ -1535,6 +1899,9 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
                 analytic_gradients_worst_input(
                     A, B, train_ex, hiddens, lm_head, m1_train,
                     worst_lambda, WORST_INPUT_K)
+        elif down_target:
+            _loss, grad_A, grad_B = analytic_gradients_down(
+                A, B, train_ex, down_inputs, weights)
         else:
             _loss, grad_A, grad_B = analytic_gradients(
                 A, B, train_ex, hiddens, lm_head)
@@ -1568,15 +1935,20 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
             A, B, [seq for seq, _ in held_ex], held_hiddens, m1_held,
             WORST_INPUT_K)
         worst_held_final = worst_held_selection_final["value"]
+    elif down_target:
+        train_loss_final, _, _ = analytic_gradients_down(
+            A, B, train_ex, down_inputs, weights)
     else:
         train_loss_final, _, _ = analytic_gradients(
             A, B, train_ex, hiddens, lm_head)
 
     A32 = np.ascontiguousarray(A, dtype=np.float32)
     B32 = np.ascontiguousarray(B, dtype=np.float32)
-    held_out_after = factor_loss(weights, A32, B32, held_ex)
+    held_out_after = down_factor_loss(weights, A32, B32, held_ex) \
+        if down_target else factor_loss(weights, A32, B32, held_ex)
     closer = 0
-    trained_weights = _folded_weights(weights, A32, B32)
+    trained_weights = _folded_weights_down(weights, A32, B32) \
+        if down_target else _folded_weights(weights, A32, B32)
     for seq, target in held_ex:
         before = float(np.mean(
             (forward(seq, weights)[-1].astype(np.float64) - target) ** 2))
@@ -1690,7 +2062,7 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     delta_id = f"d{len(manifest.get('deltas', [])) + 1:04d}"
     record, blob_bytes = construct_transformer_delta(
         manifest,
-        [{"name": TARGET_NAME, "kind": "lora",
+        [{"name": target_name, "kind": "lora",
           "A": cand_A32, "B": cand_B32, "alpha": cand_alpha,
           "rank": cand_rank}],
         delta_id=delta_id, parent=manifest["head"],
@@ -1861,7 +2233,15 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
             + (worst_lambda * worst_train_final
                if worst_penalised else 0.0)),
         "stack_depth": len(_active_chain(manifest)),
-        "target": TARGET_NAME,
+        # SI-33 (RFC SI-32 §12.1): every cycle records the
+        # authorship target it trained under beside the
+        # tensor that target's definition names — the
+        # journal therefore shows all four recorded
+        # selections (signal, anchoring, composition,
+        # authorship target). Under "lm-head" the tensor is
+        # TARGET_NAME, exactly as before SI-33.
+        "authorship_target": authorship_target,
+        "target": target_name,
         "rank": RANK,
         "alpha": ALPHA,
         "scale": scale,

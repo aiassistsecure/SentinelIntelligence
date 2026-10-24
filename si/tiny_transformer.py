@@ -453,6 +453,19 @@ class TinyTransformerMind:
     as above. Still no autonomous selection, and α is not
     independently settable: neither the constructor nor
     the setter takes such an argument.
+
+    SI-33 (RFC SI-32 §12.1): the mind is likewise
+    configured with the AUTHORSHIP TARGET it will train
+    under (see ``__init__`` / ``set_authorship_target``) —
+    a fourth explicit, recorded, per-cycle driver
+    configuration beside signal, anchoring, and
+    composition, defaulting to ``"lm-head"``. The value is
+    carried on the proposed intent and recorded in every
+    cycle's hyperparams. The tensor, rank (8), and alpha
+    (8) each value names are its definition and are not
+    separately settable. No autonomous, learned,
+    depth-driven, verdict-driven, or probe-driven target
+    selection exists.
     """
 
     def __init__(self, bundle_dir: str | None = None,
@@ -460,7 +473,8 @@ class TinyTransformerMind:
                  policy: dict | None = None,
                  training_signal_id: str | None = None,
                  target_anchoring: str | None = None,
-                 composition_config: str | None = None):
+                 composition_config: str | None = None,
+                 authorship_target: str | None = None):
         if bundle_dir is not None and manifest is None:
             from si.bundle import load_bundle
             manifest = load_bundle(bundle_dir)
@@ -475,10 +489,12 @@ class TinyTransformerMind:
         # registry (unknown id -> ValueError, the existing
         # discipline). There is no autonomous selection.
         from si.tiny_training import (
+            DEFAULT_AUTHORSHIP_TARGET,
             DEFAULT_COMPOSITION_CONFIG,
             TARGET_ANCHORING,
             TRAINING_SIGNAL_ID,
             signal_spec,
+            validate_authorship_target,
             validate_composition_config,
             validate_target_anchoring,
         )
@@ -504,6 +520,15 @@ class TinyTransformerMind:
             else DEFAULT_COMPOSITION_CONFIG
         validate_composition_config(comp)
         self._composition_config = comp
+        # SI-33 (RFC SI-32 §12.1): explicit, recorded
+        # authorship-target configuration, mirroring the
+        # axes above. The default is "lm-head"; validation
+        # serves exactly the two named targets and refuses
+        # every other value.
+        axis = authorship_target if authorship_target is not None \
+            else DEFAULT_AUTHORSHIP_TARGET
+        validate_authorship_target(axis)
+        self._authorship_target = axis
 
     @property
     def name(self) -> str:
@@ -586,6 +611,35 @@ class TinyTransformerMind:
         validate_composition_config(config)
         self._composition_config = config
 
+    @property
+    def authorship_target(self) -> str:
+        """The explicitly configured authorship target this
+        mind trains under (SI-33 recorded configuration;
+        see :meth:`set_authorship_target`)."""
+        return self._authorship_target
+
+    def set_authorship_target(self, target: str) -> None:
+        """Explicitly reconfigure the authorship target
+        (SI-33).
+
+        This is the driver saying, in code, which tensor
+        the next cycle's authored update acts on — the
+        journal then records it in that cycle's
+        ``training-hyperparams`` as ``authorship_target``
+        beside the tensor the value names. It is not a
+        choice the mind makes: no perception, depth,
+        alternation, or verdict rule calls this. Any value
+        outside the two named targets refuses with the
+        existing ``ValueError`` discipline. The tensor,
+        rank, or alpha cannot be set through this (or any)
+        call: they are the value's definition (rank 8,
+        alpha 8 for both values).
+        """
+        from si.tiny_training import validate_authorship_target
+
+        validate_authorship_target(target)
+        self._authorship_target = target
+
     def _require_bundle(self) -> None:
         if self._bundle_dir is None or self._manifest is None:
             raise TinyTransformerError(
@@ -658,7 +712,7 @@ class TinyTransformerMind:
         from si.tiny_training import (
             ALPHA,
             RANK,
-            TARGET_NAME,
+            authorship_target_name,
         )
         from si.transformer_delta import KIND as TF_KIND
 
@@ -673,15 +727,16 @@ class TinyTransformerMind:
             journal = manifest.get("journal")
             if isinstance(journal, dict):
                 last_seq = int(journal.get("last_seq", 0) or 0)
+        target_name = authorship_target_name(self._authorship_target)
         return Intent(
             kind=TF_KIND,
             reason=("Train the named signal "
                     f"{signal_id} as a small rank-{RANK} "
-                    f"LoRA correction on {TARGET_NAME} (CPU "
+                    f"LoRA correction on {target_name} (CPU "
                     "gradient descent on a constructed, "
                     "probe-disjoint signal; the gate judges the "
                     "candidate)."),
-            target_modules=[TARGET_NAME],
+            target_modules=[target_name],
             rank=RANK,
             alpha=ALPHA,
             parents=[head],
@@ -689,7 +744,8 @@ class TinyTransformerMind:
             training_signal_id=signal_id,
             target_anchoring=self._target_anchoring,
             composition_config=self._composition_config,
-            targets=[TARGET_NAME],
+            authorship_target=self._authorship_target,
+            targets=[target_name],
         )
 
     def refresh_manifest(self) -> dict:
