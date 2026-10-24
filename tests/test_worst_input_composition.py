@@ -301,7 +301,8 @@ def _land_d0001(tmp_path, name="tiny29"):
 
 def test_worst_configuration_and_refusals(tmp_path):
     assert tt.COMPOSITION_CONFIGS == ("none", "movement-composition",
-                                      "worst-input-composition")
+                                      "worst-input-composition",
+                                      "train-partition-projection")  # SI-31: fourth value added
     assert tt.DEFAULT_COMPOSITION_CONFIG == "none"
     assert tt.WORST_INPUT_COMPOSITION == "worst-input-composition"
     assert tt.WORST_INPUT_LAMBDA == 1.0
@@ -1003,6 +1004,7 @@ def test_unwind_honesty_and_untouched_scope(tmp_path):
     assert tt.CORRECTION_SCALE == 0.15
     assert tt.N_TRAIN == 32 and tt.N_HELD_OUT == 16
     assert copy.deepcopy(tt.COMPOSITION_CONFIGS) == \
-        ("none", "movement-composition", "worst-input-composition")
+        ("none", "movement-composition", "worst-input-composition",
+         "train-partition-projection")
     with pytest.raises(SquashError):
         squash_bundle(bundle_dir, keep=0)

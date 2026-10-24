@@ -442,6 +442,17 @@ class TinyTransformerMind:
     mean-penalty term, prepared and recorded exactly as
     above. Still no autonomous selection, and λ_w/k are
     not independently settable.
+
+    SI-31 (RFC SI-30 §7.3): exactly four composition
+    configurations are served, the fourth being
+    ``"train-partition-projection"`` — the training step
+    is SI-25's and the judged candidate is constructed by
+    full removal of the train-partition-parallel component
+    (coefficient α measured per run in
+    ``si.tiny_training``), prepared and recorded exactly
+    as above. Still no autonomous selection, and α is not
+    independently settable: neither the constructor nor
+    the setter takes such an argument.
     """
 
     def __init__(self, bundle_dir: str | None = None,
@@ -560,11 +571,15 @@ class TinyTransformerMind:
         as ``composition_config`` / ``composition_lambda`` with
         the penalty's measured values. It is not a choice the
         mind makes: no perception, depth, alternation, or
-        verdict rule calls this. Any value outside the two
+        verdict rule calls this. Any value outside the four
         named configurations refuses with the existing
         ``ValueError`` discipline. λ cannot be set through
         this (or any) call: it is the configuration's
         definition (1.0 under ``"movement-composition"``).
+        α likewise cannot be set through this (or any)
+        call: under ``"train-partition-projection"`` it is
+        measured from the run's own candidates on the
+        train partition (SI-31).
         """
         from si.tiny_training import validate_composition_config
 
