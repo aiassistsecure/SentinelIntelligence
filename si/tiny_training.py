@@ -278,6 +278,70 @@ training:
   ``base``, ``m1`` is identically zero, ``W`` and its
   gradient vanish, and worst-input training coincides with
   SI-25's at-base run byte-for-byte (measured by test).
+
+SI-31 (RFC SI-30 §§7, 14, 15) — train-partition-projection
+composition:
+
+- **A fourth recorded composition configuration (§7.3).**
+  :data:`COMPOSITION_CONFIGS` gains exactly
+  ``"train-partition-projection"`` beside ``"none"``,
+  ``"movement-composition"``, and
+  ``"worst-input-composition"``; the same constructor /
+  setter / intent / ``train_candidate`` validation and
+  refusal discipline serves all four. The configuration's
+  definition carries no weight, no k, and no fraction: the
+  projection coefficient α is MEASURED from the run's own
+  candidates on the train partition and recorded in the
+  hyperparams — never read from an intent or any other
+  caller input, never settable, never swept. No autonomous,
+  learned, depth-driven, verdict-driven, or probe-driven
+  selection exists.
+- **The construction (§7.2).** Under
+  ``"train-partition-projection"`` the training step is
+  SI-25's exactly (base-anchored signal loss under
+  ``"none"`` semantics — no penalty term of either prior
+  kind enters the loss). The judged candidate is then
+  CONSTRUCTED, once, in full: with ``m1(x)`` / ``m2(x)``
+  SI-27's movement definitions on the signal's 32 TRAINING
+  sequences, α = (Σ_x ⟨m1(x), m2(x)⟩) / (Σ_x ⟨m1(x), m1(x)⟩)
+  (α = 0.0 when the denominator vanishes — at head =
+  ``base``, where ``m1`` is identically zero and the
+  construction is the identity), and the judged candidate's
+  folded update is Δ2′ = Δ2 − α·Δ1, where Δ1 / Δ2 are the
+  landed head's and the trained candidate's folded
+  ``lm_head.weight`` updates. The projected candidate is
+  re-measured in full before it is returned (signal train
+  and held-out losses, with the non-improvement refusal
+  applied to the PROJECTED candidate's signal held-out
+  loss; candidate norm beside its pre-projection norm; the
+  allowed-input composition record on both partitions).
+  The pre-projection candidate is a construction
+  intermediate: it is never judged, landed, or reported as
+  a run, and its figures are labelled an intermediate's
+  wherever they are recorded.
+- **Representation (measured, not in the RFC).** The
+  difference of two rank-8 folded updates is generically
+  rank 16 (measured on every Phase-0 rehearsal candidate),
+  so a projected candidate with α ≠ 0 is carried by a
+  rank-16 LoRA factorisation of Δ2′ (SVD factors, rank 16,
+  alpha 16, scale 1.0 — the same scale as every prior
+  candidate). At α = 0.0 exactly the construction is the
+  identity and the candidate keeps its trained rank-8
+  factors byte-for-byte. The gate is unchanged: its
+  ``rank_cap`` of 8 therefore judges a rank-16 constructed
+  candidate exactly as it judges any other — the as-built
+  doc reports that interaction as measured, never hidden.
+- **Probe-blindness (§7.2/§15 criterion 4).** No probe
+  input, probe logit, held-out sequence, or probe-derived
+  quantity enters the loss, the coefficient, the
+  construction, or the refusal under any configuration:
+  α's input set is exactly the signal's train partition
+  (asserted by test through a spy on
+  :func:`projection_coefficient`). No new loss exists
+  under this configuration and the construction is a
+  post-training step, not a differentiable path, so
+  SI-25's gradient check stands for the training step
+  unchanged (RFC SI-30 §14 item 6).
 """
 from __future__ import annotations
 
@@ -310,6 +374,8 @@ __all__ = [
     "N_LAST_TOKENS",
     "N_TRAIN",
     "NORM_BUDGET",
+    "PROJECTION_ALPHA",
+    "PROJECTION_RANK",
     "RANK",
     "SIGNAL2_SEED_OFFSET",
     "SIGNAL_REGISTRY",
@@ -321,6 +387,7 @@ __all__ = [
     "COMPOSITION_NONE",
     "DEFAULT_COMPOSITION_CONFIG",
     "MOVEMENT_COMPOSITION",
+    "TRAIN_PARTITION_PROJECTION",
     "WORST_INPUT_COMPOSITION",
     "WORST_INPUT_K",
     "WORST_INPUT_LAMBDA",
@@ -341,6 +408,8 @@ __all__ = [
     "initial_factors",
     "movement_composition_record",
     "penalised_factor_loss",
+    "projection_coefficient",
+    "projection_factors",
     "worst_input_composition",
     "worst_input_composition_record",
     "worst_input_factor_loss",
@@ -410,12 +479,23 @@ MOVEMENT_COMPOSITION = "movement-composition"
 #: :data:`WORST_INPUT_K`).
 WORST_INPUT_COMPOSITION = "worst-input-composition"
 
-#: SI-27/SI-29: exactly the named composition configurations
-#: the configuration serves (two in SI-27, three in SI-29).
-#: Any other value refuses (see
-#: :func:`validate_composition_config`).
+#: SI-31 (RFC SI-30 §7.3): the train-partition-projection
+#: composition configuration — the training step is SI-25's
+#: and the judged candidate is CONSTRUCTED by full removal
+#: of the component parallel to the landed movement, as
+#: measured on the signal's train partition (see the module
+#: docstring). The configuration's definition carries no
+#: weight, no k, and no fraction: the coefficient α is
+#: measured per run, never settable.
+TRAIN_PARTITION_PROJECTION = "train-partition-projection"
+
+#: SI-27/SI-29/SI-31: exactly the named composition
+#: configurations the configuration serves (two in SI-27,
+#: three in SI-29, four in SI-31). Any other value refuses
+#: (see :func:`validate_composition_config`).
 COMPOSITION_CONFIGS = (COMPOSITION_NONE, MOVEMENT_COMPOSITION,
-                       WORST_INPUT_COMPOSITION)
+                       WORST_INPUT_COMPOSITION,
+                       TRAIN_PARTITION_PROJECTION)
 
 #: SI-27: the default composition configuration's name —
 #: cycles train unpenalised unless the driver explicitly
@@ -463,7 +543,7 @@ def validate_composition_config(config: str) -> str:
         raise ValueError(
             f"unknown composition configuration {config!r}: "
             f"exactly {list(COMPOSITION_CONFIGS)!r} are served "
-            "(RFC SI-28 §6.4)")
+            "(RFC SI-30 §7.3)")
     return config
 
 #: The one LoRA target trained per candidate (RFC §4.5).
@@ -1135,6 +1215,69 @@ def worst_input_composition_record(head_weights: dict,
     return record
 
 
+# -- SI-31: the train-partition projection (RFC SI-30 §7.2) --------------------
+# The projection prices nothing and adds no loss term: it
+# CONSTRUCTS the judged candidate from the SI-25-trained
+# candidate by removing, in full, the component of its
+# folded update parallel to the landed head's folded
+# update, with the parallelism measured by the movement
+# inner products on the signal's TRAIN partition only.
+
+#: SI-31: the rank a projected candidate's folded update is
+#: carried at when α ≠ 0 — the difference of two rank-8
+#: updates is generically rank 16 (measured; see the module
+#: docstring). Its alpha is likewise 16, so the scale
+#: (alpha / rank = 1.0) is every prior candidate's scale.
+PROJECTION_RANK = 16
+PROJECTION_ALPHA = 16
+
+
+def projection_coefficient(m1_map: dict, m2_map: dict,
+                           seqs) -> dict:
+    """The projection coefficient α (RFC SI-30 §7.2) from the
+    movement maps on a named allowed population (in the
+    construction, exactly the signal's train partition):
+    ``α = (Σ_x ⟨m1(x), m2(x)⟩) / (Σ_x ⟨m1(x), m1(x)⟩)`` with
+    ``m1`` / ``m2`` SI-27's movement definitions. Returns
+    ``{"alpha", "numerator", "denominator"}`` — the sums
+    beside the coefficient, so the as-built can publish the
+    derivation's inputs. When the denominator is exactly
+    0.0 — at head = ``base``, where ``m1`` is identically
+    zero and both sums vanish — α is DEFINED as 0.0 (the
+    construction is the identity there; RFC §14 item 4).
+    α is a measured coefficient, never a dial: nothing in
+    this function reads a caller-supplied value for it."""
+    numerator = 0.0
+    denominator = 0.0
+    for seq in seqs:
+        m1 = np.asarray(m1_map[tuple(seq)], dtype=np.float64)
+        m2 = np.asarray(m2_map[tuple(seq)], dtype=np.float64)
+        numerator += float(np.dot(m1, m2))
+        denominator += float(np.dot(m1, m1))
+    alpha = numerator / denominator if denominator != 0.0 else 0.0
+    return {"alpha": float(alpha), "numerator": float(numerator),
+            "denominator": float(denominator)}
+
+
+def projection_factors(delta_prime: np.ndarray):
+    """``(A, B)`` float64 LoRA factors carrying the folded
+    update ``delta_prime`` at :data:`PROJECTION_RANK` /
+    :data:`PROJECTION_ALPHA` (scale 1.0): the SVD
+    factorisation ``delta_prime = U S Vt`` (rank at most 16
+    for a difference of two rank-8 updates, padded with zero
+    singular values when the rank is smaller), split as
+    ``B = U·sqrt(S)``, ``A = sqrt(S)·Vt``. Deterministic:
+    the same input matrix yields the same factors on this
+    runtime (asserted by the determinism tests)."""
+    U, S, Vt = np.linalg.svd(
+        np.asarray(delta_prime, dtype=np.float64))
+    r = PROJECTION_RANK
+    sq = np.sqrt(S[:r])
+    A = sq[:, None] * Vt[:r]
+    B = U[:, :r] * sq[None, :]
+    return A, B
+
+
 # -- deterministic blob serialisation (§8.5) -----------------------------------
 # construct_transformer_delta serialises through safetensors'
 # save(), whose header emits the __metadata__ mapping in hash-map
@@ -1227,6 +1370,17 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     definition, never read from the intent); under the two
     prior values the paths are byte-for-byte SI-25's /
     SI-27's respectively.
+    SI-31: the validation now serves exactly FOUR named
+    configurations — under ``"train-partition-projection"``
+    the training step is SI-25's exactly and the judged
+    candidate is then constructed by the full-removal
+    projection of §7.2 (see the module docstring): the
+    measured coefficient α, the pre-/post-projection norms,
+    and the projected candidate's re-measured records are
+    recorded in the hyperparams beside the signal loss's
+    values; the pre-projection candidate is a construction
+    intermediate and is never the returned candidate. α is
+    never read from the intent or any other caller input.
     """
     from si.tiny_transformer import assemble_base_weights, assemble_weights
     from si.transformer_delta import construct_transformer_delta
@@ -1243,12 +1397,15 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     anchoring = validate_target_anchoring(
         TARGET_ANCHORING if _raw_anchoring is None else _raw_anchoring)
     # SI-27 dispatch (RFC SI-26 §7.4), extended by SI-29
-    # (RFC SI-28 §6.4): exactly the three named composition
-    # configurations; validate_composition_config raises the
-    # same ValueError discipline for any other value. λ / λ_w
-    # / k follow from the configuration's definition — they
-    # are never taken from the intent or any other caller
-    # input, so no per-cycle dial exists for any of them.
+    # (RFC SI-28 §6.4) and SI-31 (RFC SI-30 §7.3): exactly
+    # the four named composition configurations;
+    # validate_composition_config raises the same ValueError
+    # discipline for any other value. λ / λ_w / k follow from
+    # the configuration's definition — they are never taken
+    # from the intent or any other caller input, so no
+    # per-cycle dial exists for any of them. Under SI-31's
+    # value there is no dial at all: α is measured from the
+    # run's own candidates on the train partition.
     _raw_comp = getattr(intent, "composition_config", None)
     comp_config = validate_composition_config(
         DEFAULT_COMPOSITION_CONFIG if _raw_comp is None else _raw_comp)
@@ -1260,7 +1417,8 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     worst_k = WORST_INPUT_K \
         if comp_config == WORST_INPUT_COMPOSITION else None
     worst_penalised = comp_config == WORST_INPUT_COMPOSITION
-    composition_active = penalised or worst_penalised
+    projected = comp_config == TRAIN_PARTITION_PROJECTION
+    composition_active = penalised or worst_penalised or projected
     declared = list(getattr(intent, "targets", None) or [])
     if declared and declared != [TARGET_NAME]:
         raise ValueError(
@@ -1417,13 +1575,6 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
     A32 = np.ascontiguousarray(A, dtype=np.float32)
     B32 = np.ascontiguousarray(B, dtype=np.float32)
     held_out_after = factor_loss(weights, A32, B32, held_ex)
-    if not held_out_after < base_held_out_loss:
-        raise ValueError(
-            f"train_delta refuses its own candidate: held-out loss "
-            f"on signal {signal_id} did not improve "
-            f"(base {base_held_out_loss:.6f} -> trained "
-            f"{held_out_after:.6f}); a non-improving candidate is a "
-            "failed experiment, not authorship (RFC SI-18 §8.4)")
     closer = 0
     trained_weights = _folded_weights(weights, A32, B32)
     for seq, target in held_ex:
@@ -1435,11 +1586,113 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
         if after < before:
             closer += 1
 
+    # SI-31 (RFC SI-30 §7.2): under "train-partition-
+    # projection" ONLY, the candidate above is a construction
+    # INTERMEDIATE — trained exactly as SI-25 trained it —
+    # and the judged candidate is constructed from it here,
+    # once, in full. The intermediate's held-out figures are
+    # kept under their own labels (projection_pre_*); the
+    # non-improvement refusal below then judges the
+    # PROJECTED candidate's held-out loss, exactly as it
+    # judges a trained candidate's under every other
+    # configuration (under those configurations the judged
+    # candidate IS the trained candidate and this block does
+    # not run). No probe input, probe logit, held-out
+    # sequence, or probe-derived quantity enters α, the
+    # construction, or the refusal: α's inputs are the
+    # intermediate's movements on the train partition alone.
+    cand_A32, cand_B32 = A32, B32
+    cand_rank, cand_alpha = RANK, ALPHA
+    proj_alpha = None
+    proj_numerator = None
+    proj_denominator = None
+    proj_pre_norm = None
+    proj_train_loss_final = None
+    proj_pre_held_out_after = None
+    proj_pre_closer = None
+    proj_train_agg_inner = None
+    proj_held_agg_inner = None
+    if projected:
+        proj_pre_held_out_after = float(held_out_after)
+        proj_pre_closer = int(closer)
+        head_lm = np.asarray(weights[TARGET_NAME], dtype=np.float64)
+        base_lm = np.asarray(base_weights[TARGET_NAME],
+                             dtype=np.float64)
+        delta1 = head_lm - base_lm
+        delta2 = np.asarray(trained_weights[TARGET_NAME],
+                            dtype=np.float64) - head_lm
+        proj_pre_norm = float(np.linalg.norm(delta2))
+        m2_train = existing_movements(
+            trained_weights, weights, [seq for seq, _ in train_ex])
+        coeff = projection_coefficient(
+            m1_train, m2_train, [seq for seq, _ in train_ex])
+        proj_alpha = coeff["alpha"]
+        proj_numerator = coeff["numerator"]
+        proj_denominator = coeff["denominator"]
+        delta_prime = delta2 - proj_alpha * delta1
+        if proj_alpha == 0.0:
+            # The construction is the identity (at base, or
+            # wherever the measured coefficient vanishes):
+            # the judged candidate keeps the intermediate's
+            # factors byte-for-byte.
+            proj_weights = trained_weights
+        else:
+            pA, pB = projection_factors(delta_prime)
+            cand_A32 = np.ascontiguousarray(pA, dtype=np.float32)
+            cand_B32 = np.ascontiguousarray(pB, dtype=np.float32)
+            cand_rank, cand_alpha = PROJECTION_RANK, PROJECTION_ALPHA
+            proj_target = {"name": TARGET_NAME, "kind": "lora",
+                           "factor_keys": ["t0.A", "t0.B"],
+                           "rank": PROJECTION_RANK,
+                           "alpha": PROJECTION_ALPHA,
+                           "base_shape": [_V, _D]}
+            proj_weights = dict(weights)
+            proj_weights[TARGET_NAME] = fold_target(
+                np.array(weights[TARGET_NAME], dtype=np.float32,
+                         copy=True),
+                proj_target,
+                {"t0.A": cand_A32, "t0.B": cand_B32},
+                allow_additive=False, delta_id="si-31-projection")
+        # Post-projection accounting (§7.2): the projected
+        # candidate is re-measured in full before it is
+        # returned — signal losses on both partitions and
+        # the allowed-input composition record (train:
+        # the construction's own check; held-out: reported
+        # only, never an input to the construction).
+        proj_train_loss_final = float(signal_loss(proj_weights,
+                                                  train_ex))
+        held_out_after = float(signal_loss(proj_weights, held_ex))
+        closer = 0
+        for seq, target in held_ex:
+            before = float(np.mean(
+                (forward(seq, weights)[-1].astype(np.float64)
+                 - target) ** 2))
+            after = float(np.mean(
+                (forward(seq, proj_weights)[-1].astype(np.float64)
+                 - target) ** 2))
+            if after < before:
+                closer += 1
+        proj_train_agg_inner = float(movement_composition_record(
+            weights, base_weights, proj_weights,
+            [seq for seq, _ in train_ex])["aggregate_inner_product"])
+        proj_held_agg_inner = float(movement_composition_record(
+            weights, base_weights, proj_weights,
+            [seq for seq, _ in held_ex])["aggregate_inner_product"])
+
+    if not held_out_after < base_held_out_loss:
+        raise ValueError(
+            f"train_delta refuses its own candidate: held-out loss "
+            f"on signal {signal_id} did not improve "
+            f"(base {base_held_out_loss:.6f} -> trained "
+            f"{held_out_after:.6f}); a non-improving candidate is a "
+            "failed experiment, not authorship (RFC SI-18 §8.4)")
+
     delta_id = f"d{len(manifest.get('deltas', [])) + 1:04d}"
     record, blob_bytes = construct_transformer_delta(
         manifest,
         [{"name": TARGET_NAME, "kind": "lora",
-          "A": A32, "B": B32, "alpha": ALPHA, "rank": RANK}],
+          "A": cand_A32, "B": cand_B32, "alpha": cand_alpha,
+          "rank": cand_rank}],
         delta_id=delta_id, parent=manifest["head"],
         created_at=CANDIDATE_CREATED_AT, self_edit_id="se_" + delta_id)
     # §8.5: canonicalise the blob header (see _canonical_blob_bytes)
@@ -1552,6 +1805,51 @@ def train_candidate(bundle_dir: str, manifest: dict, intent,
         "worst_input_held_out_worst_index_final": (
             None if worst_held_selection_final is None else
             int(worst_held_selection_final["worst_index"])),
+        # SI-31 (RFC SI-30 §7.2/§7.3): under
+        # "train-partition-projection" the measured
+        # coefficient α and the construction's accounting
+        # are recorded beside the signal loss's values —
+        # α recorded, never settable; the intermediate's
+        # figures under projection_pre_* labels (an
+        # intermediate's, never the judged candidate's);
+        # the projected candidate's own held-out loss is
+        # "held_out_loss_after" above, as under every
+        # configuration. Under the three prior
+        # configurations every projection field is null
+        # (not measured — no construction ran) and the
+        # penalty / worst-input fields above keep their
+        # own meanings: the mechanisms are never blended.
+        "projection_alpha": (
+            None if proj_alpha is None else float(proj_alpha)),
+        "projection_numerator": (
+            None if proj_numerator is None
+            else float(proj_numerator)),
+        "projection_denominator": (
+            None if proj_denominator is None
+            else float(proj_denominator)),
+        "projection_pre_norm": (
+            None if proj_pre_norm is None
+            else float(proj_pre_norm)),
+        "projection_post_norm": (
+            None if proj_alpha is None
+            else float(record["norm"])),
+        "projection_candidate_rank": (
+            None if proj_alpha is None else int(cand_rank)),
+        "projection_train_loss_final": (
+            None if proj_train_loss_final is None
+            else float(proj_train_loss_final)),
+        "projection_pre_held_out_loss_after": (
+            None if proj_pre_held_out_after is None
+            else float(proj_pre_held_out_after)),
+        "projection_pre_held_out_examples_closer": (
+            None if proj_pre_closer is None
+            else int(proj_pre_closer)),
+        "projection_train_aggregate_inner_product": (
+            None if proj_train_agg_inner is None
+            else float(proj_train_agg_inner)),
+        "projection_held_out_aggregate_inner_product": (
+            None if proj_held_agg_inner is None
+            else float(proj_held_agg_inner)),
         "total_train_loss_initial": float(
             train_loss_initial
             + (comp_lambda * penalty_train_initial if penalised else 0.0)
