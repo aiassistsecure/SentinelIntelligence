@@ -167,6 +167,17 @@ class Intent:
     # here either: under "train-partition-projection" it
     # is measured per run, never a per-cycle value.
     composition_config: str = "none"
+    # SI-33 (RFC SI-32 §12.1): the authorship target the driver
+    # configured for this cycle — exactly "lm-head" (the
+    # default, every prior cycle's target: lm_head.weight) or
+    # "final-mlp-down" (the final layer's MLP down-projection).
+    # Carried on the intent so train_candidate dispatches on it
+    # and every cycle's hyperparams record it; validated in
+    # si.tiny_training against exactly those two values (any
+    # other value refuses). The tensor name, rank, and alpha are
+    # NOT carried here: they are the value's definition, never
+    # per-cycle values.
+    authorship_target: str = "lm-head"
     # memory fields
     collection: str = ""
     record: dict = field(default_factory=dict)
@@ -190,6 +201,7 @@ class Intent:
             "training_signal_id": self.training_signal_id,
             "target_anchoring": self.target_anchoring,
             "composition_config": self.composition_config,
+            "authorship_target": self.authorship_target,
             "collection": self.collection,
             "record": self.record,
             "target": self.target,
