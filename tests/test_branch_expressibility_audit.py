@@ -434,5 +434,13 @@ def test_untouched_scope_on_landed_stack(landed_record):
     assert tt.AUTHORSHIP_TARGETS == ("lm-head", "final-mlp-down")
     assert tt.RANK == 8 and tt.ALPHA == 8
     assert tt.CORRECTION_SCALE == 0.15
-    with pytest.raises(SquashError):
-        squash_bundle(bundle_dir, keep=0)
+    # SI-38 note (this assertion superseded): SI-12's blanket
+    # SquashError refusal was replaced by RFC SI-37's designed
+    # pipeline. On the landed stack the pipeline runs and,
+    # under the bundle's OWN policy (empty allowlist), the
+    # gate REJECTS the composite — nothing lands.
+    res = squash_bundle(bundle_dir, keep=0)
+    assert res["squashed"] is False and res["verdict"] == "REJECT"
+    manifest = load_bundle(bundle_dir)
+    assert len(manifest["deltas"]) == 2
+    assert all("superseded_by" not in d for d in manifest["deltas"])

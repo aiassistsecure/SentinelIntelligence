@@ -13,25 +13,32 @@ Pipeline (fail closed at every step):
    S (to squash) and K (to keep). ``L <= keep`` prints "nothing to squash"
    and returns ``{"squashed": False}`` — a no-op that involves no delta
    of any kind, so it returns before every refusal below.
-2. SI-12: TRANSFORMER DELTAS FAIL CLOSED. If the resolved active chain
-   contains any record with ``kind == "transformer-delta-v1"`` — in S,
-   in K, or both (a mixed stack) — raise SquashError BEFORE any blob is
-   written, any gate/journal activity, or any manifest change.
-   Transformer squash (composition over named tensors) is NOT
-   implemented; it is an explicit non-goal (RFC SI-9 §6.4), and a
-   transformer delta must never be silently converted to a demo delta.
-   The whole resolved chain is checked, not only S, because a squash
-   also *involves* K: the kept tail is materialized for the tolerance
-   verify and loaded as demo factors by the gate stack machinery
-   (``loop._load_stack`` expects ``delta.B``/``delta.A`` and a
-   record-level ``rank``/``alpha`` a transformer record does not carry)
-   — reproduced pre-SI-12 behaviour (raw ``KeyError: 'rank'`` /
-   ``SafetensorError``, plus an orphaned demo-format candidate blob
-   written before the crash) is documented in
-   ``docs/SI-12-squash-transformer-fail-closed.md``. Records that are
-   NOT on the resolved active chain (rolled back, superseded history,
-   beyond the head) are not involved in a squash and do not block one:
-   ``_active_chain`` never loads, applies, or gates them.
+2. TRANSFORMER DELTAS (SI-38, implementing RFC SI-37): if the
+   resolved active chain contains any transformer-delta-v1 record,
+   the chain must be ENTIRELY transformer records — a mixed stack
+   raises SquashError before any write (neither pipeline carries
+   a mixed stack, and a transformer delta must never be silently
+   converted to a demo delta). An all-transformer chain is handed
+   to ``si.transformer_squash.run_transformer_squash``, which
+   implements RFC SI-37's design: the §3.8 exact-carrying
+   composite priced as its own record class under a journal
+   attestation, the §5 tolerance verify over named tensors and
+   four allowed populations (before the gate, before any
+   commit), and the §4 gate context in this module's
+   ``SquashContext`` shape. SI-12's blanket refusal is the
+   history this replaces: it stood from SI-12 until RFC SI-37
+   argued the design obligations and this slice's trigger
+   (RFC SI-37 §6, operator direction) fired. The fail-closed
+   posture is unchanged — every refusal in the transformer
+   pipeline raises before any blob, journal, or manifest write,
+   and unverifiable is refused. Records that are NOT on the
+   resolved active chain (rolled back, superseded history,
+   beyond the head) are not involved in a squash and do not
+   block one: ``_active_chain`` never loads, applies, or gates
+   them. An explicit ``--rank`` on a transformer chain refuses:
+   a rank would mean lossy recompression below the
+   exact-carrying rank, which RFC SI-37 records as undesigned
+   (§11 item 2) — it is not improvised here.
 3. SI-3 scope is single-tensor bases (the demo seed's one ``W``). A
    multi-tensor base raises SquashError: squashing across named tensors
    would need a per-target layout this format does not have yet, and we
@@ -168,18 +175,24 @@ def _remove_blob(bundle_dir: str, hexpart: str) -> None:
 
 
 def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
-                  tol: float = 1e-4, mind_kind: str = "demo") -> dict:
+                  tol: float = 1e-4, mind_kind: str = "demo",
+                  gate: Gate | None = None) -> dict:
     """Compress the oldest deltas on the active stack into one gated delta.
 
     Returns ``{"squashed": False}`` when there is nothing to squash (or the
     gate refuses), else ``{"squashed": True, "delta_id", "edit_id",
     "verdict": "ADMIT", "head"}``. Raises SquashError (fail closed) on a
     multi-tensor base, a bad rank, or a tolerance violation — in which
-    case nothing is written anywhere. Also raises SquashError (SI-12)
-    when the resolved active chain contains any transformer-delta-v1
-    record (in the squash segment, the kept tail, or both): transformer
-    squash is not implemented, and that refusal happens before any
-    blob, journal, or manifest write.
+    case nothing is written anywhere. When the resolved active chain
+    contains transformer-delta-v1 records it must be entirely
+    transformer records (a mixed stack raises SquashError, fail
+    closed, before any write), and the squash runs the SI-38
+    transformer pipeline (RFC SI-37 §§3.8/4/5; see
+    ``si.transformer_squash``) instead of the demo pipeline below;
+    an explicit ``rank`` on a transformer chain raises SquashError
+    (lossy recompression is undesigned, RFC SI-37 §11 item 2).
+    ``gate`` may carry a driver-supplied Gate (the ``run_cycle``
+    pattern); the bundle's own policy gates by default.
     """
     if keep < 0:
         raise SquashError(f"keep must be >= 0, got {keep!r}")
@@ -198,31 +211,42 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
     S = chain[:L - keep]   # oldest: recompress these
     K = chain[L - keep:]   # newest: leave untouched
 
-    # -- 2. SI-12: transformer deltas on the active chain fail closed ---
+    # -- 2. transformer chains (SI-38) / mixed chains fail closed --------
     # The check is over the WHOLE resolved chain (S + K), not only S:
-    # K is involved in a squash — it is materialized for the tolerance
-    # verify and loaded as demo factors by _load_stack for the gate —
-    # and a transformer record has no demo rank/alpha or delta.B/delta.A
-    # keys for that machinery. Refusing here, before _load_base_tensors,
-    # any SVD, any blob write, any journal open, or any manifest change,
-    # is what makes the refusal fail closed: nothing is left behind,
-    # and no transformer delta is ever converted to a demo delta.
-    # Records not on the resolved chain (rolled back / superseded /
-    # beyond the head) are not checked: _active_chain never involves
-    # them in a squash.
+    # K is involved in a squash — it is materialized for the verify
+    # and forwarded by the gate context — so a chain that mixes
+    # demo and transformer records is carried by neither pipeline
+    # and refuses here, before any blob write, journal open, or
+    # manifest change. An all-transformer chain delegates to the
+    # SI-38 pipeline (RFC SI-37), which has its own fail-closed
+    # preconditions; records not on the resolved chain are not
+    # checked: _active_chain never involves them in a squash.
     transformer_ids = [d["id"] for d in chain
                        if d.get("kind") == TRANSFORMER_DELTA_KIND]
     if transformer_ids:
-        raise SquashError(
-            "si squash does not support transformer deltas: the active "
-            "chain contains transformer-delta-v1 delta(s) "
-            f"{', '.join(transformer_ids)} (in the squash segment and/or "
-            "the kept tail); transformer squash is not implemented — "
-            "it is deferred (RFC SI-9 §6.4; see "
-            "docs/SI-12-squash-transformer-fail-closed.md). Refusing "
-            "before any blob, journal, or manifest write, and refusing "
-            "to convert a transformer delta to a demo delta"
-        )
+        if len(transformer_ids) != len(chain):
+            raise SquashError(
+                "si squash refuses a mixed active chain: the chain "
+                f"contains transformer-delta-v1 delta(s) "
+                f"{', '.join(transformer_ids)} alongside demo "
+                "deltas; transformer squash (SI-38) carries "
+                "transformer-only segments and demo squash carries "
+                "demo-only stacks, and a transformer delta is "
+                "never converted to a demo delta. Refusing before "
+                "any blob, journal, or manifest write")
+        if rank is not None:
+            raise SquashError(
+                "si squash refuses an explicit rank for a "
+                "transformer chain: a chosen rank would truncate "
+                "a target below its exact-carrying rank — lossy "
+                "recompression, recorded as undesigned at "
+                "RFC SI-37 §11 item 2 and not improvised here. "
+                "Refusing before any blob, journal, or manifest "
+                "write")
+        from si.transformer_squash import run_transformer_squash
+        return run_transformer_squash(
+            bundle_dir, manifest, chain, S, K, keep=keep, tol=tol,
+            gate=gate)
 
     # -- 3. SI-3 scope: single-tensor bases only ------------------------
     base_tensors = _load_base_tensors(bundle_dir, manifest)
@@ -346,7 +370,7 @@ def squash_bundle(bundle_dir: str, keep: int = 3, rank: int | None = None,
                       + k_entries)
         ctx = SquashContext(mind, post_stack, baseline, depth=L - len(S))
 
-        gate = Gate(load_policy(bundle_dir))
+        gate = gate or Gate(load_policy(bundle_dir))
         report = gate.evaluate(intent, candidate, ctx)
 
         if report.verdict in ("REJECT", "ESCALATE"):
