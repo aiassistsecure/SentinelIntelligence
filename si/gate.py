@@ -352,7 +352,7 @@ class Gate:
                 intent, candidate, ctx)
             checks.append(id_check)
             checks.append(cap_check)
-            checks.append(self._transformer_provenance_check(intent, candidate))
+            checks.append(self._transformer_provenance_check(intent, candidate, ctx))
             # Verdict mapping (RFC SI-13 §6.4, SI-17):
             # - decisive checks (constitution/safety/provenance)
             #   failing -> REJECT, unchanged in all cases;
@@ -559,6 +559,136 @@ class Gate:
         manifest = getattr(ctx, "manifest", None)
         return manifest if isinstance(manifest, dict) else None
 
+    def _verified_squash_attestation(self, intent: Intent, candidate,
+                                     ctx, manifest):
+        """SI-38 (RFC SI-37 §3.8, §4.5): verify a squash-composite
+        attestation, or return None.
+
+        A context MAY offer ``squash_attestation()`` — the squash
+        pipeline's claim that this candidate is a composite of a
+        named segment of the bundle's active chain. The claim is
+        never taken on the context's word alone: everything the
+        gate prices from it is RECOMPUTED here from the bundle's
+        verified manifest (via the context's own base manifest)
+        and the intent — the segment must be the oldest prefix of
+        the resolved active chain, in order; every member must be
+        a transformer-delta-v1 record in the manifest; the
+        distinct tensors (segment order) and per-tensor
+        exact-carrying ranks (sum of member ranks per tensor) are
+        recomputed from the member records; the intent's parents
+        and source_seqs must equal the attested segment and its
+        journal seqs exactly; the candidate record's target names
+        must equal the recomputed distinct tensors; and the
+        per-member axis records must be consistent with the
+        manifest records on every manifest-verifiable field
+        (blob, per-target rank/norm) and complete on the
+        journal-sourced fields (signal, anchoring, composition,
+        authorship target, head trained against). Any failure
+        returns None: the candidate is then priced as an authored
+        candidate under the standing budgets (which refuse a
+        multi-target record), and — if the context claimed an
+        attestation at all — the safety suite's candidate_shape
+        sub-check fails it as unverifiable (see
+        :meth:`_transformer_safety_check`). Fail closed in both
+        directions.
+        """
+        getter = getattr(ctx, "squash_attestation", None) \
+            if ctx is not None else None
+        if not callable(getter) or manifest is None \
+                or not isinstance(candidate, dict):
+            return None
+        try:
+            att = getter()
+            if not isinstance(att, dict):
+                return None
+            segment_ids = att.get("segment_ids")
+            source_seqs = att.get("source_seqs")
+            member_records = att.get("member_records")
+            if not (isinstance(segment_ids, list) and segment_ids
+                    and all(isinstance(x, str) and x for x in segment_ids)):
+                return None
+            if not (isinstance(source_seqs, list) and source_seqs):
+                return None
+            if list(intent.parents) != list(segment_ids):
+                return None
+            if list(intent.source_seqs) != list(source_seqs):
+                return None
+            from si.bundle import _active_chain
+            chain_ids = [d["id"] for d in _active_chain(manifest)]
+            if chain_ids[:len(segment_ids)] != list(segment_ids):
+                return None
+            by_id = {d["id"]: d for d in manifest["deltas"]}
+            segment = [by_id[i] for i in segment_ids]
+            if any(d.get("kind") != TRANSFORMER_DELTA_KIND
+                   for d in segment):
+                return None
+            distinct: list = []
+            ranks: dict = {}
+            for d in segment:
+                for t in d.get("targets") or []:
+                    if not isinstance(t, dict) \
+                            or not isinstance(t.get("name"), str):
+                        return None
+                    name = t["name"]
+                    if name not in ranks:
+                        distinct.append(name)
+                        ranks[name] = 0
+                    if t.get("kind") == "lora":
+                        if not isinstance(t.get("rank"), int) \
+                                or isinstance(t.get("rank"), bool):
+                            return None
+                        ranks[name] += int(t["rank"])
+                    else:
+                        ranks[name] = None  # additive member: no
+                        # exact-carrying rank; priced at the
+                        # additive_policy sub-check (§3.8 rule 5)
+            record = candidate.get("record")
+            if not isinstance(record, dict):
+                return None
+            rec_names = [t.get("name") if isinstance(t, dict) else None
+                         for t in record.get("targets") or []]
+            if rec_names != distinct:
+                return None
+            if att.get("distinct_tensors") != distinct:
+                return None
+            if att.get("per_tensor_exact_ranks") != ranks:
+                return None
+            if not (isinstance(member_records, list)
+                    and len(member_records) == len(segment)):
+                return None
+            for mr, d in zip(member_records, segment):
+                if not isinstance(mr, dict) \
+                        or mr.get("delta_id") != d["id"] \
+                        or mr.get("blob") != d.get("blob"):
+                    return None
+                rec_targets = {t["name"]: t for t in d.get("targets") or []
+                               if isinstance(t, dict)}
+                mr_targets = mr.get("targets")
+                if not isinstance(mr_targets, list) \
+                        or len(mr_targets) != len(rec_targets):
+                    return None
+                for mt in mr_targets:
+                    if not isinstance(mt, dict):
+                        return None
+                    rt = rec_targets.get(mt.get("name"))
+                    if rt is None or mt.get("rank") != rt.get("rank") \
+                            or mt.get("norm") != rt.get("target_norm"):
+                        return None
+                for field_name in ("signal_id", "anchoring",
+                                   "composition_config",
+                                   "authorship_target",
+                                   "head_trained_against"):
+                    if not (isinstance(mr.get(field_name), str)
+                            and mr[field_name]):
+                        return None
+            return {"segment_ids": list(segment_ids),
+                    "source_seqs": list(source_seqs),
+                    "distinct_tensors": distinct,
+                    "per_tensor_exact_ranks": ranks,
+                    "member_records": member_records}
+        except Exception:
+            return None
+
     def _transformer_safety_check(self, intent: Intent, candidate,
                                   ctx) -> CheckResult:
         """RFC §4.2: the structural suite, as safety_bounds sub-checks.
@@ -583,6 +713,17 @@ class Gate:
         candidate_ok = isinstance(record, dict) \
             and isinstance(blob_bytes, (bytes, bytearray)) \
             and record.get("kind") == TRANSFORMER_DELTA_KIND
+        # SI-38 (RFC SI-37 §3.8/§4.5): a context that claims a
+        # squash attestation puts this candidate forward as a
+        # squash composite. The attestation is verified against
+        # the bundle manifest below (once the manifest is
+        # resolved); a claimed-but-unverifiable attestation fails
+        # candidate_shape — a composite that cannot be attested
+        # is not priced as one, and is not priced as authored
+        # either: it is refused here, decisively (fail closed).
+        claims_composite = ctx is not None and callable(
+            getattr(ctx, "squash_attestation", None))
+        attestation = None  # resolved after the base manifest
         sub("candidate_shape", candidate_ok,
             "candidate carries a transformer-delta-v1 record + blob bytes"
             if candidate_ok else
@@ -614,6 +755,40 @@ class Gate:
                 base_map = base_tensor_map(manifest)
             except DeltaValidationError as err:
                 base_err = f"base manifest tensor map is malformed: {err}"
+
+        # SI-38: resolve the claimed squash attestation now that
+        # the base manifest is available, and restate the
+        # candidate_shape sub-check in its composite form (§4.5
+        # check 2: record + blob bytes AND a complete per-member
+        # axis record under a verified attestation).
+        if claims_composite:
+            attestation = self._verified_squash_attestation(
+                intent, candidate, ctx, manifest)
+            if attestation is None:
+                subs[0] = CheckResult(
+                    "candidate_shape", False,
+                    "candidate is presented as a squash composite "
+                    "but its attestation could not be verified "
+                    "against the bundle manifest, the intent, and "
+                    "the candidate record (segment resolution, "
+                    "parents/source_seqs exactness, distinct "
+                    "tensors / exact-carrying ranks recomputed "
+                    "from the member records, per-member axis "
+                    "record consistency): fail closed — an "
+                    "unattestable composite is refused, not "
+                    "repriced as an authored candidate "
+                    "(RFC SI-37 §3.8/§4.5)", None)
+            elif candidate_ok:
+                subs[0] = CheckResult(
+                    "candidate_shape", True,
+                    "candidate carries a transformer-delta-v1 record "
+                    "+ blob bytes and a complete per-member axis "
+                    "record for the attested segment "
+                    f"{attestation['segment_ids']!r} (RFC SI-37 "
+                    "§4.2/§4.5: signal, anchoring, composition, "
+                    "authorship target, tensors, ranks/norms, blob, "
+                    "head trained against — per member, in segment "
+                    "order)", None)
 
         parsed, parse_err = None, None
         try:
@@ -745,7 +920,27 @@ class Gate:
             # 6 (rank part). size budgets — rank against the existing cap
             if kind == "lora":
                 rank = t.get("rank")
-                if isinstance(rank, int) and not isinstance(rank, bool) \
+                if attestation is not None:
+                    # SI-38 (RFC SI-37 §3.8 rule 2): a composite's
+                    # per-target rank is priced at the exact-
+                    # carrying rank attested from the segment's
+                    # member records — not at the authored
+                    # rank_cap (that cap prices an author's
+                    # capacity choice; a composite's rank is the
+                    # factorisation's true rank, priced in bytes
+                    # under the unchanged byte cap below).
+                    expected_rank = attestation[
+                        "per_tensor_exact_ranks"].get(name)
+                    if isinstance(rank, int) and not isinstance(rank, bool) \
+                            and rank != expected_rank:
+                        size_p.append(
+                            f"{label}: rank {rank} != the attested "
+                            f"exact-carrying rank {expected_rank} for "
+                            "this tensor over the squashed segment "
+                            "(RFC SI-37 §3.8 rule 2: the carried rank "
+                            "must be the true factorisation rank of "
+                            "the segment's combined folded update)")
+                elif isinstance(rank, int) and not isinstance(rank, bool) \
                         and rank > pol["rank_cap"]:
                     size_p.append(
                         f"{label}: rank {rank} exceeds rank_cap {pol['rank_cap']}")
@@ -758,7 +953,21 @@ class Gate:
                     f"{pol['allowed_target_patterns']!r} (empty allowlist "
                     "admits nothing)")
             # additive policy gate
-            if kind == "additive" and not pol["allow_additive"]:
+            if kind == "additive" and attestation is not None:
+                # SI-38 (RFC SI-37 §3.8 rule 5): a segment member
+                # carrying an additive target produces NO
+                # composite under the composite discipline — the
+                # exclusion is enforced here as a failure
+                # regardless of the authored additive policy:
+                # whether allow_additive prices *carried*
+                # additive updates is a question SI-37 records
+                # as open, and an open question is not a pass.
+                additive_p.append(
+                    f"{label}: squash composites do not carry "
+                    "additive targets (RFC SI-37 §3.8 rule 5: "
+                    "additive segment members are excluded from "
+                    "squash, fail closed)")
+            elif kind == "additive" and not pol["allow_additive"]:
                 additive_p.append(
                     f"{label}: additive targets are not permitted "
                     "(policy allow_additive is false)")
@@ -792,7 +1001,22 @@ class Gate:
             size_p.append(
                 f"delta blob bytes {len(blob_bytes)} exceeds delta_byte_cap "
                 f"{pol['delta_byte_cap']}")
-        if len(targets) > pol["max_targets_per_delta"]:
+        if attestation is not None:
+            # SI-38 (RFC SI-37 §3.8 rule 1): a composite's target
+            # count is priced against its attested segment — it
+            # must equal the number of distinct base tensors the
+            # segment's members act on (verified against the
+            # resolved chain, not the candidate's own list).
+            # max_targets_per_delta prices authored candidates
+            # only and is unchanged for them.
+            n_distinct = len(attestation["distinct_tensors"])
+            if len(targets) != n_distinct:
+                size_p.append(
+                    f"{len(targets)} target(s) != the attested "
+                    f"segment's distinct-tensor count {n_distinct} "
+                    "(RFC SI-37 §3.8 rule 1: fewer drops an update, "
+                    "more invents one)")
+        elif len(targets) > pol["max_targets_per_delta"]:
             size_p.append(
                 f"{len(targets)} target(s) exceeds max_targets_per_delta "
                 f"{pol['max_targets_per_delta']}")
@@ -820,16 +1044,27 @@ class Gate:
              "no measurable targets"), aggregate)
         sub("size_budgets", not size_p,
             "; ".join(size_p) if size_p else
-            (f"blob {len(blob_bytes)} bytes <= cap {pol['delta_byte_cap']}, "
-             f"{len(targets)} target(s) <= {pol['max_targets_per_delta']}, "
-             f"ranks <= rank_cap {pol['rank_cap']}"))
+            ((f"blob {len(blob_bytes)} bytes <= cap "
+              f"{pol['delta_byte_cap']}, {len(targets)} target(s) == "
+              f"the attested segment's distinct-tensor count "
+              f"{len(attestation['distinct_tensors'])}, per-target "
+              "ranks at their attested exact-carrying ranks "
+              "(RFC SI-37 §3.8 rules 1/2/4 — composite pricing; "
+              "authored budgets unchanged)")
+             if attestation is not None else
+             (f"blob {len(blob_bytes)} bytes <= cap {pol['delta_byte_cap']}, "
+              f"{len(targets)} target(s) <= {pol['max_targets_per_delta']}, "
+              f"ranks <= rank_cap {pol['rank_cap']}")))
         sub("allowlist", not allow_p,
             "; ".join(allow_p) if allow_p else
             "every target matches allowed_target_patterns")
         sub("additive_policy", not additive_p,
             "; ".join(additive_p) if additive_p else
-            ("additive targets permitted by policy" if pol["allow_additive"]
-             else "no additive targets (policy allow_additive is false)"))
+            ("no additive targets carried (RFC SI-37 §3.8 rule 5 "
+             "exclusion holds for this composite)"
+             if attestation is not None else
+             ("additive targets permitted by policy" if pol["allow_additive"]
+              else "no additive targets (policy allow_additive is false)")))
         # 8. stack rules (unchanged semantics)
         stack_p = []
         depth = None
@@ -1009,8 +1244,20 @@ class Gate:
                 "(RFC SI-13 §6.3)")
 
     def _transformer_provenance_check(self, intent: Intent,
-                                      candidate) -> CheckResult:
-        """RFC §4.4: demo provenance + the declared target list."""
+                                      candidate, ctx=None) -> CheckResult:
+        """RFC §4.4: demo provenance + the declared target list.
+
+        SI-38 (RFC SI-37 §4.5, check 5): when the context claims a
+        squash attestation, the squash attestation is part of this
+        check — parents must be exactly the segment members' delta
+        ids in segment order and source_seqs exactly those
+        members' own journal seqs (verified, recomputed from the
+        manifest, in :meth:`_verified_squash_attestation`). A
+        claimed attestation that does not verify fails this check
+        fail-closed: after a squash, the composite's provenance is
+        the only place the active stack remembers what it
+        replaced.
+        """
         problems = []
         if not intent.parents:
             problems.append("parents is empty: an uncaused change is noise")
@@ -1034,13 +1281,35 @@ class Gate:
             problems.append(
                 f"declared targets {list(declared)!r} do not match the "
                 f"candidate record's targets {record_names!r}")
+        attestation_note = ""
+        if ctx is not None and callable(
+                getattr(ctx, "squash_attestation", None)):
+            manifest = self._ctx_base_manifest(ctx)
+            attestation = self._verified_squash_attestation(
+                intent, candidate, ctx, manifest)
+            if attestation is None:
+                problems.append(
+                    "squash attestation could not be verified: "
+                    "parents/source_seqs are not exactly the "
+                    "attested segment's delta ids and journal seqs "
+                    "in segment order, or the segment does not "
+                    "resolve on the bundle's active chain "
+                    "(RFC SI-37 §4.5 check 5)")
+            else:
+                attestation_note = (
+                    f"; squash attestation verified: parents are "
+                    f"exactly the segment {attestation['segment_ids']!r} "
+                    "in order, source_seqs are exactly the members' "
+                    "journal seqs, per-member axis record complete "
+                    "(RFC SI-37 §4.5)")
         return CheckResult(
             "provenance_completeness",
             passed=not problems,
             detail=("; ".join(problems) if problems else
                     f"{len(intent.parents)} parent(s), "
                     f"{len(intent.source_seqs)} source seq(s), declared "
-                    f"targets match the record: {list(declared)!r}"),
+                    f"targets match the record: {list(declared)!r}"
+                    + attestation_note),
             measured=float(len(intent.parents) + len(intent.source_seqs)),
         )
 

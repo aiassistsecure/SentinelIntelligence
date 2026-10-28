@@ -95,7 +95,9 @@ Covers the §16 criteria, in order:
     and exactly one new-target decisive run performed;
     policy defaults, both signals', both anchorings', and
     all four composition configurations' definitions
-    unchanged; ``si squash`` still fails closed.
+    unchanged; ``si squash`` on the landed stack runs
+    SI-38's designed pipeline and is REJECTED under the
+    bundle's own policy (see the test body).
 
 The decisive run's driver shape: ONE ``TinyTransformerMind``
 reused through ``si.run.run_cycles`` — cycle 1 (signal 1,
@@ -1003,11 +1005,21 @@ def test_unwind_and_untouched_scope(tmp_path):
     manifest = load_bundle(bundle_dir)
     assert manifest["head"] == "d0002"
     assert len(manifest["deltas"]) == 2
-    # si squash still fails closed on the resulting
-    # transformer stack (asserted here, on the stack
-    # itself, before the unwind below removes it).
-    with pytest.raises(SquashError):
-        squash_bundle(bundle_dir, keep=0)
+    # SI-38 note (this assertion superseded): SI-12's blanket
+    # SquashError refusal was replaced by RFC SI-37's designed
+    # squash pipeline. On this stack the pipeline now runs and,
+    # under the bundle's OWN policy (empty allowlist), the gate
+    # REJECTS the composite on the allowlist line — nothing
+    # lands: no new delta, no superseded marks, head unmoved.
+    # (Under the driver policy this suite lands cycles with,
+    # the same squash ADMITs; tests/test_transformer_squash.py
+    # covers both arms.)
+    res = squash_bundle(bundle_dir, keep=0)
+    assert res["squashed"] is False and res["verdict"] == "REJECT"
+    manifest = load_bundle(bundle_dir)
+    assert manifest["head"] == "d0002"
+    assert len(manifest["deltas"]) == 2
+    assert all("superseded_by" not in d for d in manifest["deltas"])
     # The authored two-delta stack EXISTS for the first
     # time (cycle 1 lm-head + cycle 2 final-mlp-down), so
     # the unwind is the real thing, step by step through

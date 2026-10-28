@@ -27,6 +27,20 @@ raise SquashError before any blob, journal, or manifest write.
 Records NOT on the resolved active chain are not involved and do
 not block a demo squash; ``L <= keep`` remains the unchanged no-op.
 Demo-only squash is unchanged (``tests/test_squash.py``).
+
+SI-38 (RFC SI-37 §6's operator-direction trigger) replaced the
+blanket refusal with the designed pipeline for the landed
+miniature stack: a journaled segment attestation, an exact
+carrying, the §5 tolerance verify, and the gate under §3.8's
+composite pricing (``tests/test_transformer_squash.py`` covers
+that path). The fixtures in THIS file still refuse, and this
+file now pins the new refusal points: a hand-stacked chain on
+a non-miniature-shaped bundle has no §5 lawful population
+(the verify cannot run, so the squash is unverifiable and
+refused), a chain mixing demo and transformer records is
+refused as mixed, and an explicit ``--rank`` on a transformer
+chain refuses as the lossy recompression RFC SI-37 §3.5
+leaves undesigned. Refusals still write nothing.
 """
 import os
 
@@ -166,10 +180,10 @@ def _snapshot(bundle_dir):
     return canonical_json(manifest), counts, blobs
 
 
-def _assert_refused_unchanged(bundle_dir, **kw):
+def _assert_refused_unchanged(bundle_dir,
+                              match="no lawful population", **kw):
     before = _snapshot(bundle_dir)
-    with pytest.raises(SquashError, match="transformer squash is not "
-                                           "implemented"):
+    with pytest.raises(SquashError, match=match):
         squash_bundle(bundle_dir, **kw)
     assert _snapshot(bundle_dir) == before, \
         "transformer refusal must leave manifest, journal, and blob " \
@@ -204,7 +218,8 @@ def test_transformer_in_segment_refused_with_explicit_rank(tmp_path):
     bundle_dir, _ = _make_bundle(tmp_path, "si12-s-rank", {"W": (8, 8)})
     _stack_transformer(bundle_dir, "W", (8, 8), "d0001", seed=1)
     _stack_transformer(bundle_dir, "W", (8, 8), "d0002", seed=2)
-    _assert_refused_unchanged(bundle_dir, keep=0, rank=2)
+    _assert_refused_unchanged(bundle_dir, keep=0, rank=2,
+                              match="explicit rank")
 
 
 def test_multi_tensor_transformer_refusal_names_transformer(tmp_path):
@@ -234,7 +249,9 @@ def test_transformer_only_in_kept_tail_refused_unchanged(tmp_path):
     manifest = load_bundle(bundle_dir)
     assert [d["kind"] if "kind" in d else "demo"
             for d in _active_chain(manifest)] == ["demo", KIND]
-    _assert_refused_unchanged(bundle_dir, keep=1)
+    _assert_refused_unchanged(bundle_dir,
+                              match="refuses a mixed active chain",
+                              keep=1)
 
 
 # -- mixed stacks ----------------------------------------------------------------
@@ -255,7 +272,9 @@ def test_mixed_transformer_in_segment_demo_in_tail_refused(tmp_path):
         _demo_record("d0002", "d0001", blob_hex, byte_len, B, A))
     manifest["head"] = "d0002"
     _persist(bundle_dir, manifest, "stack mixed demo")
-    _assert_refused_unchanged(bundle_dir, keep=1)
+    _assert_refused_unchanged(bundle_dir,
+                              match="refuses a mixed active chain",
+                              keep=1)
 
 
 # -- documented scope edges --------------------------------------------------------
