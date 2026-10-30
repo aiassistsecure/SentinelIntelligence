@@ -109,8 +109,12 @@ bounded read pool (§8 — unkeyed reads concurrent up to
 ``queue_max_concurrent_reads``, default 4; everything keyed
 or state-changing still serial). SI-53 (Q-3) adds the live
 leash, write/execute outcome-unknown recovery with operator
-dispositions, and service/SSE queue exposure; all queue
-performance remains UNMEASURED (Q-4). See
+dispositions, and service/SSE queue exposure. SI-54
+(Q-4) measures queue performance for the scripted
+miniature workloads of SI-50 §16 (drain versus serial,
+residence, journal growth, leash, pipeline) — see
+docs/SI-54-q4-measurement.md; quantities outside that
+scope remain UNMEASURED. See
 docs/SI-51-q1-queue-core.md, docs/SI-52-q2-concurrency-deps.md
 and docs/SI-53-q3-leash-dispositions.md.
 """

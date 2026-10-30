@@ -44,8 +44,13 @@ one outcome. Claims are journaled serially in intent order
 before a pool batch runs; outcome journaling stays serial
 (the journal serializes its own appends — §8.3), so outcomes
 append in completion order and the fold does not care. The
-bound is a policy, **UNMEASURED** (Q-4): no throughput claim
-is made for it anywhere in this slice.
+bound is a policy. Its performance is now **measured
+(SI-54, Q-4)** for the scripted miniature workloads: the
+read-heavy benefit plateaus at bound 4 (the §8.2 default,
+kept on that evidence), and at miniature scale the serial
+cycle remains faster than the queue at every bound — see
+docs/SI-54-q4-measurement.md. No other throughput claim
+is made for it.
 
 ``depends_on`` requirement semantics (Q-2, §7.3):
 ``outcome`` is satisfied when the dependency reaches
@@ -115,10 +120,14 @@ write/execute claims ``deferred`` and left them claimed;
 ``recover`` still returns that key, now always empty, beside
 the new ``outcome_unknown`` list — see SI-53's doc.)
 
-Every performance quantity for the queue — drain throughput,
-residence times, the benefit of any concurrency above 1 — is
-**UNMEASURED** (Q-4, §16). Nothing in this module measures or
-claims any of it.
+Queue performance is **measured (SI-54, Q-4)** for the
+scripted miniature workloads of SI-50 §16 — drain versus
+serial wall times, residence distributions, journal growth
+per task, leash cost, and the two-deep pipeline — in
+docs/SI-54-q4-measurement.md, measured by
+:mod:`si.gaia.measure`. Quantities outside that scope —
+the Hearth path, NEDB-backend performance, non-miniature
+bundles, the claim lease — remain **UNMEASURED**.
 """
 from __future__ import annotations
 
@@ -155,7 +164,10 @@ Q1_CONCURRENCY = 1
 #: ``queue_max_concurrent_reads`` defaults to 4 and is hard-
 #: capped at 16 — a policy value above the cap resolves to the
 #: cap; a malformed or sub-1 value resolves to 1 (serial, the
-#: most restrictive reading). The number is UNMEASURED (Q-4).
+#: most restrictive reading). The default is now measured
+#: (SI-54, Q-4): the read-heavy plateau starts at 4, and 8
+#: measured no better at 15 repetitions — the default stays
+#: 4 on that evidence (docs/SI-54-q4-measurement.md §7).
 Q2_DEFAULT_MAX_CONCURRENT_READS = 4
 Q2_MAX_CONCURRENT_READS_CAP = 16
 
@@ -703,7 +715,9 @@ class Drainer:
         ≥ 1 → itself, capped at
         (:data:`Q2_MAX_CONCURRENT_READS_CAP`); anything else
         (malformed, bool, sub-1) → 1, serial — the most
-        restrictive reading. UNMEASURED (Q-4)."""
+        restrictive reading. The default's performance is
+        measured (SI-54, Q-4; see
+        docs/SI-54-q4-measurement.md §2.1/§7)."""
         if "queue_max_concurrent_reads" not in self.policy:
             return Q2_DEFAULT_MAX_CONCURRENT_READS
         value = self.policy.get("queue_max_concurrent_reads")
