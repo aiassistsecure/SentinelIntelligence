@@ -13,6 +13,8 @@
     si squash <path> [--keep N] [--rank R] [--tol T]
     si serve <path> [--host H] [--port P]
     si task <path> --instruction "..." [--root DIR] [--cycles N] [--script FILE] [--operator NAME]
+    si gaia-serve <path> [--host H] [--port P]
+    si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--json] [--verify BUNDLE]
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -534,6 +536,95 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_gaia_events(args) -> int:
+    """`si gaia-events` (SI-48): the reference consumer for the
+    Gaia SSE spine — connect to a running `si gaia-serve`
+    service, resume from --after (sent as Last-Event-ID), apply
+    the SI-48 subscription filters (--collection / --event /
+    --kind / --task, repeatable), and print the events. With
+    --verify BUNDLE, afterwards verify the received events
+    row-for-row against that bundle's journal (and, when a
+    filter was given, against the journal's own projection).
+    A reference consumer, not a production client library: no
+    retries, no auth."""
+    from si.gaia.events import parse_event_filter
+    from si.gaia.events_client import (
+        CONSUMER_LABEL, collect_events, fetch_events,
+        verify_events_against_journal)
+    params: dict = {}
+    if args.collection:
+        params["collection"] = args.collection
+    if args.event:
+        params["event"] = args.event
+    if args.kind:
+        params["kind"] = args.kind
+    if args.task is not None:
+        params["task"] = [args.task]
+    try:
+        event_filter = parse_event_filter(params)
+    except ValueError as e:
+        print(f"si: error: {e}", file=sys.stderr)
+        return 2
+    print(f"# {CONSUMER_LABEL}")
+    print(f"# {event_filter.describe()}")
+    if args.verify and args.follow:
+        print("si: error: --verify needs a bounded replay; it "
+              "cannot be combined with --follow (the stream "
+              "never ends)", file=sys.stderr)
+        return 2
+    received = []
+    try:
+        if args.follow:
+            stream = fetch_events(args.url, after_seq=args.after,
+                                  event_filter=event_filter,
+                                  follow=True, timeout=None)
+            for event in stream:
+                received.append(event)
+                _print_gaia_event(event, args.json)
+        else:
+            received = collect_events(args.url, after_seq=args.after,
+                                      event_filter=event_filter)
+            for event in received:
+                _print_gaia_event(event, args.json)
+    except KeyboardInterrupt:
+        print(f"# stopped by operator after {len(received)} "
+              f"event(s); resume with --after "
+              f"{received[-1]['id'] if received else args.after}",
+              file=sys.stderr)
+        return 0
+    last = received[-1]["id"] if received else args.after
+    print(f"# {len(received)} event(s); last id {last} "
+          f"(resume: si gaia-events --after {last})")
+    if args.verify:
+        from si.bundle import load_bundle
+        from si.journal import open_journal
+        bundle_dir = _bundle(args.verify)
+        manifest = load_bundle(bundle_dir)
+        journal = open_journal(bundle_dir, manifest)
+        try:
+            report = verify_events_against_journal(
+                received, journal, event_filter=event_filter)
+        finally:
+            journal.close()
+        print(f"# verify: ok={report['ok']} "
+              f"checked={report['checked']}")
+        for problem in report["problems"]:
+            print(f"# verify problem: {problem}")
+        return 0 if report["ok"] else 1
+    return 0
+
+
+def _print_gaia_event(event: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps({"id": event["id"], "event": event["event"],
+                          "collection": event["collection"],
+                          "row": event["row"]}, sort_keys=True,
+                         default=str))
+    else:
+        print(f"{event['id']}\t{event['event']}\t"
+              f"{event['collection']}")
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -725,6 +816,59 @@ def build_parser() -> argparse.ArgumentParser:
     pgs.add_argument("--port", type=int, default=8000,
                      help="bind port (default: 8000; 0 = ephemeral)")
     pgs.set_defaults(func=cmd_gaia_serve)
+
+    pge = sub.add_parser("gaia-events", help="SI-48: reference "
+                                             "consumer for the Gaia "
+                                             "SSE event spine — "
+                                             "connect to a running "
+                                             "gaia-serve service, "
+                                             "resume from --after "
+                                             "(Last-Event-ID), apply "
+                                             "the SI-48 subscription "
+                                             "filters, print events, "
+                                             "and optionally --verify "
+                                             "them row-for-row "
+                                             "against a bundle's "
+                                             "journal. A reference "
+                                             "consumer, not a "
+                                             "production client "
+                                             "library; no retries, "
+                                             "no auth.")
+    pge.add_argument("--url", default="http://127.0.0.1:8000",
+                     help="base URL of the gaia-serve service "
+                          "(default: http://127.0.0.1:8000)")
+    pge.add_argument("--after", type=int, default=0,
+                     help="resume seq: stream exactly the journal "
+                          "rows after this seq (sent as the "
+                          "Last-Event-ID header; default: 0, the "
+                          "journal's start)")
+    pge.add_argument("--collection", action="append", default=None,
+                     help="filter: only this journal collection "
+                          "(repeatable, or comma-separated)")
+    pge.add_argument("--event", action="append", default=None,
+                     help="filter: only this SSE event name "
+                          "(repeatable, or comma-separated)")
+    pge.add_argument("--kind", action="append", default=None,
+                     help="filter: only rows whose kind is this "
+                          "(repeatable, or comma-separated)")
+    pge.add_argument("--task", default=None,
+                     help="filter: only the events of the task "
+                          "journaled at this seq (the journal's "
+                          "§10.2 chain membership)")
+    pge.add_argument("--follow", action="store_true",
+                     help="follow the live tail (poll-the-journal) "
+                          "until interrupted; cannot combine with "
+                          "--verify")
+    pge.add_argument("--json", action="store_true",
+                     help="print each event's full envelope as "
+                          "one JSON line instead of the compact "
+                          "id/event/collection line")
+    pge.add_argument("--verify", default=None, metavar="BUNDLE",
+                     help="after the replay, verify the received "
+                          "events row-for-row against this "
+                          "bundle's journal (exit 1 on any "
+                          "mismatch)")
+    pge.set_defaults(func=cmd_gaia_events)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "
