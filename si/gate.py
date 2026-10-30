@@ -262,6 +262,20 @@ class Intent:
     # args object "args"; the field carries exactly that object.
     tool: str = ""
     args: dict = field(default_factory=dict)
+    # tool queue fields (SI-51, SI-50 §6.1/§7): for kind == "tool"
+    # only — the proposer's declared drain semantics. All optional:
+    # ``ordering_key`` forces a shared FIFO order (§7.2; absent, the
+    # gate derives the class default at pricing time and records it
+    # in the report's queue block); ``depends_on`` is a list of
+    # earlier journal sequences in the same task, each an int (an
+    # ``outcome`` requirement) or {"seq": int, "requirement":
+    # "outcome"|"success"} (§7.3 — priced by check 2, §6.2);
+    # ``barrier`` declares a perception sync point (§10.2 — parsed
+    # and journaled in Q-1; barrier sync semantics land in Q-2).
+    # Empty / ignored for every other kind.
+    ordering_key: str | None = None
+    depends_on: list = field(default_factory=list)
+    barrier: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -282,6 +296,9 @@ class Intent:
             "targets": list(self.targets),
             "tool": self.tool,
             "args": self.args,
+            "ordering_key": self.ordering_key,
+            "depends_on": list(self.depends_on),
+            "barrier": bool(self.barrier),
         }
 
 
@@ -320,12 +337,22 @@ class GateReport:
     # the miniature path only. None for every other kind, so their
     # dict form is byte-for-byte unchanged.
     execution: str | None = None
+    # SI-51 (SI-50 §6.1/§7.2): for tool reports only, the queue
+    # pricing the gate derived at admission — the priced ordering
+    # key, the normalised depends_on, the barrier flag, the batch
+    # seq, the effective class — recorded in the verdict entry so
+    # the queue fold (si.gaia.queue) reads the priced record and
+    # never recomputes it at drain time. None for every other
+    # report, so their dict form is byte-for-byte unchanged.
+    queue: dict | None = None
 
     def to_dict(self) -> dict:
         out = {"verdict": self.verdict,
                "checks": [c.to_dict() for c in self.checks]}
         if self.execution is not None:
             out["execution"] = self.execution
+        if self.queue is not None:
+            out["queue"] = self.queue
         return out
 
     @property
@@ -390,6 +417,65 @@ def _lora_norm_gram(B, A, scale: float) -> float:
         # clamp rather than take sqrt of a negative.
         sq = 0.0
     return abs(float(scale)) * math.sqrt(sq)
+
+
+def _normalize_depends_on(raw) -> tuple:
+    """Normalise a tool intent's ``depends_on`` declarations
+    (SI-50 §7.3) to a list of {"seq": int, "requirement": str},
+    plus itemised problems.
+
+    An entry is an int (an ``outcome`` requirement on that journal
+    sequence) or a dict {"seq": int, "requirement":
+    "outcome"|"success"} ("intent_seq" is accepted as the seq key).
+    Anything else — a non-list, a bool, a non-positive seq, an
+    unknown requirement, a duplicate seq — is a problem, and the
+    caller (check 2) fails closed on any problem (§6.2)."""
+    problems: list = []
+    out: list = []
+    if raw is None:
+        return out, problems
+    if not isinstance(raw, list):
+        return out, [f"depends_on must be a list of earlier journal "
+                     f"sequences, got {type(raw).__name__} (SI-50 §7.3)"]
+    seen = set()
+    for i, entry in enumerate(raw):
+        seq, requirement = None, "outcome"
+        if isinstance(entry, bool):
+            problems.append(f"depends_on[{i}]: {entry!r} is not a "
+                            "journal sequence")
+            continue
+        if isinstance(entry, int):
+            seq = entry
+        elif isinstance(entry, dict):
+            seq = entry.get("seq", entry.get("intent_seq"))
+            requirement = entry.get("requirement", "outcome")
+            if isinstance(seq, bool) or not isinstance(seq, int):
+                problems.append(
+                    f"depends_on[{i}]: seq {seq!r} is not an integer "
+                    "journal sequence")
+                continue
+            if requirement not in ("outcome", "success"):
+                problems.append(
+                    f"depends_on[{i}]: requirement {requirement!r} is "
+                    "not 'outcome' or 'success' (SI-50 §7.3)")
+                continue
+        else:
+            problems.append(
+                f"depends_on[{i}]: {entry!r} is neither a journal "
+                "sequence nor a {seq, requirement} declaration")
+            continue
+        if seq <= 0:
+            problems.append(
+                f"depends_on[{i}]: seq {seq} is not a positive journal "
+                "sequence")
+            continue
+        if seq in seen:
+            problems.append(
+                f"depends_on[{i}]: seq {seq} is declared twice")
+            continue
+        seen.add(seq)
+        out.append({"seq": seq, "requirement": requirement})
+    return out, problems
 
 
 class Gate:
@@ -660,6 +746,27 @@ class Gate:
                         outside = True
             if outside:
                 effective = "external"
+        # SI-50 §7.2 ordering key: a declared key wins; absent one,
+        # the class default is derived HERE, at gate time, and the
+        # priced key is recorded in the verdict entry (the report's
+        # queue block) — never recomputed at drain time.
+        declared_key = getattr(intent, "ordering_key", None)
+        ordering_key = None
+        if isinstance(declared_key, str) and declared_key:
+            ordering_key = declared_key
+        elif spec is not None:
+            if spec.consequence_class == "write":
+                target = resolved.get("path")
+                ordering_key = f"fs:{target}" if target else None
+            elif spec.consequence_class == "execute":
+                ordering_key = f"exec:{work_root}"
+            elif spec.name in ("journal_query", "bundle_status",
+                               "probe_run"):
+                ordering_key = "house"
+            # read-class filesystem tools: no key by default (§7.2 —
+            # the parallel pool of §8; a declared key above opts in).
+        deps, dep_problems = _normalize_depends_on(
+            getattr(intent, "depends_on", None))
         return {
             "tool": getattr(intent, "tool", ""),
             "spec": spec,
@@ -670,6 +777,10 @@ class Gate:
             "work_root": work_root,
             "resolved_paths": resolved,
             "policy": pol,
+            "ordering_key": ordering_key,
+            "declared_ordering_key": declared_key,
+            "depends_on": deps,
+            "depends_on_problems": dep_problems,
         }
 
     def _evaluate_tool(self, intent: Intent, checks: list,
@@ -720,6 +831,22 @@ class Gate:
         """
         safety, info = self._tool_safety_check(intent, ctx)
         checks.append(safety)
+        # SI-51 (SI-50 §6.1/§7.2): every tool report carries the
+        # queue pricing derived at this admission — priced here,
+        # journaled with the verdict, read back by the queue fold.
+        queue_pricing = {
+            "ordering_key": info.get("ordering_key"),
+            "depends_on": info.get("depends_on") or [],
+            "barrier": bool(getattr(intent, "barrier", False)),
+            "batch_seq": (getattr(ctx, "tool_queue_batch_seq", None)
+                          if ctx is not None else None),
+            "effective_class": info.get("effective_class"),
+        }
+
+        def _report(verdict, execution):
+            report = GateReport(verdict, checks, execution=execution)
+            report.queue = dict(queue_pricing)
+            return report
         for name in ("identity_continuity", "capability_floor"):
             checks.append(CheckResult(
                 name, True, TOOL_PROBES_NOT_APPLICABLE, None,
@@ -736,10 +863,9 @@ class Gate:
                 rejected = (TOOL_B3_REJECTED_EXECUTION
                             if info.get("effective_class") == "execute"
                             else TOOL_LIVE_REJECTED_EXECUTION)
-            return GateReport("REJECT", checks, execution=rejected)
+            return _report("REJECT", rejected)
         if not live:
-            return GateReport("ESCALATE", checks,
-                              execution=TOOL_SHADOW_EXECUTION)
+            return _report("ESCALATE", TOOL_SHADOW_EXECUTION)
         spec = info.get("spec")
         effective = info.get("effective_class")
         rule = info.get("class_rule")
@@ -751,14 +877,13 @@ class Gate:
             # execute class is B-3's and carries the B-3 label.
             label = (TOOL_B3_LIVE_EXECUTION if effective == "execute"
                      else TOOL_LIVE_EXECUTION)
-            return GateReport("ADMIT", checks, execution=label)
+            return _report("ADMIT", label)
         if rule == "escalate":
             label = (TOOL_B3_ESCALATED_EXECUTION
                      if effective == "execute"
                      else TOOL_LIVE_ESCALATED_EXECUTION)
-            return GateReport("ESCALATE", checks, execution=label)
-        return GateReport("ESCALATE", checks,
-                          execution=TOOL_B3_NOT_LIVE_EXECUTION)
+            return _report("ESCALATE", label)
+        return _report("ESCALATE", TOOL_B3_NOT_LIVE_EXECUTION)
 
     def _tool_safety_check(self, intent: Intent, ctx) -> tuple:
         """Check 2 for tools (RFC §5.2): the declared action, priced.
@@ -787,7 +912,8 @@ class Gate:
         if spec is None:
             for name in ("allowed_tools", "args_schema", "effective_class",
                          "execution_scope", "class_policy",
-                         "command_bounds", "budgets"):
+                         "command_bounds", "ordering_key", "depends_on",
+                         "budgets"):
                 sub(name, False,
                     "not evaluated: the tool is not registered")
             return self._tool_safety_result(subs), info
@@ -853,6 +979,66 @@ class Gate:
         else:
             sub("command_bounds", True,
                 "not applicable: tool carries no command/source args")
+
+        # SI-50 §7.2/§7.3 queue pricing (SI-51): the ordering key
+        # and the dependency declarations are part of the gated
+        # record — derived/validated here, journaled with the
+        # report, and never recomputed or re-decided at drain time.
+        declared_key = info.get("declared_ordering_key")
+        key_problems = []
+        if declared_key is not None and not (
+                isinstance(declared_key, str) and declared_key
+                and len(declared_key) <= 512):
+            key_problems.append(
+                f"declared ordering_key {declared_key!r} is not a "
+                "non-empty string of at most 512 chars (SI-50 §7.2)")
+        sub("ordering_key", not key_problems,
+            "; ".join(key_problems) if key_problems else
+            (f"ordering key {info.get('ordering_key')!r} "
+             f"({'declared by the proposer' if declared_key else 'derived at gate time per SI-50 §7.2'})"))
+
+        dep_problems = list(info.get("depends_on_problems") or [])
+        deps = info.get("depends_on") or []
+        if deps:
+            tip = getattr(ctx, "tool_journal_tip", None) \
+                if ctx is not None else None
+            scope = getattr(ctx, "tool_task_intent_seqs", None) \
+                if ctx is not None else None
+            task_seq = getattr(ctx, "tool_task_seq", None) \
+                if ctx is not None else None
+            for dep in deps:
+                seq = dep["seq"]
+                if tip is None:
+                    dep_problems.append(
+                        f"depends_on seq {seq} cannot be priced: no "
+                        "journal context is available to establish "
+                        "that it names an earlier journaled intent "
+                        "(SI-50 §6.2 — fail closed)")
+                elif seq > int(tip):
+                    dep_problems.append(
+                        f"depends_on seq {seq} is not yet journaled "
+                        f"(journal tip is {tip}): a dependency must "
+                        "name a strictly earlier sequence — a future "
+                        "or own sequence is malformed (SI-50 §6.2)")
+                elif task_seq is not None and scope is None:
+                    dep_problems.append(
+                        f"depends_on seq {seq} cannot be priced: "
+                        "the task's intent scope is unavailable to "
+                        "establish it belongs to this task "
+                        "(SI-50 §6.2 — fail closed)")
+                elif scope is not None and seq not in scope:
+                    dep_problems.append(
+                        f"depends_on seq {seq} is outside this task: "
+                        "dependencies name earlier intents of the "
+                        "same task only (SI-50 §6.2)")
+        sub("depends_on", not dep_problems,
+            "; ".join(dep_problems) if dep_problems else
+            (f"{len(deps)} dependency declaration(s) priced: "
+             f"{deps!r} (SI-50 §7.3; Q-1 journals them and treats "
+             "satisfaction as sequence order — requirement "
+             "semantics land in Q-2)"
+             if deps else
+             "no dependencies declared (SI-50 §7.3)"))
 
         budget_problems = []
         cycles_used = getattr(ctx, "tool_cycles_used", 0) if ctx is not None else 0

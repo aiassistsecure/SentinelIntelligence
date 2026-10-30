@@ -213,6 +213,12 @@ def test_task_filter_matches_the_b5_trail_chain(mini):
             expected = {task_seq}
             if trail["task_stop"] is not None:
                 expected.add(trail["task_stop"]["seq"])
+            # SI-51 (Q-1): the task's queue entries — its batch
+            # entry and the claims journaled before execution —
+            # belong to the task (their records name its seq) and
+            # the B-5 trail now carries them; the filter must
+            # return exactly this enlarged chain, no more.
+            expected.update(q["seq"] for q in trail["queue"])
             for step in trail["steps"]:
                 expected.add(step["seq"])
                 expected.update(p["seq"] for p in step["provenance"])

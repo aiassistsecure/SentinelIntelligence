@@ -183,10 +183,22 @@ def validate_submission(payload) -> tuple[dict | None, list]:
             "intent objects (the scripted proposer of RFC "
             "§14.1 — no trained mind proposes tool intents "
             "yet, and B-5 does not invent a default mind)")
-    elif not all(isinstance(d, dict) for d in script):
-        problems.append("script entries must all be JSON objects")
+    elif not all(
+            isinstance(d, dict)
+            or (isinstance(d, list)
+                and all(isinstance(m, dict) for m in d))
+            for d in script):
+        problems.append(
+            "script entries must all be JSON objects (a nested "
+            "array of objects is one SI-51 batch)")
     else:
+        flat = []
         for i, d in enumerate(script):
+            if isinstance(d, list):
+                flat.extend((f"{i}.{j}", m) for j, m in enumerate(d))
+            else:
+                flat.append((str(i), d))
+        for i, d in flat:
             kind = d.get("kind", "tool")
             if kind not in ("tool", "memory"):
                 problems.append(
@@ -227,10 +239,9 @@ def intents_from_script(script: list) -> list:
     pass through and the task runner fills the chain for
     scripted intents that omit them, §10.2).
     """
-    intents = []
-    for d in script:
+    def _intent_from(d):
         kind = d.get("kind", "tool")
-        intents.append(Intent(
+        return Intent(
             kind=kind,
             reason=d.get("reason", ""),
             parents=list(d.get("parents") or []),
@@ -238,7 +249,21 @@ def intents_from_script(script: list) -> list:
             tool=d.get("tool", "") if kind == "tool" else "",
             args=dict(d.get("args") or {}) if kind == "tool" else {},
             record=dict(d.get("record") or {}) if kind == "memory"
-            else {}))
+            else {},
+            ordering_key=d.get("ordering_key")
+            if kind == "tool" else None,
+            depends_on=list(d.get("depends_on") or [])
+            if kind == "tool" else [],
+            barrier=bool(d.get("barrier") or False)
+            if kind == "tool" else False)
+
+    intents = []
+    for d in script:
+        # SI-51 (SI-50 §6): a nested array is one batch proposal.
+        if isinstance(d, list):
+            intents.append([_intent_from(m) for m in d])
+        else:
+            intents.append(_intent_from(d))
     return intents
 
 
@@ -318,6 +343,21 @@ def build_provenance_trail(journal, task_seq: int) -> dict:
                     known_seqs.add(s)
                 changed = True
 
+    # SI-51 (SI-50 §5): the task's queue entries — batch entries,
+    # claims, recovery re-claims, claim refusals, operator stops
+    # and resumes — are part of the task's provenance: they are
+    # how its intents were claimed before they ran. Collected by
+    # the record's own task_seq, in journal order (the same rule
+    # the SSE spine's task filter uses, si.gaia.events).
+    queue_kinds = ("queue_batch", "queue_claim",
+                   "queue_recovery_reclaim", "queue_refusal",
+                   "queue_stop", "queue_resume")
+    queue_rows = [r for r in outcomes
+                  if r.get("kind") in queue_kinds
+                  and (r.get("record") or {}).get("task_seq")
+                  == task_seq]
+    queue_rows.sort(key=lambda r: r.get("seq") or 0)
+
     steps = []
     for row in chained:
         edit_id = row.get("edit_id")
@@ -348,6 +388,7 @@ def build_provenance_trail(journal, task_seq: int) -> dict:
         "submitter_identity_label": SUBMITTER_IDENTITY_LABEL,
         "task_entry": _jsonable_row(task_row),
         "steps": steps,
+        "queue": [_jsonable_row(r) for r in queue_rows],
         "task_stop": _jsonable_row(stop_row) if stop_row else None,
         "journal_chain_verified": journal.verify_chain(),
         "trail_label": (
