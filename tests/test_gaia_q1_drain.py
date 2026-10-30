@@ -28,8 +28,9 @@ B-3's ``_live_ctx`` (a :class:`ToolContext` with
   seq) and then executed with exactly the journaled args; a
   queued (never claimed) intent is drained by a restarted
   drainer; an unexpired foreign claim is left alone, and an
-  expired write claim is deferred, never marked
-  outcome-unknown in Q-1;
+  expired write claim was deferred in Q-1 — superseded by
+  SI-53/Q-3, under which it folds outcome-unknown (see the
+  test's own note);
 - the leash fold (§11, §17.8): a queue stop journaled before
   any drain claims nothing (``stop-in-force``) until a resume
   is journaled, after which the drain proceeds;
@@ -387,6 +388,13 @@ def test_recovery_foreign_unexpired_claim_is_left_alone(mini):
 
 
 def test_recovery_expired_write_claim_is_deferred_not_unknown(mini):
+    # SUPERSEDED by SI-53/Q-3 (labelled, the SI-52 pattern):
+    # Q-1/Q-2 deferred an expired write claim and left it
+    # claimed; Q-3 is the slice §13.3's write/execute arm was
+    # deferred TO, so the same setup now folds the intent
+    # outcome-unknown — never re-executed, never replayed —
+    # pending an operator disposition (§13.4). Full Q-3
+    # coverage lives in tests/test_gaia_q3.py.
     bundle_dir, work = mini
     manifest, journal = _open(bundle_dir)
     try:
@@ -400,13 +408,12 @@ def test_recovery_expired_write_claim_is_deferred_not_unknown(mini):
         drainer = _drainer(journal, bundle_dir, manifest, work,
                            drainer_id="drainer-new")
         rec = drainer.recover(task_seq=fixture["seq"])
-        # Write class is Q-3 territory (§13.3): deferred, left
-        # claimed, NOT marked outcome-unknown, never re-executed.
-        assert rec["deferred"] == [state.intent_seq]
+        assert rec["deferred"] == []
+        assert rec["outcome_unknown"] == [state.intent_seq]
         assert rec["reclaimed"] == [] and rec["foreign"] == []
         folded = _state(journal, out["edit_id"], fixture["seq"])
-        assert folded.state == "claimed"
-        assert folded.fault is None
+        assert folded.state == "outcome-unknown"
+        assert folded.outcome_unknown_claim_seq is not None
         assert not os.path.exists(os.path.join(work, "deferred.txt"))
     finally:
         journal.close()

@@ -44,7 +44,19 @@ A submission is a JSON object::
 ``script`` is the scripted proposer of RFC §14.1 — the same
 intent-dict shape ``si task --script`` accepts, converted by the
 same rules (:func:`intents_from_script` mirrors ``si.cli``'s
-conversion). There is no other proposer: **no trained mind
+conversion).
+
+**SI-53 adds the queue vocabulary (SI-50 §15.4, Q-3):**
+``GET /tasks/<seq>/queue`` returns a task's folded queue in
+§5.2's state names (also the ``queue`` field of a POST /tasks
+response and of the trail's queue section, which now includes
+``queue_outcome_unknown`` / ``queue_recovery_observation`` /
+``queue_disposition`` entries), and
+``POST /tasks/<seq>/dispositions`` is the operator disposition
+act of §13.4 — an explicit journaled act on a verified
+``outcome-unknown`` intent, after which the manifest is
+re-anchored like the task machinery re-anchors. See
+:data:`QUEUE_EXPOSURE_LABEL`. There is no other proposer: **no trained mind
 proposes tool intents yet** (§14), and this adapter does not
 invent a default mind — a submission without a script is
 refused, exactly as ``si task`` without ``--script`` refuses.
@@ -119,8 +131,28 @@ from si.gaia.events import (
     parse_resume_seq,
     stream_events,
 )
+from si.gaia.queue import (
+    DISPOSITIONS,
+    disposition_outcome_unknown,
+    fold_queue,
+    queue_state_view,
+)
 from si.gaia.task import SUBMITTER_IDENTITY_LABEL, run_task
 from si.gate import Intent
+
+#: The SI-53/Q-3 queue-exposure label (SI-50 §15.4): the
+#: adapter's queue vocabulary is SI-50 §5.2's state names,
+#: read from the journal fold — no new status store, no new
+#: endpoint family beyond the task's own queue view and the
+#: operator disposition act.
+QUEUE_EXPOSURE_LABEL = (
+    "queue exposure (SI-53, SI-50 §15.4): a task's queue is "
+    "reported in SI-50 §5.2's state names, folded from the "
+    "journal (the source of truth) — GET /tasks/<seq>/queue "
+    "and the 'queue' field of task responses; operator "
+    "dispositions of outcome-unknown intents are POSTed to "
+    "/tasks/<seq>/dispositions as explicit journaled acts "
+    f"(one of {list(DISPOSITIONS)}; there is no mark-executed)")
 
 #: The submitted-via value journaled on every B-5 task entry.
 SUBMITTED_VIA = "gaia-service (SI-46/B-5)"
@@ -353,7 +385,10 @@ def build_provenance_trail(journal, task_seq: int) -> dict:
     queue_kinds = ("queue_batch", "queue_claim",
                    "queue_recovery_reclaim", "queue_refusal",
                    "queue_skip",
-                   "queue_stop", "queue_resume")
+                   "queue_stop", "queue_resume",
+                   "queue_outcome_unknown",
+                   "queue_recovery_observation",
+                   "queue_disposition")
     queue_rows = [r for r in outcomes
                   if r.get("kind") in queue_kinds
                   and (r.get("record") or {}).get("task_seq")
@@ -419,6 +454,94 @@ def provenance_trail_for_bundle(bundle_dir: str, task_seq: int) -> dict:
         journal.close()
 
 
+# -- the queue view + operator dispositions (SI-53, §15.4/§13.4) ---------------
+
+def build_queue_view(journal, task_seq: int) -> dict:
+    """One task's queue in §5.2's vocabulary (§15.4): the fold,
+    serialised. Raises KeyError when no task entry exists at
+    ``task_seq`` — an unknown task is reported as unknown,
+    never fabricated (the trail's discipline)."""
+    task_rows = journal.backend.find(
+        "experiences", filter={"kind": "task", "seq": task_seq},
+        limit=1)
+    if not task_rows:
+        raise KeyError(f"no task entry journaled at seq {task_seq}")
+    return queue_state_view(fold_queue(journal, task_seq=task_seq),
+                            task_seq)
+
+
+def queue_view_for_bundle(bundle_dir: str, task_seq: int) -> dict:
+    """Open a bundle and build one task's queue view (writes
+    nothing). Raises KeyError for an unknown task."""
+    from si.bundle import load_bundle
+    from si.journal import open_journal
+    bundle_dir = os.path.abspath(bundle_dir)
+    manifest = load_bundle(bundle_dir)
+    journal = open_journal(bundle_dir, manifest)
+    try:
+        return build_queue_view(journal, task_seq)
+    finally:
+        journal.close()
+
+
+def submit_disposition(bundle_dir: str, task_seq: int, payload) -> dict:
+    """The operator disposition act over the service (§13.4):
+    validate the body, then disposition one outcome-unknown
+    intent of the task through
+    :func:`si.gaia.queue.disposition_outcome_unknown` — an
+    explicit journaled operator act, never a blind replay.
+
+    Returns {"status": "dispositioned", "disposition": <the
+    journaled entry>, "queue": <the task's queue view after the
+    disposition>}. Raises ValueError for a malformed body, an
+    invalid disposition, or an intent that does not fold to
+    outcome-unknown on THIS task — in every such case nothing
+    is journaled (the queue module's fail-closed rule)."""
+    if not isinstance(payload, dict):
+        raise ValueError("disposition body must be a JSON object")
+    intent_seq = payload.get("intent_seq")
+    if isinstance(intent_seq, bool) or not isinstance(intent_seq, int):
+        raise ValueError(
+            "intent_seq is mandatory: the integer journal seq "
+            "of the outcome-unknown intent being dispositioned")
+    disposition = payload.get("disposition")
+    if not isinstance(disposition, str) or not disposition:
+        raise ValueError(
+            f"disposition is mandatory: one of "
+            f"{list(DISPOSITIONS)} (SI-50 §13.4)")
+    detail = payload.get("detail") or ""
+    operator = payload.get("operator") or "operator"
+    if not isinstance(detail, str) or not isinstance(operator, str):
+        raise ValueError("detail and operator must be strings "
+                         "when given")
+    from si.bundle import (
+        _anchor_checkpoint,
+        _write_manifest,
+        load_bundle,
+    )
+    from si.journal import open_journal
+    bundle_dir = os.path.abspath(bundle_dir)
+    manifest = load_bundle(bundle_dir)
+    journal = open_journal(bundle_dir, manifest)
+    try:
+        entry = disposition_outcome_unknown(
+            journal, intent_seq, disposition, detail=detail,
+            operator=operator, task_seq=task_seq)
+        view = build_queue_view(journal, task_seq)
+        # Re-anchor the manifest to the new tip, as the task
+        # machinery does after journaling — a disposition moves
+        # the journal, and the bundle must load cleanly after it.
+        updated = _anchor_checkpoint(
+            journal, manifest, manifest["head"],
+            note=f"gaia disposition {disposition} for intent "
+                 f"seq {intent_seq} (SI-53)")
+        _write_manifest(bundle_dir, updated)
+    finally:
+        journal.close()
+    return {"status": "dispositioned", "disposition": entry,
+            "queue": view}
+
+
 # -- submission -----------------------------------------------------------------
 
 def submit_task(bundle_dir: str, payload,
@@ -462,6 +585,7 @@ def submit_task(bundle_dir: str, payload,
         "submitter_identity_label": SUBMITTER_IDENTITY_LABEL,
         "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
         "result": result,
+        "queue": queue_view_for_bundle(bundle_dir, result["task_seq"]),
         "provenance_trail": trail,
     }
 
@@ -502,6 +626,7 @@ class ServiceState:
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
             "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
+            "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "events_tail": SSE_TAIL_LABEL,
             "events_resume": SSE_RESUME_LABEL,
             "events_filter": SSE_FILTER_LABEL,
@@ -524,6 +649,22 @@ class ServiceState:
                 "GET /tasks/<seq>": (
                     "the provenance trail for the task journaled "
                     "at <seq>, rebuilt from the journal"),
+                "GET /tasks/<seq>/queue": (
+                    "the task's queue in SI-50 §5.2's state "
+                    "names (SI-53, §15.4): summary counts/depth, "
+                    "held and outcome-unknown intents named, "
+                    "dispositions recorded — folded from the "
+                    "journal, no new store"),
+                "POST /tasks/<seq>/dispositions": (
+                    'the operator disposition act (SI-53, '
+                    '§13.4): {"intent_seq": ..., "disposition": '
+                    '"accept-unknown"|"compensate"|"re-propose", '
+                    '"detail": ..., "operator": ...} -> the '
+                    "journaled disposition + the task's queue "
+                    "view; an intent that does not fold to "
+                    "outcome-unknown is refused (400) and "
+                    "nothing is journaled; there is no "
+                    "mark-executed disposition"),
                 "GET /events": (
                     "the SSE event spine (SI-47): every journal "
                     "row as a server-sent event, id == journal "
@@ -540,6 +681,7 @@ class ServiceState:
             "events_tail": SSE_TAIL_LABEL,
             "events_resume": SSE_RESUME_LABEL,
             "events_filter": SSE_FILTER_LABEL,
+            "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
             "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
@@ -664,13 +806,30 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
             elif path in ("/events", "/events/"):
                 self._handle_events()
             elif path.startswith("/tasks/"):
-                raw = path[len("/tasks/"):].strip("/")
+                parts = [p for p in
+                         path[len("/tasks/"):].split("/") if p]
                 try:
-                    task_seq = int(raw)
-                except ValueError:
+                    task_seq = int(parts[0])
+                except (ValueError, IndexError):
                     self._send_json(400, {
                         "error": f"task seq must be an integer, "
-                                 f"got {raw!r}"})
+                                 f"got {path!r}"})
+                    return
+                if len(parts) == 2 and parts[1] == "queue":
+                    try:
+                        view = queue_view_for_bundle(
+                            state.bundle_dir, task_seq)
+                    except KeyError as e:
+                        self._send_json(404, {"error": str(e)})
+                        return
+                    self._send_json(200, {
+                        "queue": view,
+                        "queue_exposure": QUEUE_EXPOSURE_LABEL,
+                        "gateway_exposure": GATEWAY_EXPOSURE_LABEL})
+                    return
+                if len(parts) != 1:
+                    self._send_json(404, {
+                        "error": f"unknown path {path!r}"})
                     return
                 try:
                     trail = provenance_trail_for_bundle(
@@ -686,10 +845,22 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
                     "error": f"unknown path {self.path!r}"})
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib name
-            if self.path not in ("/tasks", "/tasks/"):
-                self._send_json(404, {
-                    "error": f"unknown path {self.path!r}"})
-                return
+            path = urlparse(self.path).path
+            is_disposition = False
+            task_seq = None
+            if path not in ("/tasks", "/tasks/"):
+                parts = [p for p in path.split("/") if p]
+                if len(parts) == 3 and parts[0] == "tasks" \
+                        and parts[2] == "dispositions":
+                    try:
+                        task_seq = int(parts[1])
+                        is_disposition = True
+                    except ValueError:
+                        pass
+                if not is_disposition:
+                    self._send_json(404, {
+                        "error": f"unknown path {self.path!r}"})
+                    return
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -709,6 +880,20 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
             except (ValueError, UnicodeDecodeError) as e:
                 self._send_json(400, {
                     "error": f"invalid JSON body: {e}"})
+                return
+            if is_disposition:
+                try:
+                    out = submit_disposition(
+                        state.bundle_dir, task_seq, payload)
+                except KeyError as e:
+                    self._send_json(404, {"error": str(e)})
+                    return
+                except ValueError as e:
+                    self._send_json(400, {"error": str(e)})
+                    return
+                out["queue_exposure"] = QUEUE_EXPOSURE_LABEL
+                out["gateway_exposure"] = GATEWAY_EXPOSURE_LABEL
+                self._send_json(200, out)
                 return
             out = submit_task(state.bundle_dir, payload,
                               policy=state.policy)
@@ -763,13 +948,17 @@ __all__ = [
     "GATEWAY_EXPOSURE_LABEL",
     "MAX_BODY_BYTES",
     "NO_AUTH_LABEL",
+    "QUEUE_EXPOSURE_LABEL",
     "SUBMITTED_VIA",
     "ServiceState",
     "build_provenance_trail",
+    "build_queue_view",
     "intents_from_script",
     "make_service_server",
     "provenance_trail_for_bundle",
+    "queue_view_for_bundle",
     "serve_service",
+    "submit_disposition",
     "submit_task",
     "validate_submission",
 ]

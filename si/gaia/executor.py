@@ -225,6 +225,17 @@ class Executor:
         self.tool_policy = resolve_tool_policy(self.policy)
         self.work_root = os.path.realpath(work_root)
         self._gate = Gate(self.policy)
+        #: SI-53/Q-3 (§11.2): an optional callable installed by
+        #: the queue drainer for the duration of one claimed
+        #: execution; when it reports an operator stop in force,
+        #: a process in flight is killed — a leash kill is a
+        #: timeout whose cause is the operator. None (the
+        #: default) means no leash polling: behaviour is exactly
+        #: the pre-Q-3 timeout discipline.
+        self.leash_check = None
+        #: Set by _run_process: True when the last process was
+        #: killed by the leash rather than by its timeout.
+        self._last_process_leash_killed = False
 
     # -- public: execute one journaled intent ------------------------------
     def execute_journaled(self, edit_id: str,
@@ -461,6 +472,11 @@ class Executor:
             # and is labelled partial (RFC §9.3) — on the record,
             # since the tools' result schemas carry no such field.
             record["partial"] = True
+            if self._last_process_leash_killed:
+                # SI-53 (§11.2): a leash kill is a timeout whose
+                # cause is the operator — the record says so,
+                # distinctly from an ordinary timeout.
+                record["kill_cause"] = "operator-stop"
         if overflow is not None:
             record["overflow_result_hash"] = overflow[0]
             record["overflow_result_bytes"] = overflow[1]
@@ -919,17 +935,48 @@ class Executor:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True)
         timed_out = False
-        try:
-            out_b, err_b = proc.communicate(timeout=timeout)
-            exit_code = proc.returncode
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        leash_killed = False
+        self._last_process_leash_killed = False
+        # Poll in short slices so an operator leash stop (§11.2,
+        # SI-53) can kill an in-flight process promptly; with no
+        # leash_check installed this is one communicate() with
+        # the full timeout, exactly as before.
+        deadline = time.monotonic() + timeout
+        out_b = err_b = b""
+        exit_code = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            slice_s = remaining if self.leash_check is None \
+                else min(remaining, 0.05)
+            try:
+                out_b, err_b = proc.communicate(timeout=slice_s)
+                exit_code = proc.returncode
+                break
+            except subprocess.TimeoutExpired:
+                if self.leash_check is not None:
+                    try:
+                        stopped = bool(self.leash_check())
+                    except Exception:
+                        stopped = False
+                    if stopped:
+                        leash_killed = True
+                        timed_out = True
+                        break
+                continue
+        if timed_out:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
-                proc.kill()
+                try:
+                    proc.kill()
+                except (ProcessLookupError, PermissionError):
+                    pass
             out_b, err_b = proc.communicate()
             exit_code = TIMEOUT_EXIT_CODE
+            self._last_process_leash_killed = leash_killed
         stream_truncated = False
 
         def decode(data: bytes) -> str:
@@ -940,7 +987,7 @@ class Executor:
             return data.decode("utf-8", errors="replace")
 
         return exit_code, decode(out_b or b""), decode(err_b or b""), \
-            timed_out, stream_truncated
+            timed_out, stream_truncated, leash_killed
 
     def _do_shell_exec(self, args):
         cwd = self._scoped(args["cwd"]) if args.get("cwd") \
@@ -950,15 +997,22 @@ class Executor:
                 f"cwd {args.get('cwd')!r} is not a directory in scope")
         timeout = self._process_timeout(
             args, get_tool("shell_exec").default_timeout_seconds)
-        exit_code, out, err, timed_out, trunc = self._run_process(
-            ["/bin/sh", "-c", args["command"]], cwd, timeout)
+        exit_code, out, err, timed_out, trunc, leash = \
+            self._run_process(
+                ["/bin/sh", "-c", args["command"]], cwd, timeout)
         result = {"exit_code": exit_code, "stdout": out,
                   "stderr": err, "timed_out": timed_out}
         post = {"exit_code": exit_code, "timed_out": timed_out,
                 "cwd": cwd}
-        detail = (f"timed out after {timeout}s and was killed; "
-                  "partial output recorded (partial)" if timed_out
-                  else f"command exited with code {exit_code}")
+        if leash:
+            detail = ("killed by operator stop (the leash, "
+                      "SI-50 §11.2): process group killed; "
+                      "partial output recorded (partial)")
+        elif timed_out:
+            detail = (f"timed out after {timeout}s and was killed; "
+                      "partial output recorded (partial)")
+        else:
+            detail = f"command exited with code {exit_code}"
         return result, post, None, True, detail, trunc
 
     def _do_code_exec(self, args):
@@ -973,24 +1027,31 @@ class Executor:
             what = f"file {args['path']}"
         timeout = self._process_timeout(
             args, get_tool("code_exec").default_timeout_seconds)
-        exit_code, out, err, timed_out, trunc = self._run_process(
-            argv, self.work_root, timeout)
+        exit_code, out, err, timed_out, trunc, leash = \
+            self._run_process(argv, self.work_root, timeout)
         result = {"exit_code": exit_code, "stdout": out,
                   "stderr": err, "timed_out": timed_out}
         post = {"exit_code": exit_code, "timed_out": timed_out,
                 "cwd": self.work_root}
-        detail = (f"timed out after {timeout}s and was killed; "
-                  "partial output recorded (partial)" if timed_out
-                  else f"python {what} exited with code {exit_code}")
+        if leash:
+            detail = ("killed by operator stop (the leash, "
+                      "SI-50 §11.2): process group killed; "
+                      "partial output recorded (partial)")
+        elif timed_out:
+            detail = (f"timed out after {timeout}s and was killed; "
+                      "partial output recorded (partial)")
+        else:
+            detail = f"python {what} exited with code {exit_code}"
         return result, post, None, True, detail, trunc
 
     def _do_test_run(self, args):
         target = self._scoped(args["path"])
         timeout = self._process_timeout(
             args, get_tool("test_run").default_timeout_seconds)
-        exit_code, out, err, timed_out, trunc = self._run_process(
-            [sys.executable, "-m", "pytest", target, "-q"],
-            self.work_root, timeout)
+        exit_code, out, err, timed_out, trunc, leash = \
+            self._run_process(
+                [sys.executable, "-m", "pytest", target, "-q"],
+                self.work_root, timeout)
         output = out + err
         # The suite's own summary, parsed AS REPORTED (RFC §8.3):
         # a category pytest did not report is 0 in its summary by
@@ -1013,7 +1074,11 @@ class Executor:
                 "failed": counts["failed"],
                 "skipped": counts["skipped"],
                 "parse": result["parse"], "timed_out": timed_out}
-        if timed_out:
+        if leash:
+            detail = ("killed by operator stop (the leash, "
+                      "SI-50 §11.2): process group killed; "
+                      "partial output recorded (partial)")
+        elif timed_out:
             detail = (f"timed out after {timeout}s and was killed; "
                       "partial output recorded (partial)")
         elif parse_ok:

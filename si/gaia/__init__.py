@@ -54,10 +54,15 @@ B-2/B-3 executor, returning one batched perception per sync
 point. SI-52 (Q-2) adds depends_on requirement semantics with
 journaled skips, barrier sync points, claim-time residence
 refusals, and the bounded read pool (unkeyed reads concurrent,
-default bound 4; keyed and state-changing work serial). See
-docs/SI-51-q1-queue-core.md and
-docs/SI-52-q2-concurrency-deps.md for exactly what is live and
-what is not (Q-3 outcome-unknown recovery, Q-4 measurement).
+default bound 4; keyed and state-changing work serial). SI-53
+(Q-3) adds the operator leash against a live drain,
+write/execute outcome-unknown recovery with operator
+dispositions (§13.4), and queue exposure through the service
+adapter and the SSE queue-event convention. See
+docs/SI-51-q1-queue-core.md,
+docs/SI-52-q2-concurrency-deps.md and
+docs/SI-53-q3-leash-dispositions.md for exactly what is live
+and what is not (Q-4 measurement remains unbuilt).
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import
