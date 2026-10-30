@@ -3,10 +3,13 @@
 B-2 makes execution live — miniature-scoped only. Coverage:
 
 - Gate: on a live (miniature) context, in-scope read/write intents
-  ADMIT with the live label; execute-class intents ESCALATE naming
-  B-3; external-effective intents ESCALATE even under an
-  external=admit policy (the B-2 work-root hold); class-policy
-  escalate ESCALATEs; non-live contexts keep B-1 shadow exactly.
+  ADMIT with the live label; external-effective intents ESCALATE
+  even under an external=admit policy (the B-2 work-root hold);
+  class-policy escalate ESCALATEs; non-live contexts keep B-1
+  shadow exactly. (Execute-class verdicts moved in SI-44/B-3 —
+  they ADMIT now; see test_live_context_execute_tools_admit_in_b3
+  and the SI-44 slice doc §2 for the two superseded assertions in
+  this file.)
 - Executor: the scripted multi-step scenario (list -> read ->
   write -> edit -> journal_query, RFC §14.1) completes on a real
   miniature bundle with a fully walkable journal chain to its task
@@ -57,6 +60,7 @@ from si.gaia.shadow import (
     walk_tool_provenance,
 )
 from si.gate import (
+    TOOL_B3_LIVE_EXECUTION,
     TOOL_LIVE_EXECUTION,
     TOOL_SHADOW_EXECUTION,
     Gate,
@@ -120,7 +124,12 @@ def test_live_context_admits_in_scope_read_and_write(tmp_path):
         assert report.execution == TOOL_LIVE_EXECUTION, tool
 
 
-def test_live_context_execute_tools_escalate_to_b3(tmp_path):
+def test_live_context_execute_tools_admit_in_b3(tmp_path):
+    # SI-44/B-3 SUPERSEDES the B-2 form of this test (which asserted
+    # execute-class intents ESCALATE naming B-3): B-3 is the slice
+    # that makes the execute class live, so on a live context these
+    # now ADMIT with the B-3 live label. Documented in
+    # docs/SI-44-gaia-b3-execution-task-loop.md §2.
     root = str(tmp_path / "work")
     gate = _gate(root)
     for tool, args in (("shell_exec", {"command": "ls"}),
@@ -128,8 +137,8 @@ def test_live_context_execute_tools_escalate_to_b3(tmp_path):
                                       "source": "x = 1"}),
                        ("test_run", {"path": "tests"})):
         report = gate.evaluate(_intent(tool, args), None, _live_ctx(root))
-        assert report.verdict == "ESCALATE", tool
-        assert "B-3" in report.execution, tool
+        assert report.verdict == "ADMIT", tool
+        assert report.execution == TOOL_B3_LIVE_EXECUTION, tool
 
 
 def test_live_context_external_holds_at_escalate_even_if_policy_admits(tmp_path):
@@ -483,15 +492,31 @@ def test_executor_refuses_non_admitted_and_b3_journaled_intents(mini):
         record = executor.execute_journaled(edit_id)
         assert record["status"] == "refused"
         assert "not ADMIT" in record["detail"]
-        # A (fabricated) ADMIT for a B-3 tool: refused all the same.
+        # SI-44/B-3 SUPERSEDES the B-2 form of this case (which
+        # asserted a fabricated ADMIT for shell_exec is refused as
+        # out-of-slice): shell_exec is live in B-3, so a journaled
+        # ADMIT for it now EXECUTES for real. Documented in
+        # docs/SI-44-gaia-b3-execution-task-loop.md §2.
         intent = Intent(kind="tool", tool="shell_exec",
                         args={"command": "echo hi"}, reason="Run",
                         parents=["task@1"], source_seqs=[1])
         edit_id = journal.record_self_edit(
             "tool", intent.to_dict(), intent.reason, "ADMIT", {})
         record = executor.execute_journaled(edit_id)
+        assert record["status"] == "completed"
+        assert record["exit_code"] == 0
+        assert record["result"]["stdout"] == "hi\n"
+        # A still-valid refusal: a fabricated ADMIT for an UNKNOWN
+        # tool is refused — an unlisted name is not a tool, whatever
+        # a journaled record claims.
+        intent = Intent(kind="tool", tool="fs_delete_everything",
+                        args={"path": "notes"}, reason="Bogus",
+                        parents=["task@1"], source_seqs=[1])
+        edit_id = journal.record_self_edit(
+            "tool", intent.to_dict(), intent.reason, "ADMIT", {})
+        record = executor.execute_journaled(edit_id)
         assert record["status"] == "refused"
-        assert "B-3" in record["detail"]
+        assert "not a registered tool" in record["detail"]
     finally:
         journal.close()
 

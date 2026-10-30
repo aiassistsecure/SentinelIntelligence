@@ -107,6 +107,7 @@ from typing import Protocol
 
 from si.gaia.policy import resolve_tool_policy
 from si.gaia.registry import LIVE_TOOLS_B2 as _LIVE_TOOLS_B2
+from si.gaia.registry import LIVE_TOOLS_B3 as _LIVE_TOOLS_B3
 from si.gaia.registry import get_tool as _get_tool_spec
 from si.gaia.registry import validate_args as _validate_tool_args
 from si.transformer_delta import (
@@ -146,6 +147,32 @@ TOOL_LIVE_ESCALATED_EXECUTION = (
 #: executed because no executor existed for its path.
 TOOL_LIVE_REJECTED_EXECUTION = (
     "not executed — rejected at gate (SI-43/B-2)")
+
+#: SI-44 (SI-41 RFC §15 B-3): the execution labels B-3 adds for LIVE
+#: contexts. B-3 grows the live set to the execute class
+#: (``shell_exec`` / ``code_exec`` / ``test_run`` — the registry's
+#: ``LIVE_TOOLS_B3``). Read/write ADMITs keep the B-2 label above:
+#: B-2 is the slice that authorised them, and B-2's suite asserts
+#: that label unmodified. Execute-class outcomes carry the B-3
+#: labels. External-effective intents STILL hold at ESCALATE in
+#: B-3 (miniature-scoped, work-root-contained — a stated slice
+#: hold like B-2's, not a §7.3 cage).
+TOOL_B3_LIVE_EXECUTION = (
+    "live execution authorised — SI-44/B-3 (miniature-scoped, "
+    "read/write/execute classes)")
+#: A passing intent outside B-3's live scope on a live context:
+#: an external-effective intent (B-3's live scope stays
+#: work-root-contained) holds at ESCALATE.
+TOOL_B3_NOT_LIVE_EXECUTION = (
+    "not-evaluated — outside SI-44/B-3 live scope (external "
+    "effects are held at ESCALATE in B-3)")
+#: A passing execute-class intent whose class policy rule is
+#: ``escalate``, on a live context (the §7.3 dial).
+TOOL_B3_ESCALATED_EXECUTION = (
+    "not-evaluated — escalated by class policy (SI-44/B-3)")
+#: A rejected execute-class intent on a live context.
+TOOL_B3_REJECTED_EXECUTION = (
+    "not executed — rejected at gate (SI-44/B-3)")
 
 #: SI-41 RFC §5.3: the detail recorded on checks 3/4 for tool intents.
 TOOL_PROBES_NOT_APPLICABLE = (
@@ -677,6 +704,19 @@ class Gate:
           this slice even under an ``external: admit`` policy —
           a slice-scoped hold recorded in the SI-43 slice doc,
           not a §7.3 cage) -> ESCALATE, not-evaluated.
+
+        SI-44/B-3 grows the live branch one step (RFC §15 B-3):
+        a tool in the B-3 live set (``LIVE_TOOLS_B3`` = the B-2
+        set plus ``shell_exec`` / ``code_exec`` / ``test_run``)
+        with effective class read/write/**execute** and class
+        rule ``admit`` ADMITs — execute-class ADMITs carry
+        :data:`TOOL_B3_LIVE_EXECUTION`. External-effective
+        intents STILL hold at ESCALATE in B-3 even under an
+        ``external: admit`` policy (miniature-scoped,
+        work-root-contained — the stated slice hold carried
+        forward from B-2, not a §7.3 cage), labelled
+        :data:`TOOL_B3_NOT_LIVE_EXECUTION`. Non-live contexts
+        are untouched: B-1 shadow, byte-for-byte.
         """
         safety, info = self._tool_safety_check(intent, ctx)
         checks.append(safety)
@@ -691,25 +731,34 @@ class Gate:
         live = ctx is not None and bool(
             getattr(ctx, "tool_live_execution", False))
         if not all(c.passed for c in decisive):
-            return GateReport(
-                "REJECT", checks,
-                execution=(TOOL_LIVE_REJECTED_EXECUTION if live
-                           else TOOL_SHADOW_EXECUTION))
+            rejected = TOOL_SHADOW_EXECUTION
+            if live:
+                rejected = (TOOL_B3_REJECTED_EXECUTION
+                            if info.get("effective_class") == "execute"
+                            else TOOL_LIVE_REJECTED_EXECUTION)
+            return GateReport("REJECT", checks, execution=rejected)
         if not live:
             return GateReport("ESCALATE", checks,
                               execution=TOOL_SHADOW_EXECUTION)
         spec = info.get("spec")
         effective = info.get("effective_class")
         rule = info.get("class_rule")
-        if spec is not None and spec.name in _LIVE_TOOLS_B2 \
-                and effective in ("read", "write") and rule == "admit":
-            return GateReport("ADMIT", checks,
-                              execution=TOOL_LIVE_EXECUTION)
+        if spec is not None and spec.name in _LIVE_TOOLS_B3 \
+                and effective in ("read", "write", "execute") \
+                and rule == "admit":
+            # Read/write ADMITs keep the B-2 authorisation label
+            # (B-2 authorised them; its suite asserts it); the
+            # execute class is B-3's and carries the B-3 label.
+            label = (TOOL_B3_LIVE_EXECUTION if effective == "execute"
+                     else TOOL_LIVE_EXECUTION)
+            return GateReport("ADMIT", checks, execution=label)
         if rule == "escalate":
-            return GateReport("ESCALATE", checks,
-                              execution=TOOL_LIVE_ESCALATED_EXECUTION)
+            label = (TOOL_B3_ESCALATED_EXECUTION
+                     if effective == "execute"
+                     else TOOL_LIVE_ESCALATED_EXECUTION)
+            return GateReport("ESCALATE", checks, execution=label)
         return GateReport("ESCALATE", checks,
-                          execution=TOOL_B2_NOT_LIVE_EXECUTION)
+                          execution=TOOL_B3_NOT_LIVE_EXECUTION)
 
     def _tool_safety_check(self, intent: Intent, ctx) -> tuple:
         """Check 2 for tools (RFC §5.2): the declared action, priced.

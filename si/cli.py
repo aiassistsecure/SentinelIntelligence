@@ -12,6 +12,7 @@
     si export <path> --out FILE [--quant Q4_K_M]
     si squash <path> [--keep N] [--rank R] [--tol T]
     si serve <path> [--host H] [--port P]
+    si task <path> --instruction "..." [--root DIR] [--cycles N] [--script FILE] [--operator NAME]
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -464,6 +465,69 @@ def cmd_admit_transformer_delta(args) -> int:
     return 0
 
 
+def cmd_task(args) -> int:
+    """`si task` (SI-44/B-3, RFC §10.1): open an operator task on a
+    bundle and run the B-3 task loop against it.
+
+    B-3's proposer is scripted (§14.1): --script names a JSON file
+    holding an array of intent dicts — {"kind": "tool", "tool": ...,
+    "args": {...}, "reason": ...} tool intents, or {"kind":
+    "memory", "record": {"kind": "task_complete", ...}} completion
+    reports. parents/source_seqs may be omitted; the task runner
+    fills the task chain for scripted intents that omit them.
+    Without --script there is no honest proposer to run: no trained
+    mind proposes tool intents yet (§14), so the CLI refuses rather
+    than inventing a default mind.
+    """
+    if not args.script:
+        print("si: error: `si task` in B-3 drives a scripted proposer "
+              "(--script FILE): no trained mind proposes tool intents "
+              "yet (RFC §14), and B-3 does not invent a default mind",
+              file=sys.stderr)
+        return 2
+    from si.gaia.task import run_task
+    from si.gate import Intent
+    bundle_dir = _bundle(args.path)
+    try:
+        with open(args.script, "rb") as f:
+            script = json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"si: error: cannot read script {args.script!r}: {e}",
+              file=sys.stderr)
+        return 1
+    if not isinstance(script, list) \
+            or not all(isinstance(d, dict) for d in script):
+        print("si: error: script file must contain a JSON array of "
+              "intent objects", file=sys.stderr)
+        return 1
+    intents = []
+    for d in script:
+        kind = d.get("kind", "tool")
+        intents.append(Intent(
+            kind=kind,
+            reason=d.get("reason", ""),
+            parents=list(d.get("parents") or []),
+            source_seqs=list(d.get("source_seqs") or []),
+            tool=d.get("tool", "") if kind == "tool" else "",
+            args=dict(d.get("args") or {}) if kind == "tool" else {},
+            record=dict(d.get("record") or {}) if kind == "memory"
+            else {}))
+    res = run_task(bundle_dir, intents, args.instruction,
+                   work_root=args.root, cycles=args.cycles,
+                   operator=args.operator or "operator")
+    print(f"task:      {res['task_ref']} (seq {res['task_seq']})")
+    for i, step in enumerate(res["steps"], start=1):
+        print(f"  step {i}: {step['edit_id']} tool={step['tool']} "
+              f"verdict={step['verdict']} "
+              f"class={step['effective_class']} "
+              f"execution={step['execution_status']}")
+    print(f"stop:      {res['stop_reason']} — {res['stop_detail']}")
+    print(f"cycles:    {res['cycles_used']}   "
+          f"result bytes: {res['result_bytes_used']}")
+    print(f"head:      {res['head']}")
+    return 0
+
+
 def cmd_serve(args) -> int:
     from si.serve import serve_bundle
     serve_bundle(args.path, host=args.host, port=args.port)
@@ -583,6 +647,43 @@ def build_parser() -> argparse.ArgumentParser:
     psv.add_argument("--port", type=int, default=8000,
                      help="bind port (default: 8000; 0 = ephemeral)")
     psv.set_defaults(func=cmd_serve)
+
+    ptk = sub.add_parser("task", help="SI-44/B-3: open an operator "
+                                      "task on a bundle and run the "
+                                      "Gaia task loop (RFC §10) with "
+                                      "a scripted proposer (--script "
+                                      "FILE, a JSON array of intent "
+                                      "dicts); journals the task, "
+                                      "every step, and the §10.4 "
+                                      "stop. Live execution is "
+                                      "miniature-scoped; demo "
+                                      "bundles stay shadow.")
+    ptk.add_argument("path", help="bundle directory")
+    ptk.add_argument("--instruction", required=True,
+                     help="the operator instruction that opens the "
+                          "task (journaled before any cycle runs)")
+    ptk.add_argument("--root", default=None,
+                     help="work root for the task (default: the "
+                          "bundle policy's tool_work_root, else the "
+                          "bundle directory)")
+    ptk.add_argument("--cycles", type=int, default=None,
+                     help="cap on total tool cycles for this task "
+                          "(the effective cap is the minimum of "
+                          "this and the policy's "
+                          "max_tool_cycles_per_task)")
+    ptk.add_argument("--script", default=None,
+                     help="JSON file: an array of intent dicts "
+                          "({\"kind\": \"tool\", \"tool\": ..., "
+                          "\"args\": {...}, \"reason\": ...} or "
+                          "{\"kind\": \"memory\", \"record\": "
+                          "{\"kind\": \"task_complete\", ...}}); "
+                          "parents/source_seqs may be omitted — "
+                          "the runner fills the task chain")
+    ptk.add_argument("--operator", default=None,
+                     help="operator name recorded on the task "
+                          "entry (attribution record, not "
+                          "cryptographic authentication)")
+    ptk.set_defaults(func=cmd_task)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "

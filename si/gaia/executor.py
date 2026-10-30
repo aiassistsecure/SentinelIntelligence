@@ -1,34 +1,46 @@
-"""Gaia B-2 executor: live execution of gate-ADMITted tool intents
-(SI-41 RFC §15 B-2, §4.3, §4.4, §9.2, §9.3, §11; slice SI-43).
+"""Gaia executor: live execution of gate-ADMITted tool intents
+(SI-41 RFC §15 B-2/B-3, §4.3, §4.4, §9.2, §9.3, §11; slices
+SI-43 and SI-44).
 
 B-1 (SI-42) built the tool intent, the registry, and the gate's
 tool branch in shadow mode: nothing admitted, nothing executed.
-B-2 is where execution becomes real — **live but miniature-scoped**,
-exactly as RFC §15 B-2 bounds it:
+B-2 (SI-43) made execution real for the read/write tools. B-3
+(SI-44) grows the same executor to the execute class and keeps
+every B-2 discipline — **live but miniature-scoped**, exactly as
+RFC §15 bounds the slices:
 
-- **Live scope.** Only the ``read`` / ``write`` class tools of
-  RFC §8.1/§8.2 — ``fs_list``, ``fs_read``, ``fs_search``,
-  ``fs_write``, ``fs_edit``, ``fs_mkdir``, ``journal_query``,
-  ``bundle_status``, ``probe_run`` (the registry's
-  :data:`~si.gaia.registry.LIVE_TOOLS_B2` set) — and only on
-  **miniature** bundles (the SI-13 probe line's bundles, the only
-  bundles whose loop path B-2 prices live, by the SI-17 precedent
-  of pricing paths separately). Demo bundles keep B-1 shadow
-  behaviour; their gate context is never live, so their tool
-  intents ESCALATE/REJECT with the shadow label exactly as in B-1.
-- **Execution tools stay shadow.** ``shell_exec`` / ``code_exec`` /
-  ``test_run`` are B-3 (RFC §15): on a live context they ESCALATE
-  with a not-evaluated label naming B-3, and this executor refuses
-  them even if handed a journaled ADMIT for one (defence in depth —
-  the gate is the authority, the executor re-checks).
+- **Live scope.** The registry's
+  :data:`~si.gaia.registry.LIVE_TOOLS_B3` set — the B-2 read/write
+  tools (``fs_list``, ``fs_read``, ``fs_search``, ``fs_write``,
+  ``fs_edit``, ``fs_mkdir``, ``journal_query``, ``bundle_status``,
+  ``probe_run``) plus the §8.3 execution tools (``shell_exec``,
+  ``code_exec``, ``test_run``) — and only on **miniature** bundles
+  (the SI-13 probe line's bundles, the only bundles whose loop
+  path the B-slices price live, by the SI-17 precedent of pricing
+  paths separately). Demo bundles keep B-1 shadow behaviour;
+  their gate context is never live, so their tool intents
+  ESCALATE/REJECT with the shadow label exactly as in B-1.
+- **Process discipline (B-3).** Process tools run with an
+  explicit environment **allowlist** (:data:`CHILD_ENV_ALLOWLIST`)
+  — never the runtime's own environment, so no credential the
+  runtime holds leaks into a command's environment by default
+  (RFC §17.6); per-stream capture caps at the policy's
+  ``tool_max_result_bytes``; a timeout kills the process group
+  and records status ``timed-out`` with the partial output
+  labelled partial and ``exit_code`` :data:`TIMEOUT_EXIT_CODE`
+  (-1, the documented no-exit sentinel: the process produced no
+  exit code because it was killed). A process that ran to
+  completion records its **real** exit code, and a non-zero exit
+  is a completed execution — that is data (§11.1.3), not an
+  executor failure.
 - **External stays held.** An intent whose effective class prices
   to ``external`` (a path or cwd resolving outside the work root,
-  symlinks resolved first, RFC §7.2/§9.1) ESCALATEs in B-2 even
-  when the bundle's class policy would admit ``external``: B-2's
-  live scope is work-root-contained execution. That is a
-  slice-scoped hold, stated here and in the slice doc — not a
-  permanent cage (RFC §7.3's dial remains policy's; a later slice
-  may lift the hold on its own evidence).
+  symlinks resolved first, RFC §7.2/§9.1) ESCALATEs in B-3 even
+  when the bundle's class policy would admit ``external``: B-3's
+  live scope is work-root-contained execution, as B-2's was. That
+  is a slice-scoped hold, stated here and in the slice doc — not
+  a permanent cage (RFC §7.3's dial remains policy's; a later
+  slice may lift the hold on its own evidence).
 
 The executor's discipline (RFC §9.2, the journaled-args rule): it
 executes **the journaled intent** — the self-edit row the JOURNAL
@@ -66,12 +78,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
+import signal
+import subprocess
+import sys
 import time
 
 from si.bundle import canonical_json, sha256_hex
 from si.gaia.policy import resolve_tool_policy
 from si.gaia.registry import (
-    LIVE_TOOLS_B2,
+    LIVE_TOOLS_B3,
     get_tool,
     validate_args,
     validate_result,
@@ -81,6 +97,36 @@ from si.gate import Gate, Intent
 #: The honest execution label carried by a live B-2 execution
 #: record: a real execution happened, by this executor, in scope.
 LIVE_EXECUTION = "live — executed by the SI-43/B-2 executor (miniature-scoped)"
+
+#: The honest execution label carried by a live B-3 (execute-class)
+#: execution record. B-2 tools' records keep :data:`LIVE_EXECUTION`
+#: — B-2 is the slice that made them live; process tools are B-3's.
+LIVE_EXECUTION_B3 = "live — executed by the SI-44/B-3 executor (miniature-scoped)"
+
+#: The environment a child process is spawned with (RFC §15 B-3,
+#: §17.6): an explicit allowlist of variable *names*, taken from
+#: the runtime's environment only when present — never the
+#: runtime's full environment, so no credential the runtime holds
+#: (tokens, keys, session material) leaks into a command's
+#: environment by default.
+CHILD_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+
+#: The ``exit_code`` recorded for a process the executor killed on
+#: timeout: a sentinel meaning "no exit code exists — the process
+#: was killed before it could produce one", documented here and
+#: in the SI-44 slice doc. It is never a real process exit code
+#: claim; genuinely exited processes record their real code.
+TIMEOUT_EXIT_CODE = -1
+
+#: pytest summary counts, parsed from the suite's own summary line
+#: (``test_run``, RFC §8.3): counts are taken AS REPORTED, never
+#: invented — a summary with no recognisable count is a parse
+#: failure (``parse="failed"``, counts 0, raw output carried).
+_PYTEST_COUNT_RES = {
+    "passed": re.compile(r"(\d+) passed\b"),
+    "failed": re.compile(r"(\d+) failed\b"),
+    "skipped": re.compile(r"(\d+) skipped\b"),
+}
 
 #: fs_list's RFC §8.1 entry cap.
 _FS_LIST_CAP = 512
@@ -209,6 +255,10 @@ class Executor:
             args=dict(intent_dict.get("args") or {}))
         spec = get_tool(intent.tool)
 
+        def _label() -> str:
+            return LIVE_EXECUTION_B3 if spec is not None \
+                and spec.consequence_class == "execute" else LIVE_EXECUTION
+
         def refuse(detail: str, effective=None) -> dict:
             record = {
                 "tool": intent.tool,
@@ -229,7 +279,7 @@ class Executor:
                            "post_state": "not-evaluated",
                            "detail": "execution refused before the "
                                      "tool ran; nothing was measured"},
-                "execution": LIVE_EXECUTION,
+                "execution": _label(),
                 "detail": detail,
             }
             record_execution_outcome(self.journal, intent, edit_id, record)
@@ -246,17 +296,16 @@ class Executor:
             return refuse(
                 f"journaled intent is not a registered tool intent "
                 f"(kind={intent.kind!r}, tool={intent.tool!r})")
-        if spec.name not in LIVE_TOOLS_B2:
+        if spec.name not in LIVE_TOOLS_B3:
             return refuse(
-                f"tool {spec.name!r} is outside the SI-43/B-2 live "
-                "set: execution tools (shell_exec / code_exec / "
-                "test_run) land in B-3 (RFC §15) and do not execute "
-                "in this slice, whatever a journaled record claims")
+                f"tool {spec.name!r} is outside the SI-44/B-3 live "
+                "set (the registry's LIVE_TOOLS_B3), whatever a "
+                "journaled record claims")
         from si.probes import is_miniature_probe_bundle
         if not is_miniature_probe_bundle(self.manifest):
             return refuse(
-                "live execution in B-2 is miniature-scoped (RFC §15 "
-                "B-2): this bundle's base is not the miniature kind, "
+                "live execution in B-3 is miniature-scoped (RFC §15 "
+                "B-3): this bundle's base is not the miniature kind, "
                 "so its tool intents keep shadow behaviour")
         violations = validate_args(spec, intent.args)
         if violations:
@@ -277,11 +326,12 @@ class Executor:
                 f"as {effective!r} — the TOCTOU rule (RFC §9.2) "
                 "refuses execution under a stale price; re-propose "
                 "the intent", effective=effective)
-        if effective not in ("read", "write"):
+        if effective not in ("read", "write", "execute"):
             return refuse(
-                f"effective class {effective!r} is outside the B-2 "
-                "live scope (read/write, work-root-contained): "
-                "refused at execution", effective=effective)
+                f"effective class {effective!r} is outside the B-3 "
+                "live scope (read/write/execute, "
+                "work-root-contained): refused at execution",
+                effective=effective)
         for key, target in (info.get("resolved_paths") or {}).items():
             if not _is_within(target, self.work_root):
                 return refuse(
@@ -290,13 +340,28 @@ class Executor:
                     "execution", effective=effective)
 
         # Run the tool. A handler failure is a failed execution —
-        # a result, not an exception (RFC §11.1.3).
+        # a result, not an exception (RFC §11.1.3). Process handlers
+        # may return a 6th element: their own truncation flag (the
+        # per-stream caps of §9.3 are applied inside the handler,
+        # where the streams exist). A process result carrying
+        # ``timed_out`` closes as status ``timed-out`` (§4.4): the
+        # process ran, was killed, and its partial output is a real
+        # result — not a failure of the executor.
         pre_image = None
+        handler_truncated = False
         try:
             handler = getattr(self, f"_do_{spec.name}")
-            result, post_state, pre_image, post_ok, post_detail = \
-                handler(intent.args)
+            out = handler(intent.args)
+            result, post_state, pre_image, post_ok, post_detail = out[:5]
+            if len(out) > 5:
+                handler_truncated = bool(out[5])
             status = "completed"
+            if len(out) > 6 and out[6]:
+                # A handler-declared status (test_run's timeout:
+                # its result schema carries no timed_out field).
+                status = out[6]
+            elif isinstance(result, dict) and result.get("timed_out"):
+                status = "timed-out"
             detail = post_detail
         except ToolExecutionError as err:
             result, post_state, post_ok = None, None, False
@@ -308,7 +373,7 @@ class Executor:
             detail = f"unexpected {type(err).__name__}: {err}"
 
         # VERIFY (RFC §11.1): result conformance + post-state.
-        if status == "completed":
+        if status in ("completed", "timed-out"):
             result_violations = validate_result(spec, result)
             conformance = "failed" if result_violations else "passed"
             if result_violations:
@@ -328,11 +393,21 @@ class Executor:
         inline, truncated, blob_ref, overflow = (result, False, None, None)
         if isinstance(result, dict):
             inline, truncated, blob_ref, overflow = self._bound_result(result)
+        truncated = truncated or handler_truncated
         raw_inline = canonical_json(inline) if inline is not None else b""
         target_path = None
         if isinstance(intent.args.get("path"), str):
             target_path = self._rel(
                 _resolve(self.work_root, intent.args["path"]))
+        # The record-level exit code is the process's REAL exit
+        # code for process tools (the -1 sentinel on timeout —
+        # TIMEOUT_EXIT_CODE, set by the handler as the result's own
+        # exit_code); B-2 tools spawn no process and keep null.
+        exit_code = None
+        if isinstance(result, dict) \
+                and isinstance(result.get("exit_code"), int) \
+                and not isinstance(result.get("exit_code"), bool):
+            exit_code = result["exit_code"]
         record = {
             "tool": spec.name,
             "intent_id": edit_id,
@@ -340,7 +415,7 @@ class Executor:
             "target_path": target_path,
             "reversibility": spec.reversibility,
             "status": status,
-            "exit_code": None,  # no process is spawned by any B-2 tool
+            "exit_code": exit_code,
             "result": inline,
             "result_hash": _sha256_ref(raw_inline) if inline is not None else None,
             "result_bytes": len(raw_inline),
@@ -352,15 +427,21 @@ class Executor:
             "verify": {"result_conformance": conformance,
                        "post_state": post_label,
                        "detail": detail},
-            "execution": LIVE_EXECUTION,
+            "execution": _label(),
             "detail": detail,
         }
+        if status == "timed-out":
+            # A killed command's partial output is a real result
+            # and is labelled partial (RFC §9.3) — on the record,
+            # since the tools' result schemas carry no such field.
+            record["partial"] = True
         if overflow is not None:
             record["overflow_result_hash"] = overflow[0]
             record["overflow_result_bytes"] = overflow[1]
         record_execution_outcome(self.journal, intent, edit_id, record)
         self.journal.set_edit_result(
-            edit_id, "executed" if status == "completed" else "failed")
+            edit_id, "executed" if status in ("completed", "timed-out")
+            else "failed")
         return record
 
     # -- result bounding + blob overflow (RFC §9.3) --------------------------
@@ -409,11 +490,15 @@ class Executor:
             if isinstance(inline.get(key), list):
                 while inline[key] and len(canonical_json(inline)) > cap:
                     inline[key] = inline[key][:-1]
-        if isinstance(inline.get("content"), str):
-            content = inline["content"]
-            while content and len(canonical_json(inline)) > cap:
-                content = content[: max(0, len(content) // 2)]
-                inline["content"] = content
+        # String payloads shrink by halving: fs_read's ``content``
+        # (B-2) and the process tools' stream fields (B-3 —
+        # shell/code ``stdout``/``stderr``, test_run's ``output``).
+        for key in ("content", "stdout", "stderr", "output"):
+            if isinstance(inline.get(key), str):
+                content = inline[key]
+                while content and len(canonical_json(inline)) > cap:
+                    content = content[: max(0, len(content) // 2)]
+                    inline[key] = content
         return inline, True, blob_ref, overflow
 
     # -- shared handler helpers ----------------------------------------------
@@ -771,6 +856,154 @@ class Executor:
                 None, True, result["detail"]
 
 
+    # -- §8.3 execution tools (B-3) ------------------------------------
+    def _child_env(self) -> dict:
+        """The child process environment: the explicit allowlist
+        (:data:`CHILD_ENV_ALLOWLIST`) taken from the runtime's
+        environment where present — never the runtime's full
+        environment (RFC §15 B-3, §17.6)."""
+        return {k: os.environ[k] for k in CHILD_ENV_ALLOWLIST
+                if k in os.environ}
+
+    def _process_timeout(self, args, spec_default: int) -> int:
+        """The effective timeout: the intent's declared
+        ``timeout_seconds`` (or the tool's registry default),
+        capped by the policy's ``tool_timeout_seconds`` (§9.3)."""
+        declared = args.get("timeout_seconds")
+        timeout = int(declared) if declared else int(spec_default)
+        cap = int(self.tool_policy.get("tool_timeout_seconds") or 0)
+        return min(timeout, cap)
+
+    def _run_process(self, argv, cwd: str, timeout: int):
+        """Run ``argv`` in ``cwd`` under the B-3 process discipline.
+
+        Returns (exit_code, stdout, stderr, timed_out,
+        stream_truncated). Streams are captured separately and
+        capped per stream at the policy's
+        ``tool_max_result_bytes`` (§9.3 — truncation is flagged,
+        never silent). On timeout the whole process group is
+        killed (the child runs in its own session, so a shell's
+        children die with it) and the partial output is returned
+        with ``timed_out`` and the :data:`TIMEOUT_EXIT_CODE`
+        sentinel — no exit code exists for a killed process.
+        """
+        cap = int(self.tool_policy.get("tool_max_result_bytes") or 0)
+        proc = subprocess.Popen(
+            argv, cwd=cwd, env=self._child_env(),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True)
+        timed_out = False
+        try:
+            out_b, err_b = proc.communicate(timeout=timeout)
+            exit_code = proc.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+            out_b, err_b = proc.communicate()
+            exit_code = TIMEOUT_EXIT_CODE
+        stream_truncated = False
+
+        def decode(data: bytes) -> str:
+            nonlocal stream_truncated
+            if cap > 0 and len(data) > cap:
+                stream_truncated = True
+                data = data[:cap]
+            return data.decode("utf-8", errors="replace")
+
+        return exit_code, decode(out_b or b""), decode(err_b or b""), \
+            timed_out, stream_truncated
+
+    def _do_shell_exec(self, args):
+        cwd = self._scoped(args["cwd"]) if args.get("cwd") \
+            else self.work_root
+        if not os.path.isdir(cwd):
+            raise ToolExecutionError(
+                f"cwd {args.get('cwd')!r} is not a directory in scope")
+        timeout = self._process_timeout(
+            args, get_tool("shell_exec").default_timeout_seconds)
+        exit_code, out, err, timed_out, trunc = self._run_process(
+            ["/bin/sh", "-c", args["command"]], cwd, timeout)
+        result = {"exit_code": exit_code, "stdout": out,
+                  "stderr": err, "timed_out": timed_out}
+        post = {"exit_code": exit_code, "timed_out": timed_out,
+                "cwd": cwd}
+        detail = (f"timed out after {timeout}s and was killed; "
+                  "partial output recorded (partial)" if timed_out
+                  else f"command exited with code {exit_code}")
+        return result, post, None, True, detail, trunc
+
+    def _do_code_exec(self, args):
+        # language is schema-pinned to "python" (the runtime's own
+        # interpreter, RFC §8.3); exactly one of source/path was
+        # priced by the gate and re-validated above (§9.2).
+        if args.get("source"):
+            argv = [sys.executable, "-c", args["source"]]
+            what = "source"
+        else:
+            argv = [sys.executable, self._scoped(args["path"])]
+            what = f"file {args['path']}"
+        timeout = self._process_timeout(
+            args, get_tool("code_exec").default_timeout_seconds)
+        exit_code, out, err, timed_out, trunc = self._run_process(
+            argv, self.work_root, timeout)
+        result = {"exit_code": exit_code, "stdout": out,
+                  "stderr": err, "timed_out": timed_out}
+        post = {"exit_code": exit_code, "timed_out": timed_out,
+                "cwd": self.work_root}
+        detail = (f"timed out after {timeout}s and was killed; "
+                  "partial output recorded (partial)" if timed_out
+                  else f"python {what} exited with code {exit_code}")
+        return result, post, None, True, detail, trunc
+
+    def _do_test_run(self, args):
+        target = self._scoped(args["path"])
+        timeout = self._process_timeout(
+            args, get_tool("test_run").default_timeout_seconds)
+        exit_code, out, err, timed_out, trunc = self._run_process(
+            [sys.executable, "-m", "pytest", target, "-q"],
+            self.work_root, timeout)
+        output = out + err
+        # The suite's own summary, parsed AS REPORTED (RFC §8.3):
+        # a category pytest did not report is 0 in its summary by
+        # its own convention; a run with no recognisable count at
+        # all is a parse failure — counts are never invented, the
+        # raw output is carried instead (documented in SI-44).
+        counts, parse_ok = {}, False
+        for name, rx in _PYTEST_COUNT_RES.items():
+            m = rx.search(output)
+            counts[name] = int(m.group(1)) if m else 0
+            parse_ok = parse_ok or m is not None
+        result = {"exit_code": exit_code,
+                  "passed": counts["passed"],
+                  "failed": counts["failed"],
+                  "skipped": counts["skipped"],
+                  "parse": "ok" if parse_ok else "failed",
+                  "output": output}
+        # Post-state (§11.1.2): the suite's own parsed summary.
+        post = {"exit_code": exit_code, "passed": counts["passed"],
+                "failed": counts["failed"],
+                "skipped": counts["skipped"],
+                "parse": result["parse"], "timed_out": timed_out}
+        if timed_out:
+            detail = (f"timed out after {timeout}s and was killed; "
+                      "partial output recorded (partial)")
+        elif parse_ok:
+            detail = (f"pytest exited {exit_code}: "
+                      f"{counts['passed']} passed, "
+                      f"{counts['failed']} failed, "
+                      f"{counts['skipped']} skipped — as the suite "
+                      "reported them")
+        else:
+            detail = (f"pytest exited {exit_code} with no summary "
+                      "counts to parse: parse='failed', counts 0, "
+                      "raw output carried — never invented")
+        status = "timed-out" if timed_out else None
+        return result, post, None, True, detail, trunc, status
+
+
 # -- compensation (RFC §11.2) ---------------------------------------------------
 
 def compensation_intent(execution: dict, *, parents: list,
@@ -852,8 +1085,9 @@ def compensation_intent(execution: dict, *, parents: list,
 
 def execute_tool_cycle(journal, bundle_dir, manifest, intent, gate,
                        ctx, executor: Executor | None = None) -> dict:
-    """Gate one tool intent and, on ADMIT, execute it — the B-2
-    form of :func:`si.gaia.shadow.journal_tool_intent`.
+    """Gate one tool intent and, on ADMIT, execute it — the
+    B-2/B-3 form of :func:`si.gaia.shadow.journal_tool_intent`,
+    and the single cycle the B-3 task loop (si.gaia.task) chains.
 
     Journals through the existing methods/collections, in the
     loop's order: gate first; the self-edit (with the full gate
@@ -920,14 +1154,15 @@ def run_tool_intent(bundle_dir: str, intent, work_root: str | None = None,
                     policy: dict | None = None) -> dict:
     """One complete gated tool cycle against a bundle on disk.
 
-    The scripted-scenario driver for B-2 (the real task surface,
-    ``si task``, is B-3): loads and verifies the bundle, gates the
-    intent under the bundle's policy (or an operator-supplied
-    policy dict, as the project's tests supply gate policies),
-    executes on ADMIT when the bundle is miniature, journals
-    everything, and re-anchors the manifest checkpoint so the
-    bundle loads cleanly afterwards. Demo (non-miniature) bundles
-    keep shadow behaviour — their context is never live.
+    The scripted-scenario driver from B-2 (the real task surface,
+    ``si task``, is B-3's :mod:`si.gaia.task`): loads and verifies
+    the bundle, gates the intent under the bundle's policy (or an
+    operator-supplied policy dict, as the project's tests supply
+    gate policies), executes on ADMIT when the bundle is
+    miniature, journals everything, and re-anchors the manifest
+    checkpoint so the bundle loads cleanly afterwards. Demo
+    (non-miniature) bundles keep shadow behaviour — their context
+    is never live.
     """
     from si.bundle import (
         _anchor_checkpoint,
