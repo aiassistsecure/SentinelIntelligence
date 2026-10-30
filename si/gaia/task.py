@@ -107,10 +107,12 @@ skips), barrier as a real perception sync point (§10.2
 point 2), claim-time residence refusals (§12.2), and the
 bounded read pool (§8 — unkeyed reads concurrent up to
 ``queue_max_concurrent_reads``, default 4; everything keyed
-or state-changing still serial). Q-1's remaining stated
-limits stand: write/execute outcome-unknown recovery is Q-3;
-all queue performance is UNMEASURED (Q-4). See
-docs/SI-51-q1-queue-core.md and docs/SI-52-q2-concurrency-deps.md.
+or state-changing still serial). SI-53 (Q-3) adds the live
+leash, write/execute outcome-unknown recovery with operator
+dispositions, and service/SSE queue exposure; all queue
+performance remains UNMEASURED (Q-4). See
+docs/SI-51-q1-queue-core.md, docs/SI-52-q2-concurrency-deps.md
+and docs/SI-53-q3-leash-dispositions.md.
 """
 from __future__ import annotations
 

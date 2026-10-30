@@ -91,12 +91,29 @@ as the witness. The task loop's propose → admit → drain →
 perceive cycle is unchanged; its next drain picks up
 whatever was admitted meanwhile.
 
-**Write/execute outcome-unknown recovery is NOT in Q-1**
-(§13.3's write/execute arm is Q-3): :meth:`Drainer.recover`
-re-claims only *read*-class orphaned claims; a write/execute
-intent left ``claimed`` with no outcome is reported
-``deferred`` and left claimed, untouched — never marked
-``outcome-unknown`` here, never blindly re-executed.
+**Q-3 (SI-53) — leash, dispositions, exposure:**
+:meth:`Drainer.recover` now implements §13.3's write/execute
+arm: an orphaned write/execute claim is journaled
+``outcome-unknown`` (``queue_outcome_unknown``), never blindly
+re-executed and never replayed; for write tools the target's
+post-state is gathered AS A READ and journaled as a
+``queue_recovery_observation`` (evidence, never an outcome).
+The intent then blocks its key and dependents until the
+operator dispositions it (§13.4,
+:func:`si.gaia.queue.disposition_outcome_unknown`): only
+``accept-unknown`` concludes it for dependents — ``outcome``
+dependents proceed on the honest basis that the outcome is
+unknown, ``success`` dependents are skipped. The leash now
+acts against a LIVE drain (§11): between rounds the drainer
+re-folds (a stop journaled mid-drain holds everything not yet
+claimed), and an execute-class execution in flight is killed
+by the executor's leash check (a timeout whose cause is the
+operator; partial output labelled partial) — write-class in
+flight runs to its journaled conclusion, read-class in flight
+may finish, exactly §11.2. (Q-1/Q-2 reported orphaned
+write/execute claims ``deferred`` and left them claimed;
+``recover`` still returns that key, now always empty, beside
+the new ``outcome_unknown`` list — see SI-53's doc.)
 
 Every performance quantity for the queue — drain throughput,
 residence times, the benefit of any concurrency above 1 — is
@@ -118,6 +135,8 @@ from si.gaia.queue import (
     fold_queue,
     queue_summary,
     record_queue_claim,
+    record_queue_outcome_unknown,
+    record_queue_recovery_observation,
     record_queue_recovery_reclaim,
     record_queue_refusal,
     record_queue_skip,
@@ -307,7 +326,15 @@ def _dep_satisfied(dep_state, requirement: str) -> bool:
     """True iff ``dep_state`` satisfies ``requirement`` (§7.3)."""
     if requirement == "success":
         return _dep_success(dep_state)
-    return _state_name(dep_state) in _OUTCOME_DEP_STATES
+    if _state_name(dep_state) in _OUTCOME_DEP_STATES:
+        return True
+    # Q-3 (§13.4): an outcome-unknown intent dispositioned
+    # ``accept-unknown`` has concluded for `outcome` purposes —
+    # the record says the outcome is *unknown*, and dependents
+    # proceed on that honest basis. Undispositioned, or
+    # dispositioned compensate / re-propose, it has not.
+    return _state_name(dep_state) == "outcome-unknown" \
+        and _field(dep_state, "disposition") == "accept-unknown"
 
 
 def _parse_journal_ts(raw) -> datetime | None:
@@ -794,6 +821,16 @@ class Drainer:
                             or not _is_terminal(dep_state) \
                             or _dep_success(dep_state):
                         continue
+                    if _state_name(dep_state) == "outcome-unknown" \
+                            and _field(dep_state, "disposition") \
+                            != "accept-unknown":
+                        # Q-3 (§13.4): an undispositioned
+                        # outcome-unknown dependency has not
+                        # concluded for its dependents — they
+                        # WAIT for the operator disposition
+                        # (only accept-unknown skips a success
+                        # dependent, per §13.4's own text).
+                        continue
                     target = (state, dep_seq, dep_state)
                     break
                 if target is not None:
@@ -913,8 +950,35 @@ class Drainer:
             return False
         return claimed_at + timedelta(seconds=float(lease)) <= now
 
+    def _recovery_observation(self, state) -> dict | None:
+        """Post-state of a write intent's target, gathered AS A
+        READ (§13.3): existence, size, and sha256 of the file
+        under the drainer's work root, or None when the intent
+        names no in-scope file target. Evidence only."""
+        import hashlib
+        args = _field(state, "args", default=None) or {}
+        raw = args.get("path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        target = os.path.realpath(os.path.join(self.work_root, raw))
+        root = os.path.realpath(self.work_root)
+        if target != root and not target.startswith(root + os.sep):
+            return None
+        if os.path.isdir(target):
+            return {"path": raw, "exists": True, "kind": "dir"}
+        if not os.path.isfile(target):
+            return {"path": raw, "exists": False}
+        digest = hashlib.sha256()
+        with open(target, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                digest.update(chunk)
+        return {"path": raw, "exists": True, "kind": "file",
+                "size": os.path.getsize(target),
+                "sha256": "sha256:" + digest.hexdigest()}
+
     def recover(self, task_seq=None) -> dict:
-        """The Q-1 recovery fold (§13.1, §13.3 read arm).
+        """The recovery fold (§13.1, §13.3; read arm Q-1,
+        write/execute arm Q-3/SI-53).
 
         For every intent folded ``claimed`` with no outcome:
 
@@ -927,17 +991,24 @@ class Drainer:
           ``consequence_class`` for the folded tool name) is
           recovery-re-claimed — a new claim journaled naming the
           original claim — and reported in ``reclaimed``; a
-          write/execute-class intent is **deferred** (Q-3
-          territory: Q-1 does not mark it outcome-unknown and
-          does not re-execute it) and left claimed.
+          write/execute-class intent is journaled
+          ``outcome-unknown`` (§13.3: never blindly re-executed,
+          never replayed), reported in ``outcome_unknown``, and
+          — for write tools — its target's post-state is
+          journaled as a ``queue_recovery_observation``,
+          evidence for the operator's §13.4 disposition.
 
-        Returns {"reclaimed": [claim, ...], "deferred":
-        [intent_seq, ...], "foreign": [claim_seq, ...]}."""
+        Returns {"reclaimed": [claim, ...], "deferred": [],
+        "foreign": [claim_seq, ...], "outcome_unknown":
+        [intent_seq, ...]}. ``deferred`` is Q-1/Q-2's key, kept
+        for shape compatibility and now always empty: Q-3 is
+        the slice §13.3's write/execute arm was deferred TO."""
         fold = _fold(self.journal, task_seq)
         now = datetime.now(timezone.utc)
         reclaimed: list = []
         deferred: list = []
         foreign: list = []
+        outcome_unknown: list = []
         for state in _fold_intents(fold):
             if task_seq is not None \
                     and _task_seq_of(state) is not None \
@@ -973,9 +1044,37 @@ class Drainer:
                     raw, self.journal, state, self.drainer_id,
                     recovery_of=claim_seq))
             else:
-                deferred.append(_intent_seq(state))
+                # §13.3 write/execute arm (Q-3): NEVER blindly
+                # re-executed, NEVER replayed — journaled
+                # outcome-unknown pending operator disposition.
+                cls = spec.consequence_class if spec is not None \
+                    else _field(state, "effective_class")
+                cause = (
+                    f"recovery (§13.3): {cls}-class intent was "
+                    f"claimed at seq {claim_seq} with no outcome "
+                    f"journaled and its claim lease expired — "
+                    f"the tool may or may not have run (§13.2); "
+                    f"it is NOT re-executed and NOT replayed; "
+                    f"it folds outcome-unknown pending an "
+                    f"operator disposition (§13.4)")
+                record_queue_outcome_unknown(
+                    self.journal, _task_seq_of(state),
+                    _edit_id(state), _intent_seq(state), cause,
+                    claim_seq=claim_seq, effective_class=cls)
+                if cls == "write":
+                    observation = self._recovery_observation(state)
+                    if observation is not None:
+                        record_queue_recovery_observation(
+                            self.journal, _task_seq_of(state),
+                            _edit_id(state), _intent_seq(state),
+                            observation,
+                            detail="post-state of the write "
+                                   "target, gathered as a read "
+                                   "during recovery (§13.3)")
+                outcome_unknown.append(_intent_seq(state))
         return {"reclaimed": reclaimed, "deferred": deferred,
-                "foreign": foreign}
+                "foreign": foreign,
+                "outcome_unknown": outcome_unknown}
 
     # -- execution -------------------------------------------------------------
     def execute_claim(self, state, claim) -> dict:
@@ -1004,10 +1103,43 @@ class Drainer:
             kwargs["claim_intent_seq"] = _intent_seq(state)
         if "claim_seq" in params or has_varkw:
             kwargs["claim_seq"] = claim_seq
-        return self.executor.execute_journaled(
-            _edit_id(state),
-            expected_effective_class=_field(state, "effective_class"),
-            **kwargs)
+        # §11.2 live leash (Q-3): while this claim executes, the
+        # executor's process machinery polls the fold for this
+        # task's operator stop — an execute-class process in
+        # flight at a stop is killed (a timeout whose cause is
+        # the operator); write-class filesystem calls ignore
+        # the check and run to their journaled conclusion, and
+        # reads may finish. The check is installed only for
+        # this call and always removed after it.
+        task_seq = _task_seq_of(state)
+        had_leash = hasattr(self.executor, "leash_check")
+        previous = getattr(self.executor, "leash_check", None)
+        if task_seq is not None:
+            def _leash_check(task_seq=task_seq):
+                try:
+                    return _task_stop_in_force(
+                        _fold(self.journal, task_seq), task_seq)
+                except Exception:
+                    return False
+            try:
+                self.executor.leash_check = _leash_check
+            except Exception:
+                pass
+        try:
+            return self.executor.execute_journaled(
+                _edit_id(state),
+                expected_effective_class=_field(
+                    state, "effective_class"),
+                **kwargs)
+        finally:
+            if task_seq is not None:
+                try:
+                    if had_leash:
+                        self.executor.leash_check = previous
+                    elif hasattr(self.executor, "leash_check"):
+                        del self.executor.leash_check
+                except Exception:
+                    pass
 
     # -- perception (method form of the module function) -------------------------
     def build_observation_set(self, journal, fold, task_seq,
@@ -1056,7 +1188,7 @@ class Drainer:
 
         Returns {"task_seq", "claims", "executions", "skips",
         "perception", "sync_reason", "integrity_failure",
-        "concurrency_bound", "summary"}: the claims this drain
+        "concurrency_bound", "outcome_unknown", "summary"}: the claims this drain
         journaled (recovery re-claims included), the skips it
         journaled (§7.3), each execution by edit id, ONE batched
         observation set (§10) over the outcomes concluded during
@@ -1269,5 +1401,6 @@ class Drainer:
             "sync_reason": sync_reason,
             "integrity_failure": integrity_failure,
             "concurrency_bound": bound,
+            "outcome_unknown": list(recovery["outcome_unknown"]),
             "summary": queue_summary(final_fold, task_seq),
         }

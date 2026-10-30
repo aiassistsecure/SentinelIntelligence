@@ -55,6 +55,16 @@ Hearth gateway exposure is built (that route is proposal H-2,
 Mark's); the Hearth residency observations streamed here are
 only the ones B-4 already journaled as ``experiences`` rows.
 
+**SI-53 — the queue-event convention (SI-50 §15.5, pinned).**
+A queue event's payload carries the §5.2 state name the row
+transitions its intent *to*, as ``queue_state`` — on the event
+dict from :func:`read_journal_events` and in the serialised
+SSE envelope beside ``collection``/``row`` — so consumers do
+not each re-implement the fold to answer "what is running."
+Non-queue rows carry no ``queue_state`` key at all; event
+names are unchanged from SI-47/48. The mapping is
+:func:`queue_state_for_row`.
+
 **SI-48 — filtered subscriptions.** :class:`EventFilter` adds
 the server-side filter SI-47 §2.3 deferred, under exactly the
 rule that section pinned: a filter is a **pure projection of
@@ -392,12 +402,18 @@ def read_journal_events(source, after_seq: int = 0,
             if seq > after_seq:
                 entries.append((seq, coll, row))
     entries.sort(key=lambda e: e[0])
-    events = [{
-        "id": seq,
-        "event": event_name_for_row(coll, row),
-        "collection": coll,
-        "row": _jsonable_row(row),
-    } for seq, coll, row in entries]
+    events = []
+    for seq, coll, row in entries:
+        event = {
+            "id": seq,
+            "event": event_name_for_row(coll, row),
+            "collection": coll,
+            "row": _jsonable_row(row),
+        }
+        queue_state = queue_state_for_row(coll, row)
+        if queue_state is not None:
+            event["queue_state"] = queue_state
+        events.append(event)
     if event_filter is not None and not event_filter.is_empty():
         universe = events
         if event_filter.task_seq is not None and after_seq > 0:
@@ -413,6 +429,56 @@ def _jsonable_row(row: dict) -> dict:
     """A journal row as plain JSON data (defensive copy, the
     B-5 trail's rule: a serialisation never aliases live state)."""
     return json.loads(json.dumps(row, default=str))
+
+
+def queue_state_for_row(collection: str, row: dict) -> str | None:
+    """The SI-50 §5.2 queue state one journal row transitions
+    its intent TO (SI-53/Q-3, pinning §15.5's convention), or
+    None when the row is not a queue transition.
+
+    Queue event payloads carry this name as ``queue_state`` so
+    a consumer can answer "what is running / held / unknown"
+    without re-implementing the fold. The mapping names only
+    what the row itself establishes: a ``tool_result`` row
+    transitions to ``executed`` (or ``refused-at-claim`` when
+    its execution status is ``refused``); a ``self_edits`` tool
+    row transitions by its journaled gate verdict (ADMIT ->
+    ``queued``, REJECT -> ``rejected``, ESCALATE ->
+    ``escalated``, otherwise ``proposed``); the ``queue_*``
+    experience kinds map to their §5.2 states (``queue_stop``
+    and ``queue_resume`` transition the task's still-queued
+    intents to ``held`` / back to ``queued`` respectively);
+    ``queue_recovery_observation`` and ``queue_disposition``
+    annotate an ``outcome-unknown`` intent without moving it,
+    so they carry ``outcome-unknown``. Compensation is an
+    annotation in the fold (§5.2), never a state, so no row
+    carries ``compensated`` here.
+    """
+    kind = row.get("kind")
+    if collection == "self_edits":
+        if kind != "tool":
+            return None
+        verdict = row.get("gate_verdict")
+        return {"ADMIT": "queued", "REJECT": "rejected",
+                "ESCALATE": "escalated"}.get(verdict, "proposed")
+    if collection != "experiences":
+        return None
+    if kind == "tool_result":
+        record = row.get("record") or {}
+        execution = record.get("execution") or {}
+        return "refused-at-claim" \
+            if execution.get("status") == "refused" else "executed"
+    return {
+        "queue_claim": "claimed",
+        "queue_recovery_reclaim": "claimed",
+        "queue_refusal": "refused-at-claim",
+        "queue_skip": "skipped",
+        "queue_outcome_unknown": "outcome-unknown",
+        "queue_recovery_observation": "outcome-unknown",
+        "queue_disposition": "outcome-unknown",
+        "queue_stop": "held",
+        "queue_resume": "queued",
+    }.get(kind)
 
 
 def event_name_for_row(collection: str, row: dict) -> str:
@@ -470,9 +536,13 @@ def format_sse(event: dict) -> str:
     row, so a consumer can verify any event against the journal
     by seq alone.
     """
-    data = json.dumps({"collection": event["collection"],
-                       "row": event["row"]},
-                      sort_keys=True, default=str)
+    envelope = {"collection": event["collection"],
+                "row": event["row"]}
+    if event.get("queue_state") is not None:
+        # SI-53 (§15.5 convention): a queue event's payload
+        # carries the §5.2 state name it transitions to.
+        envelope["queue_state"] = event["queue_state"]
+    data = json.dumps(envelope, sort_keys=True, default=str)
     return f"id: {event['id']}\nevent: {event['event']}\ndata: {data}\n\n"
 
 
@@ -609,6 +679,7 @@ __all__ = [
     "format_sse",
     "parse_event_filter",
     "parse_resume_seq",
+    "queue_state_for_row",
     "read_journal_events",
     "stream_events",
     "task_member_seqs",

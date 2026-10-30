@@ -11,8 +11,12 @@ kinds:
 - **Writers** — :func:`record_queue_batch`,
   :func:`record_queue_claim`, :func:`record_queue_recovery_reclaim`,
   :func:`record_queue_refusal`, :func:`record_queue_skip`,
-  :func:`record_queue_stop`, and
-  :func:`record_queue_resume` journal ``queue_*`` experiences via
+  :func:`record_queue_stop`,
+  :func:`record_queue_resume`,
+  :func:`record_queue_outcome_unknown`,
+  :func:`record_queue_recovery_observation`,
+  :func:`record_queue_disposition` (SI-53/Q-3), and the
+  operator act :func:`disposition_outcome_unknown` journal ``queue_*`` experiences via
   the journal's existing ``record_experience`` (the record dict
   rides in the experience's ``record`` field, exactly like
   :mod:`si.gaia.task`'s ``task`` / ``task_stop`` records). A
@@ -71,6 +75,16 @@ Fold rules (§5.2, §5.4, §11, §13.1), as implemented here:
 - compensation (SI-41 §11.2) is an annotation only: a later tool
   intent whose ``parents`` name an earlier intent sets that
   intent's ``compensated_by``; its state is never rewritten.
+- ``queue_outcome_unknown`` (Q-3, §13.3) moves a claimed
+  write/execute intent to ``outcome-unknown`` and carries the
+  recovery cause and claim sequence; a
+  ``queue_recovery_observation`` appends post-state evidence
+  (labelled observation, never an outcome) to the intent; a
+  ``queue_disposition`` (§13.4) records the operator's
+  disposition on the intent — its folded ``state`` stays
+  ``outcome-unknown`` (history is not rewritten); only an
+  ``accept-unknown`` disposition concludes the intent for its
+  dependents (the drainer's §7.3 reading, SI-53).
 """
 from __future__ import annotations
 
@@ -109,6 +123,12 @@ TERMINAL_STATES = {
 #: States counted toward a task summary's queue depth (the task
 #: spec for :func:`queue_summary`: queued + claimed + held).
 _DEPTH_STATES = ("queued", "claimed", "held")
+
+#: The only operator dispositions of an ``outcome-unknown``
+#: intent (SI-50 §13.4). There is no fourth disposition, and in
+#: particular there is no ``mark-executed``: a state the journal
+#: cannot establish does not get established by preference.
+DISPOSITIONS = ("accept-unknown", "compensate", "re-propose")
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +301,120 @@ def record_queue_resume(journal, task_seq, detail="",
     return _record_queue_entry(journal, "queue_resume", record)
 
 
+def record_queue_outcome_unknown(journal, task_seq, edit_id, intent_seq,
+                                 cause, claim_seq=None,
+                                 effective_class=None) -> dict:
+    """Journal an outcome-unknown entry (§13.3, Q-3): recovery
+    found a write/execute claim with its lease expired and no
+    outcome. The intent is NEVER blindly re-executed and never
+    replayed; it folds to ``outcome-unknown`` pending an
+    operator disposition (§13.4)."""
+    record = {
+        "kind": "queue_outcome_unknown",
+        "source": "drainer",
+        "task_seq": task_seq,
+        "edit_id": edit_id,
+        "intent_seq": intent_seq,
+        "claim_seq": claim_seq,
+        "cause": cause,
+        "effective_class": effective_class,
+    }
+    return _record_queue_entry(journal, "queue_outcome_unknown",
+                               record)
+
+
+def record_queue_recovery_observation(journal, task_seq, edit_id,
+                                      intent_seq, observation,
+                                      detail="") -> dict:
+    """Journal a recovery observation (§13.3, Q-3): post-state
+    evidence for an ``outcome-unknown`` write, gathered AS A
+    READ (e.g. the target's observed existence/size/hash). It
+    is labelled observation and is never promoted to an
+    outcome or to "it ran"."""
+    record = {
+        "kind": "queue_recovery_observation",
+        "source": "drainer",
+        "task_seq": task_seq,
+        "edit_id": edit_id,
+        "intent_seq": intent_seq,
+        "observation": observation,
+        "detail": detail,
+        "label": ("observation only — evidence for the operator, "
+                  "never an outcome (SI-50 §13.3)"),
+    }
+    return _record_queue_entry(
+        journal, "queue_recovery_observation", record)
+
+
+def record_queue_disposition(journal, task_seq, edit_id, intent_seq,
+                             disposition, detail="",
+                             operator="operator") -> dict:
+    """Journal a disposition entry (§13.4, Q-3): the operator's
+    explicit act on an ``outcome-unknown`` intent. Source
+    ``operator``; not a gate verdict. ``disposition`` must be
+    one of :data:`DISPOSITIONS` — anything else (including
+    ``mark-executed``) raises ValueError and journals nothing.
+    This is the low-level writer; callers should prefer
+    :func:`disposition_outcome_unknown`, which first verifies
+    the folded intent really is ``outcome-unknown``."""
+    if disposition not in DISPOSITIONS:
+        raise ValueError(
+            f"disposition {disposition!r} is not one of "
+            f"{list(DISPOSITIONS)} (SI-50 §13.4: there is no "
+            f"fourth disposition, and no mark-executed)")
+    record = {
+        "kind": "queue_disposition",
+        "source": "operator",
+        "operator": operator,
+        "task_seq": task_seq,
+        "edit_id": edit_id,
+        "intent_seq": intent_seq,
+        "disposition": disposition,
+        "detail": detail,
+    }
+    return _record_queue_entry(journal, "queue_disposition", record)
+
+
+def disposition_outcome_unknown(journal, intent_seq, disposition,
+                                detail="", operator="operator",
+                                task_seq=None) -> dict:
+    """The operator disposition act (§13.4, Q-3): fold the
+    journal, verify the named intent is folded
+    ``outcome-unknown`` and not already dispositioned, then
+    journal the disposition. Fail closed: an unknown intent, a
+    non-``outcome-unknown`` intent, an already-dispositioned
+    intent, or an invalid disposition raises ValueError and
+    journals NOTHING — a disposition is an explicit operator
+    act on a verified state, never a blind replay and never a
+    rewrite of history."""
+    if disposition not in DISPOSITIONS:
+        raise ValueError(
+            f"disposition {disposition!r} is not one of "
+            f"{list(DISPOSITIONS)} (SI-50 §13.4)")
+    fold = fold_queue(journal, task_seq=task_seq)
+    state = fold.by_seq.get(intent_seq)
+    if state is None:
+        raise ValueError(
+            f"no folded intent at seq {intent_seq}: nothing to "
+            f"disposition (fail closed, nothing journaled)")
+    if state.state != "outcome-unknown":
+        raise ValueError(
+            f"intent seq {intent_seq} folds to {state.state!r}, "
+            f"not 'outcome-unknown': only an outcome-unknown "
+            f"intent can be dispositioned (SI-50 §13.4; nothing "
+            f"journaled)")
+    if state.disposition is not None:
+        raise ValueError(
+            f"intent seq {intent_seq} is already dispositioned "
+            f"({state.disposition!r} at seq "
+            f"{state.disposition_seq}): a second disposition "
+            f"would rewrite the operator's record (nothing "
+            f"journaled)")
+    return record_queue_disposition(
+        journal, state.task_seq, state.edit_id, state.intent_seq,
+        disposition, detail=detail, operator=operator)
+
+
 # ---------------------------------------------------------------------------
 # The fold (§5.1, §5.4)
 # ---------------------------------------------------------------------------
@@ -332,6 +466,19 @@ class QueueIntentState:
     #: admission timestamp recorded in the journal, from which
     #: Q-2 measures claim-time residence.
     intent_ts: str | None = None
+    #: Q-3 (§13.3/§13.4): the recovery entry that marked this
+    #: intent ``outcome-unknown`` (its journal seq, cause, and
+    #: the claim it names), the recovery observations gathered
+    #: as reads (evidence only), and the operator disposition
+    #: journaled on it, when one exists.
+    outcome_unknown_seq: int | None = None
+    outcome_unknown_cause: str | None = None
+    outcome_unknown_claim_seq: int | None = None
+    recovery_observations: list = field(default_factory=list)
+    disposition: str | None = None
+    disposition_seq: int | None = None
+    disposition_operator: str | None = None
+    disposition_detail: str | None = None
 
 
 @dataclass
@@ -650,6 +797,44 @@ def fold_queue(journal, task_seq=None) -> QueueFold:
                     state.outcome_status = "refused"
             continue
 
+        if kind == "queue_outcome_unknown":
+            state = _find_state(fold, record, row)
+            if state is None or state.state in (
+                    "executed", "rejected", "escalated",
+                    "refused-at-claim", "skipped"):
+                continue
+            state.state = "outcome-unknown"
+            state.outcome_unknown_seq = seq
+            state.outcome_unknown_cause = record.get("cause")
+            state.outcome_unknown_claim_seq = record.get("claim_seq")
+            continue
+
+        if kind == "queue_recovery_observation":
+            state = _find_state(fold, record, row)
+            if state is None:
+                continue
+            state.recovery_observations.append({
+                "seq": seq,
+                "observation": record.get("observation"),
+                "detail": record.get("detail"),
+            })
+            continue
+
+        if kind == "queue_disposition":
+            state = _find_state(fold, record, row)
+            if state is None:
+                continue
+            # §13.4: the disposition annotates the intent; its
+            # folded state STAYS outcome-unknown — history is
+            # not rewritten. Only the drainer's dependent
+            # reading (§7.3) treats accept-unknown as a
+            # conclusion for dependents.
+            state.disposition = record.get("disposition")
+            state.disposition_seq = seq
+            state.disposition_operator = record.get("operator")
+            state.disposition_detail = record.get("detail")
+            continue
+
         if kind == "queue_skip":
             state = _find_state(fold, record, row)
             if state is None or state.state in TERMINAL_STATES:
@@ -727,7 +912,49 @@ def queue_summary(fold: QueueFold, task_seq) -> dict:
                      if state.state in _DEPTH_STATES),
         "outcome_unknown": [state.intent_seq for state in intents
                             if state.state == "outcome-unknown"],
+        "dispositions": {
+            state.intent_seq: state.disposition
+            for state in intents if state.disposition is not None},
         "held": [state.intent_seq for state in intents
                  if state.state == "held"],
+        "stop_in_force": bool(slot["stop_in_force"]),
         "integrity_faults": list(slot["integrity_faults"]),
+    }
+
+
+def queue_state_view(fold: QueueFold, task_seq) -> dict:
+    """The service adapter's queue vocabulary (SI-50 §15.4,
+    Q-3): one task's folded queue in §5.2's own state names —
+    the summary plus every intent's folded state, claim,
+    outcome, outcome-unknown and disposition fields, in intent
+    order. This is a reading of the fold (which is the
+    journal); it stores nothing and journals nothing."""
+    intents = sorted(
+        (state for state in fold.intents.values()
+         if state.task_seq == task_seq),
+        key=lambda s: s.intent_seq or 0)
+    return {
+        "task_seq": task_seq,
+        "states": list(ALL_STATES),
+        "summary": queue_summary(fold, task_seq),
+        "intents": [{
+            "intent_seq": state.intent_seq,
+            "edit_id": state.edit_id,
+            "tool": state.tool,
+            "state": state.state,
+            "verdict": state.verdict,
+            "effective_class": state.effective_class,
+            "ordering_key": state.ordering_key,
+            "claim_seq": state.claim_seq,
+            "outcome_seq": state.outcome_seq,
+            "outcome_status": state.outcome_status,
+            "refusal_cause": state.refusal_cause,
+            "skip_cause": state.skip_cause,
+            "outcome_unknown_seq": state.outcome_unknown_seq,
+            "outcome_unknown_cause": state.outcome_unknown_cause,
+            "recovery_observations": list(
+                state.recovery_observations),
+            "disposition": state.disposition,
+            "disposition_seq": state.disposition_seq,
+        } for state in intents],
     }
