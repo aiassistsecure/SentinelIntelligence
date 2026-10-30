@@ -314,6 +314,18 @@ LIVE_TOOLS_B2 = frozenset({
     "journal_query", "bundle_status", "probe_run",
 })
 
+#: The SI-44 / B-3 LIVE set (RFC §15 B-3): the B-2 live set plus the
+#: execute-class tools of §8.3 — ``shell_exec``, ``code_exec``,
+#: ``test_run`` — whose execution becomes live, miniature-scoped,
+#: from B-3. ``LIVE_TOOLS_B2`` is unchanged (it is B-2's historical
+#: slice boundary, asserted by the B-2 suite); B-3's gate and
+#: executor price against this superset. External-effective intents
+#: still hold at ESCALATE in B-3 (miniature-scoped,
+#: work-root-contained — a stated slice hold, not a §7.3 cage).
+LIVE_TOOLS_B3 = LIVE_TOOLS_B2 | frozenset({
+    "shell_exec", "code_exec", "test_run",
+})
+
 
 def get_tool(name) -> ToolSpec | None:
     """The spec for ``name``, or None — an unlisted name is not a tool."""

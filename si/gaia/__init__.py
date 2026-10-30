@@ -12,9 +12,12 @@ B-1 was SHADOW only: tool intents were gated and journaled, every
 outcome ESCALATEd or REJECTed, and execution was recorded as
 ``not-evaluated — shadow mode``. B-2 (SI-43) adds
 :mod:`si.gaia.executor`: live execution of the read/write tool set
-on miniature bundles only, under the journaled-args rule. Demo
-bundles keep shadow behaviour, and the execute-class tools stay
-shadow until B-3 — claiming otherwise would be fabrication
+on miniature bundles only, under the journaled-args rule. B-3
+(SI-44) grows the executor to the execute-class tools
+(``shell_exec`` / ``code_exec`` / ``test_run``) and adds the task
+loop (:mod:`si.gaia.task`: operator tasks, chaining, budgets,
+§10.4 stop rules, the ``si task`` CLI). Demo bundles keep shadow
+behaviour throughout — claiming otherwise would be fabrication
 (RFC §15).
 
 This ``__init__`` deliberately imports only the registry and policy
@@ -26,6 +29,7 @@ paths.
 from si.gaia.policy import TOOL_POLICY_DEFAULTS, resolve_tool_policy
 from si.gaia.registry import (
     LIVE_TOOLS_B2,
+    LIVE_TOOLS_B3,
     REGISTRY,
     RFC_V1_TOOL_NAMES,
     TOOL_CLASSES,
@@ -37,6 +41,7 @@ from si.gaia.registry import (
 
 __all__ = [
     "LIVE_TOOLS_B2",
+    "LIVE_TOOLS_B3",
     "REGISTRY",
     "RFC_V1_TOOL_NAMES",
     "TOOL_CLASSES",
