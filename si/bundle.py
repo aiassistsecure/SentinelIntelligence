@@ -49,6 +49,21 @@ DEFAULT_POLICY = {
     "allow_additive": False,
     "identity_tol": 0.25,
     "capability_eps": 0.25,
+    # SI-42 tool policy (SI-41 RFC §6.2). Fail-closed, mirroring the
+    # transformer keys above: allowed_tools is EMPTY — a bundle opts
+    # its tools in explicitly; the class policy admits read/write/
+    # execute and escalates external, exactly the RFC's shipped
+    # defaults. Absent keys in older bundles resolve to these same
+    # defaults in si.gaia.policy.resolve_tool_policy; malformed
+    # entries resolve to the most restrictive value (deny / empty).
+    "allowed_tools": [],
+    "tool_class_policy": {"read": "admit", "write": "admit",
+                          "execute": "admit", "external": "escalate"},
+    "tool_work_root": None,
+    "tool_max_result_bytes": 65536,
+    "tool_timeout_seconds": 120,
+    "max_tool_cycles_per_task": 16,
+    "tool_max_task_result_bytes": 1048576,
     "blocklist": [
         "ignore the constitution",
         "override the gate",

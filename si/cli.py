@@ -229,6 +229,11 @@ def cmd_why(args) -> int:
     manifest = load_bundle(bundle_dir)
     deltas = [d for d in manifest["deltas"] if d["id"] == args.delta_id]
     if not deltas:
+        # SI-42: a tool intent has no delta — `si why <edit-id>`
+        # walks the tool self-edit's provenance to its task entry
+        # (RFC SI-41 §5.2 check 5, §16 criterion 7).
+        if str(args.delta_id).startswith("se_"):
+            return _cmd_why_tool(bundle_dir, manifest, args.delta_id)
         print(f"unknown delta {args.delta_id!r}", file=sys.stderr)
         return 2
     d = deltas[0]
@@ -252,6 +257,63 @@ def cmd_why(args) -> int:
         for p in prov:
             print(f"  provenance: {p['relation']} parents={p['parents']} "
                   f"note={p['note']}")
+    finally:
+        journal.close()
+    return 0
+
+
+def _cmd_why_tool(bundle_dir: str, manifest: dict, edit_id: str) -> int:
+    """`si why` for a tool self-edit (SI-42): intent, gate checks,
+    provenance edges, and the walk to the task entry it chains to."""
+    from si.gaia.shadow import walk_tool_provenance
+    from si.journal import open_journal
+    journal = open_journal(bundle_dir, manifest)
+    try:
+        try:
+            walk = walk_tool_provenance(journal, edit_id)
+        except KeyError:
+            print(f"unknown edit {edit_id!r}", file=sys.stderr)
+            return 2
+        e = walk["edit"]
+        intent = e.get("intent") or {}
+        if e.get("kind") != "tool":
+            print(f"edit {edit_id!r} is a {e.get('kind')!r} self-edit, "
+                  "not a tool intent; `si why` walks deltas and tool "
+                  "intents", file=sys.stderr)
+            return 2
+        print(f"tool intent {edit_id}: tool={intent.get('tool')} "
+              f"args={intent.get('args')}")
+        print(f"  reason: {e['reason']}")
+        print(f"  gate_verdict={e['gate_verdict']} result={e['result']}")
+        report = e.get("gate_report") or {}
+        if report.get("execution"):
+            print(f"  execution: {report['execution']}")
+        for c in report.get("checks", []):
+            mark = "pass" if c["passed"] else "FAIL"
+            label = f" [{c['label']}]" if c.get("label") else ""
+            print(f"    [{mark}] {c['name']}{label}: {c['detail']}")
+        for p in walk["provenance"]:
+            print(f"  provenance: {p['relation']} parents={p['parents']} "
+                  f"note={p['note']}")
+        task = walk["task"]
+        if task is not None:
+            row = task["row"]
+            record = row.get("record") or {}
+            print(f"  task: seq={row['seq']} collection={task['collection']} "
+                  f"source={record.get('source')}")
+            print(f"    instruction: {record.get('instruction')}")
+            print(f"    work_root: {record.get('work_root')}")
+        else:
+            print("  task: none — the cited source seqs reach no task "
+                  "entry (reported as none, not invented)")
+        outcomes = journal.backend.find(
+            "experiences", filter={"self_edit_id": edit_id})
+        for o in outcomes:
+            rec = o.get("record") or {}
+            execution = rec.get("execution") or {}
+            if execution:
+                print(f"  outcome: seq={o['seq']} kind={o.get('kind')} "
+                      f"execution={execution.get('execution')}")
     finally:
         journal.close()
     return 0
@@ -479,7 +541,10 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("range", help="<a>..<b> where a/b are base, a delta id, or head")
     pd.set_defaults(func=cmd_diff)
 
-    pw = sub.add_parser("why", help="explain why a delta exists")
+    pw = sub.add_parser("why", help="explain why a delta exists, or "
+                                    "walk a tool intent's provenance to "
+                                    "its task (pass the tool self-edit id, "
+                                    "e.g. se_0003)")
     pw.add_argument("path", help="bundle directory")
     pw.add_argument("delta_id")
     pw.set_defaults(func=cmd_why)
