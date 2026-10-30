@@ -14,7 +14,7 @@
     si serve <path> [--host H] [--port P]
     si task <path> --instruction "..." [--root DIR] [--cycles N] [--script FILE] [--operator NAME]
     si gaia-serve <path> [--host H] [--port P]
-    si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--json] [--verify BUNDLE]
+    si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--follow-resilient] [--max-events N] [--max-attempts N] [--backoff-base S] [--backoff-cap S] [--max-duration S] [--json] [--verify BUNDLE]
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -546,10 +546,23 @@ def cmd_gaia_events(args) -> int:
     row-for-row against that bundle's journal (and, when a
     filter was given, against the journal's own projection).
     A reference consumer, not a production client library: no
-    retries, no auth."""
+    retries, no auth.
+
+    SI-49: --follow-resilient runs the reference follower
+    (si.gaia.events_client.follow_events) instead — the same
+    subscription maintained across connection drops, resuming
+    with Last-Event-ID from the last delivered seq under
+    bounded exponential backoff (--backoff-base / --backoff-cap
+    / --max-attempts / --max-duration), deduped by journal seq
+    and fail-closed on malformed resume. --verify may combine
+    with it only when --max-events bounds the window (a
+    completed window is what gets verified). Still a reference
+    follower: no retries beyond the stated bounds, no auth, no
+    TLS story."""
     from si.gaia.events import parse_event_filter
     from si.gaia.events_client import (
-        CONSUMER_LABEL, collect_events, fetch_events,
+        CONSUMER_LABEL, FOLLOWER_LABEL, FollowConfig, FollowError,
+        collect_events, fetch_events, follow_events,
         verify_events_against_journal)
     params: dict = {}
     if args.collection:
@@ -572,9 +585,39 @@ def cmd_gaia_events(args) -> int:
               "cannot be combined with --follow (the stream "
               "never ends)", file=sys.stderr)
         return 2
+    if args.follow and args.follow_resilient:
+        print("si: error: --follow and --follow-resilient are "
+              "two modes of one subscription; pick one",
+              file=sys.stderr)
+        return 2
+    if args.verify and args.follow_resilient \
+            and not getattr(args, "max_events", None):
+        print("si: error: --verify with --follow-resilient "
+              "needs --max-events to bound the window that "
+              "gets verified", file=sys.stderr)
+        return 2
     received = []
     try:
-        if args.follow:
+        if args.follow_resilient:
+            print(f"# {FOLLOWER_LABEL}")
+            try:
+                config = FollowConfig(
+                    backoff_base=args.backoff_base,
+                    backoff_cap=args.backoff_cap,
+                    max_attempts=args.max_attempts,
+                    max_duration=args.max_duration,
+                    max_events=args.max_events)
+            except ValueError as e:
+                print(f"si: error: {e}", file=sys.stderr)
+                return 2
+            print(f"# follower bounds: {config.describe()}")
+            stream = follow_events(args.url, after_seq=args.after,
+                                   event_filter=event_filter,
+                                   config=config, timeout=None)
+            for event in stream:
+                received.append(event)
+                _print_gaia_event(event, args.json)
+        elif args.follow:
             stream = fetch_events(args.url, after_seq=args.after,
                                   event_filter=event_filter,
                                   follow=True, timeout=None)
@@ -592,6 +635,9 @@ def cmd_gaia_events(args) -> int:
               f"{received[-1]['id'] if received else args.after}",
               file=sys.stderr)
         return 0
+    except FollowError as e:
+        print(f"si: error: {e}", file=sys.stderr)
+        return 1
     last = received[-1]["id"] if received else args.after
     print(f"# {len(received)} event(s); last id {last} "
           f"(resume: si gaia-events --after {last})")
@@ -859,6 +905,33 @@ def build_parser() -> argparse.ArgumentParser:
                      help="follow the live tail (poll-the-journal) "
                           "until interrupted; cannot combine with "
                           "--verify")
+    pge.add_argument("--follow-resilient", action="store_true",
+                     help="SI-49: follow via the reference "
+                          "follower — the subscription is "
+                          "maintained across connection drops, "
+                          "resuming with Last-Event-ID from the "
+                          "last delivered seq under bounded "
+                          "exponential backoff, deduped by "
+                          "journal seq, fail-closed on malformed "
+                          "resume; a reference follower, not a "
+                          "production client library; no auth")
+    pge.add_argument("--max-events", type=int, default=None,
+                     help="SI-49 follower bound: stop cleanly "
+                          "after delivering this many events")
+    pge.add_argument("--max-attempts", type=int, default=None,
+                     help="SI-49 follower bound: maximum "
+                          "consecutive failed reconnects before "
+                          "failing closed")
+    pge.add_argument("--backoff-base", type=float, default=0.5,
+                     help="SI-49 follower: first reconnect delay "
+                          "in seconds (default: 0.5); the delay "
+                          "doubles per consecutive failure")
+    pge.add_argument("--backoff-cap", type=float, default=30.0,
+                     help="SI-49 follower: maximum reconnect "
+                          "delay in seconds (default: 30)")
+    pge.add_argument("--max-duration", type=float, default=None,
+                     help="SI-49 follower bound: maximum total "
+                          "seconds spent following")
     pge.add_argument("--json", action="store_true",
                      help="print each event's full envelope as "
                           "one JSON line instead of the compact "
