@@ -22,6 +22,10 @@ Surface (localhost by default; see the honesty labels below):
                            result + provenance trail; 400 returns
                            the validation problems and NOTHING
                            was journaled or run
+    POST /gaia/proposals -> (S-2a) seam ingest of one fork
+                           watcher proposal; 200 returns the ACK
+                           {task_seq, journal_seq, verdict} after
+                           journaling; 400 journals nothing
     GET  /tasks/<seq>   -> the provenance trail for the task
                            journaled at <seq>, rebuilt from the
                            journal (404 when no such task)
@@ -114,6 +118,16 @@ filtered-out seqs, malformed filter values are refused with
 400 like malformed resume points, and unfiltered requests are
 byte-identical to SI-47). The reference consumer is
 :mod:`si.gaia.events_client` (``si gaia-events``).
+
+**S-2a adds the seam ingest (G-9 Flow 1)** — ``POST
+/gaia/proposals`` (:func:`submit_proposal`, delegating to
+:func:`si.gaia.seam.ingest_proposal`): fork watcher proposals
+are gated and journaled under a per-model seam task and ACKed
+only after journaling (§8.3); dedup by ``caused_by`` makes
+fork retries free. S-3 work submission is NOT built — an
+ADMIT here submits nothing yet. No authentication, localhost
+only (G-9 §14); the registry gap label applies
+(``REGISTRY_GAP_LABEL``, imported from :mod:`si.gaia.seam`).
 """
 from __future__ import annotations
 
@@ -136,6 +150,11 @@ from si.gaia.queue import (
     disposition_outcome_unknown,
     fold_queue,
     queue_state_view,
+)
+from si.gaia.seam import (
+    REGISTRY_GAP_LABEL,
+    SEAM_INGEST_LABEL,
+    ingest_proposal,
 )
 from si.gaia.task import SUBMITTER_IDENTITY_LABEL, run_task
 from si.gate import Intent
@@ -590,6 +609,20 @@ def submit_task(bundle_dir: str, payload,
     }
 
 
+def submit_proposal(bundle_dir: str, payload,
+                    policy: dict | None = None) -> dict:
+    """Ingest one fork watcher proposal via the seam (G-9 §8).
+
+    A thin wrapper returning
+    :func:`si.gaia.seam.ingest_proposal`'s result unchanged.
+    The §8.3 discipline: a ``refused`` result is 400-class —
+    nothing was journaled, because validation inside the seam
+    precedes any journal write; an ``acked`` result means the
+    gate verdict was journaled before the ACK exists.
+    """
+    return ingest_proposal(bundle_dir, payload, policy=policy)
+
+
 # -- the HTTP service -------------------------------------------------------------
 
 class ServiceState:
@@ -646,6 +679,14 @@ class ServiceState:
                     '"provenance_trail": ...}; a submission '
                     "without a submitter identity is refused "
                     "(400) and journals nothing"),
+                "POST /gaia/proposals": (
+                    "ingest one fork watcher proposal via the "
+                    "seam (G-9 Flow 1): the proposal is gated "
+                    "and journaled under a per-model seam task, "
+                    "then ACKed with {task_seq, journal_seq, "
+                    "verdict} after journaling (§8.3/§12.1); "
+                    "dedup by caused_by makes retries free; a "
+                    "refused proposal (400) journals nothing"),
                 "GET /tasks/<seq>": (
                     "the provenance trail for the task journaled "
                     "at <seq>, rebuilt from the journal"),
@@ -681,6 +722,8 @@ class ServiceState:
             "events_tail": SSE_TAIL_LABEL,
             "events_resume": SSE_RESUME_LABEL,
             "events_filter": SSE_FILTER_LABEL,
+            "seam_ingest": SEAM_INGEST_LABEL,
+            "seam_registry_gap": REGISTRY_GAP_LABEL,
             "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
@@ -844,8 +887,46 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
                 self._send_json(404, {
                     "error": f"unknown path {self.path!r}"})
 
+        def _handle_proposals(self) -> None:
+            """POST /gaia/proposals — the S-2a seam ingest.
+
+            Mirrors the /tasks body discipline exactly; on
+            success the HTTP body is EXACTLY the ack dict
+            {task_seq, journal_seq, verdict} (G-9 §12.1).
+            """
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length > MAX_BODY_BYTES:
+                self._send_json(400, {
+                    "error": f"proposal body exceeds the "
+                             f"{MAX_BODY_BYTES}-byte cap — a "
+                             "proposal is a watcher proposal, "
+                             "not a data channel; nothing was "
+                             "journaled"})
+                return
+            raw = self.rfile.read(length) if length > 0 else b""
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw \
+                    else {}
+            except (ValueError, UnicodeDecodeError) as e:
+                self._send_json(400, {
+                    "error": f"invalid JSON body: {e}"})
+                return
+            out = submit_proposal(state.bundle_dir, payload,
+                                  policy=state.policy)
+            if out["status"] == "refused":
+                self._send_json(400, out)
+                return
+            self._send_json(200, out["ack"])
+
         def do_POST(self) -> None:  # noqa: N802 - stdlib name
             path = urlparse(self.path).path
+            if path in ("/gaia/proposals",
+                        "/gaia/proposals/"):
+                self._handle_proposals()
+                return
             is_disposition = False
             task_seq = None
             if path not in ("/tasks", "/tasks/"):
@@ -930,8 +1011,8 @@ def serve_service(bundle_dir: str, host: str = "127.0.0.1",
     print(f"serving gaia-service for bundle {state.bundle_id}")
     print(f"head at startup: {state.startup_head}")
     print(f"listening on http://{actual_host}:{actual_port} "
-          f"(GET /health, POST /tasks, GET /tasks/<seq>, "
-          f"GET /events)")
+          f"(GET /health, POST /tasks, POST /gaia/proposals, "
+          f"GET /tasks/<seq>, GET /events)")
     print(f"note: {NO_AUTH_LABEL}")
     print(f"note: {GATEWAY_EXPOSURE_LABEL}")
     try:
@@ -959,6 +1040,7 @@ __all__ = [
     "queue_view_for_bundle",
     "serve_service",
     "submit_disposition",
+    "submit_proposal",
     "submit_task",
     "validate_submission",
 ]
