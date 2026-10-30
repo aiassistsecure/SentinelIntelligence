@@ -71,8 +71,12 @@ path, NEDB-backend, non-miniature and claim-lease
 quantities remain UNMEASURED. SI-55 (S-2b) registers the
 seam-crossing ``hearth.*`` tools in the registry
 (external-class, no local executor): watcher proposals gate
-on their merits and an ADMIT rests pending — S-3 work
-submission to the gaia fork remains unbuilt.
+on their merits and an ADMIT rests pending. SI-56 (S-3) adds
+:mod:`si.gaia.seam_submit`: a pending ADMIT is submitted
+across the seam in a separate explicit step and journaled as
+a ``gaia_work`` row in state submitted/awaiting outcome —
+S-4 leash crossing and S-5 outcome return remain unbuilt,
+and live fork interop is UNMEASURED.
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import

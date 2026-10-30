@@ -21,7 +21,7 @@ plainly what is live and what is not.
 | §8.3.4 gate + journal the self-edit with its full gate report, **every verdict** | **live** — journaling replicates `admit_tool_intent` branch-for-branch, with `caused_by` inside the journaled intent dict (§12.1) |
 | §8.3.5 ACK after journaling: `{task_seq, journal_seq, verdict}` | **live** — `journal_seq` is the self-edit row's seq; the HTTP 200 body is exactly the ACK |
 | §8.4 fork egress log / dispositions | **fork-side, already merged** (gaia PR #11) — nothing SI-side in this slice |
-| §9 Flow 2: work submission through the seam (S-3) | **not built** — an ADMIT at ingest submits nothing to the fork; the admitted self-edit rests `pending` |
+| §9 Flow 2: work submission through the seam (S-3) | **built by SI-56/S-3** (docs/S-3-work-submission.md) as a separate explicit step — an ADMIT at ingest still submits nothing to the fork; the admitted self-edit rests `pending` until S-3 submits it |
 | §10 leash crossing (S-4) | **not built** — no leash record crosses in this slice |
 | §11 Flow 3: outcome return (S-5) | **not built** — no outcome returns to the fork |
 | §14 security posture | **as designed** — no authentication on the route; loopback only; identities are asserted provenance, journaled verbatim |
@@ -185,7 +185,8 @@ Interop (brief criterion 5) is §4 below.
 > on their merits (default external policy ESCALATEs, an
 > `external: admit` policy ADMITs to a journaled pending
 > self-edit), and S-3's ADMIT path is unblocked on this point.
-> S-3/S-4/S-5 remain unbuilt. The text below is the S-2a-era
+> S-3 has since been built by SI-56 (docs/S-3-work-submission.md);
+> S-4/S-5 remain unbuilt. The text below is the S-2a-era
 > record, kept for provenance.
 
 SI's tool registry (`si/gaia/registry.py`) registers **only
@@ -280,7 +281,9 @@ through the real `HttpProposalSink` and prints the
   the slice backups (`subset-tests-premerge.log`,
   `subset-tests-postmerge.log`, `interop-live.log`).
 - **Labels held:** seam ingest live SI-side; S-3 work
-  submission **UNBUILT** (an ADMIT submits nothing yet); leash
+  submission was **UNBUILT** at this slice (an ADMIT submitted
+  nothing yet; SI-56/S-3 has since built it as a separate
+  explicit step — ingest still submits nothing); leash
   crossing and outcome return unbuilt; watcher proposals
   REJECT at `tool_registered` until a registry slice registers
   `hearth.*` (§3 — that slice is SI-55/S-2b, merged after S-2a;

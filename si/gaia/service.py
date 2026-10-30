@@ -124,8 +124,10 @@ byte-identical to SI-47). The reference consumer is
 :func:`si.gaia.seam.ingest_proposal`): fork watcher proposals
 are gated and journaled under a per-model seam task and ACKed
 only after journaling (§8.3); dedup by ``caused_by`` makes
-fork retries free. S-3 work submission is NOT built — an
-ADMIT here submits nothing yet. No authentication, localhost
+fork retries free. An ADMIT here submits nothing at ingest —
+S-3 work submission (SI-56, si.gaia.seam_submit) is a separate
+explicit step on the pending self-edit, exposed here as
+:func:`submit_work` for callers with a transport/URL. No authentication, localhost
 only (G-9 §14); the registry gap label applies
 (``REGISTRY_GAP_LABEL``, imported from :mod:`si.gaia.seam`).
 """
@@ -155,6 +157,11 @@ from si.gaia.seam import (
     REGISTRY_GAP_LABEL,
     SEAM_INGEST_LABEL,
     ingest_proposal,
+)
+from si.gaia.seam_submit import (
+    WORK_SUBMISSION_LABEL,
+    submit_pending_seam_work,
+    submit_seam_edit,
 )
 from si.gaia.task import SUBMITTER_IDENTITY_LABEL, run_task
 from si.gate import Intent
@@ -623,6 +630,25 @@ def submit_proposal(bundle_dir: str, payload,
     return ingest_proposal(bundle_dir, payload, policy=policy)
 
 
+def submit_work(bundle_dir: str, edit_id: str | None = None,
+                **kwargs) -> dict:
+    """S-3 (SI-56): submit pending ADMITted seam work.
+
+    A thin wrapper over :mod:`si.gaia.seam_submit`: with
+    ``edit_id``, submits that one edit; without, submits every
+    spendable pending seam ADMIT. Keyword args are the seam
+    module's (``submission_url`` / ``transport`` /
+    ``timeout_s``). No new HTTP route is added in this slice —
+    submission is an outbound, operator-invoked act, and its
+    results carry WORK_SUBMISSION_LABEL's honesty labels
+    (state submitted/awaiting outcome; S-4/S-5 unbuilt; live
+    interop UNMEASURED).
+    """
+    if edit_id is not None:
+        return submit_seam_edit(bundle_dir, edit_id, **kwargs)
+    return submit_pending_seam_work(bundle_dir, **kwargs)
+
+
 # -- the HTTP service -------------------------------------------------------------
 
 class ServiceState:
@@ -723,6 +749,7 @@ class ServiceState:
             "events_resume": SSE_RESUME_LABEL,
             "events_filter": SSE_FILTER_LABEL,
             "seam_ingest": SEAM_INGEST_LABEL,
+            "seam_work_submission": WORK_SUBMISSION_LABEL,
             "seam_registry_gap": REGISTRY_GAP_LABEL,
             "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
@@ -1042,5 +1069,6 @@ __all__ = [
     "submit_disposition",
     "submit_proposal",
     "submit_task",
+    "submit_work",
     "validate_submission",
 ]

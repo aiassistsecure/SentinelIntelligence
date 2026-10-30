@@ -15,7 +15,9 @@ Pins:
   ESCALATEs (still not a tool_registered REJECT);
 - a still-unregistered hearth.* name REJECTs at tool_registered;
 - the registry-gap label no longer claims the names are
-  unregistered, and still states S-3 is UNBUILT.
+  unregistered, and the labels still state what is unbuilt
+  (S-5 outcome return; at this slice S-3 was unbuilt — SI-56
+  has since built it as a separate explicit step).
 """
 import copy
 
@@ -145,7 +147,7 @@ def test_gap_label_no_longer_claims_unregistered():
     assert "CLOSED" in REGISTRY_GAP_LABEL
     assert "hearth.restart" in REGISTRY_GAP_LABEL
     assert "NOT registered" not in REGISTRY_GAP_LABEL
-    assert "UNBUILT" in REGISTRY_GAP_LABEL  # S-3 honesty retained
+    assert "UNBUILT" in REGISTRY_GAP_LABEL  # S-5 honesty retained
 
 
 # -- gate merits ----------------------------------------------------------
@@ -224,7 +226,8 @@ def test_seam_watcher_admits_to_pending_and_executes_nothing(mini):
         assert row["seq"] == out["ack"]["journal_seq"]
         assert row["gate_verdict"] == "ADMIT"
         # The ADMIT rests pending: journaled, not executed,
-        # not submitted (no gaia_work kind exists — S-3 unbuilt).
+        # not submitted at ingest (gaia_work is S-3's kind,
+        # journaled only by SI-56's explicit submission step).
         assert row["result"] == "pending"
         assert row["gate_report"]["execution"] == \
             TOOL_SEAM_PENDING_EXECUTION

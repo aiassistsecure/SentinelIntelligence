@@ -15,7 +15,7 @@ could ever submit. §0 says plainly what is live and what is not.
 | Watcher proposals gate on their merits | **live** — `tool_registered` passes; verdict is the class policy's: default `external: escalate` → ESCALATE; `external: admit` → ADMIT |
 | ADMIT semantics at the seam | **unchanged from S-2a** — the self-edit rests `pending`, gate report journaled; nothing is submitted and nothing executes locally |
 | Local execution of `hearth.*` | **does not exist** — the names are in no LIVE set; the B-3 executor refuses them by construction |
-| S-3 work submission to the fork | **not built** — an ADMIT is a journaled pending self-edit and nothing more |
+| S-3 work submission to the fork | **not built in this slice** — an ADMIT was a journaled pending self-edit and nothing more; SI-56/S-3 has since built submission as a separate explicit step (docs/S-3-work-submission.md) |
 | S-4 leash crossing | **not built** |
 | S-5 outcome return | **not built** — the registered result schema is the SI-side pending shape, not a fork outcome |
 | Performance | **UNMEASURED** — no latency/throughput claim is made for registration, gating, or ingest |
@@ -122,7 +122,8 @@ still-unregistered name so it still tests a true REJECT).
 
 ## 4. What remains unbuilt
 
-S-3 (work submission of ADMIT seam intents to the fork), S-4
+S-3 (work submission of ADMIT seam intents to the fork —
+built after this slice by SI-56, docs/S-3-work-submission.md), S-4
 (operator leash crossing the seam), S-5 (outcome return — until
 then no `hearth.*` execution result exists or is claimed).
 Registration performance and ingest performance remain

@@ -40,8 +40,9 @@ executing nothing) is pinned by
 tests/test_gaia_s2b_hearth_registry.py. The ``fs_list``
 control still proves the pipeline end-to-end.
 
-S-3 is UNBUILT: nothing here executes an admitted proposal,
-drains a queue, or journals ``gaia_work`` entries, and these
+Ingest itself submits nothing: S-3 (SI-56) submission is a
+separate explicit step in si.gaia.seam_submit, so nothing in
+this file's flows journals ``gaia_work`` entries, and these
 tests assert that absence rather than assuming it.
 
 No-auth / loopback honesty: the seam service, like B-5, has
@@ -358,7 +359,7 @@ def test_reject_creates_no_submission_artefacts(mini):
     journal = _open(bundle_dir)
     try:
         experiences = journal.backend.find("experiences")
-        # gaia_work is S-3's kind, unbuilt: none anywhere.
+        # gaia_work is S-3's kind: ingest journals none.
         assert not [r for r in experiences
                     if r.get("kind") == "gaia_work"]
         assert not [r for r in experiences
