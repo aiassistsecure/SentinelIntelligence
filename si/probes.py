@@ -287,6 +287,11 @@ class ProbeContext:
         self.tool_task_seq: int | None = None
         self.tool_cycles_used = 0
         self.tool_result_bytes_used = 0
+        # SI-51 (SI-50 §6/§7): queue-pricing context, set per batch
+        # by the task loop (see si.gaia.context.ToolContext).
+        self.tool_queue_batch_seq: int | None = None
+        self.tool_journal_tip: int | None = None
+        self.tool_task_intent_seqs = None
         self._status: tuple[bool, str] | None = None
         self._artifact: dict | None = None
         self._artifact_hash: str | None = None

@@ -51,3 +51,15 @@ class ToolContext:
     tool_cycles_used: int = 0
     tool_result_bytes_used: int = 0
     tool_live_execution: bool = False
+    # SI-51 (SI-50 §6/§7): queue-pricing context, set by the task
+    # loop per batch — ``tool_queue_batch_seq`` (the batch entry's
+    # journal seq, priced into the report's queue block),
+    # ``tool_journal_tip`` (the journal tip when the batch was
+    # proposed; a depends_on seq beyond it is not yet journaled),
+    # and ``tool_task_intent_seqs`` (the journal seqs of the task's
+    # already-journaled intents; a depends_on seq outside it is
+    # outside the task). All None outside a queue batch, in which
+    # case a declared depends_on fails closed at check 2 (§6.2).
+    tool_queue_batch_seq: int | None = None
+    tool_journal_tip: int | None = None
+    tool_task_intent_seqs: object = None

@@ -228,13 +228,23 @@ class Executor:
 
     # -- public: execute one journaled intent ------------------------------
     def execute_journaled(self, edit_id: str,
-                          expected_effective_class: str | None = None) -> dict:
+                          expected_effective_class: str | None = None,
+                          claim_intent_seq: int | None = None,
+                          claim_seq: int | None = None) -> dict:
         """Execute the journaled intent ``edit_id``; journal and
         return its §4.4 execution record.
 
         Refusals are executions that did not happen, journaled as
         such (status ``refused``) — a caller can never mistake a
         refusal for a run, and the journal always answers why.
+
+        SI-51 (SI-50 §5.3): when the caller is the queue drainer it
+        passes its journaled claim (``claim_intent_seq`` /
+        ``claim_seq``); the journaled intent's own sequence must be
+        the sequence the claim names, or execution is refused as a
+        claim/intent mismatch and the refusal is journaled — the
+        claim is the executor's ticket, and a ticket for a
+        different intent admits nothing.
         """
         started = time.perf_counter()
         rows = self.journal.backend.find(
@@ -252,7 +262,10 @@ class Executor:
             parents=list(intent_dict.get("parents") or []),
             source_seqs=list(intent_dict.get("source_seqs") or []),
             tool=intent_dict.get("tool", ""),
-            args=dict(intent_dict.get("args") or {}))
+            args=dict(intent_dict.get("args") or {}),
+            ordering_key=intent_dict.get("ordering_key"),
+            depends_on=list(intent_dict.get("depends_on") or []),
+            barrier=bool(intent_dict.get("barrier") or False))
         spec = get_tool(intent.tool)
 
         def _label() -> str:
@@ -285,6 +298,19 @@ class Executor:
             record_execution_outcome(self.journal, intent, edit_id, record)
             self.journal.set_edit_result(edit_id, "refused")
             return record
+
+        # The claim ticket (SI-50 §5.3), checked before anything
+        # else: the claim must name THIS journaled intent, at its
+        # journaled sequence.
+        if claim_intent_seq is not None \
+                and row.get("seq") != claim_intent_seq:
+            return refuse(
+                f"claim/intent mismatch: claim {claim_seq} names "
+                f"intent seq {claim_intent_seq}, but edit {edit_id} "
+                f"is journaled at seq {row.get('seq')} — execution "
+                "refused; a claim admits only the intent it names "
+                "(SI-50 §5.3)",
+                effective=expected_effective_class)
 
         # The journaled-args rule (RFC §9.2), step by step.
         if row.get("gate_verdict") != "ADMIT":

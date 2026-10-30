@@ -497,15 +497,19 @@ def cmd_task(args) -> int:
         print(f"si: error: cannot read script {args.script!r}: {e}",
               file=sys.stderr)
         return 1
-    if not isinstance(script, list) \
-            or not all(isinstance(d, dict) for d in script):
+    if not isinstance(script, list) or not all(
+            isinstance(d, dict)
+            or (isinstance(d, list)
+                and all(isinstance(m, dict) for m in d))
+            for d in script):
         print("si: error: script file must contain a JSON array of "
-              "intent objects", file=sys.stderr)
+              "intent objects (a nested array is one SI-51 batch)",
+              file=sys.stderr)
         return 1
-    intents = []
-    for d in script:
+
+    def _intent_from(d):
         kind = d.get("kind", "tool")
-        intents.append(Intent(
+        return Intent(
             kind=kind,
             reason=d.get("reason", ""),
             parents=list(d.get("parents") or []),
@@ -513,7 +517,20 @@ def cmd_task(args) -> int:
             tool=d.get("tool", "") if kind == "tool" else "",
             args=dict(d.get("args") or {}) if kind == "tool" else {},
             record=dict(d.get("record") or {}) if kind == "memory"
-            else {}))
+            else {},
+            ordering_key=d.get("ordering_key")
+            if kind == "tool" else None,
+            depends_on=list(d.get("depends_on") or [])
+            if kind == "tool" else [],
+            barrier=bool(d.get("barrier") or False)
+            if kind == "tool" else False)
+
+    intents = []
+    for d in script:
+        if isinstance(d, list):
+            intents.append([_intent_from(m) for m in d])
+        else:
+            intents.append(_intent_from(d))
     res = run_task(bundle_dir, intents, args.instruction,
                    work_root=args.root, cycles=args.cycles,
                    operator=args.operator or "operator")

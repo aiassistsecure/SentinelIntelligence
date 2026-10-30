@@ -43,6 +43,19 @@ stream (ids stay journal seqs; gaps are filtered-out seqs) —
 plus :mod:`si.gaia.events_client`, the stdlib-only reference
 consumer (``si gaia-events``).
 
+SI-51 (the SI-50 spec's Q-1, the queue-drain core) turns the
+journal into the work queue: :mod:`si.gaia.queue` journals the
+queue's entry kinds (batch / claim / recovery re-claim / refusal
+/ operator stop / resume) and folds queue state from the journal
+alone, and :mod:`si.gaia.drain` admits batched proposals
+(per-member verdicts, gate-priced ordering keys and depends_on)
+and drains them serially — concurrency fixed at 1 by policy in
+Q-1 — under claim-before-execute through the B-2/B-3 executor,
+returning one batched perception per sync point. See
+docs/SI-51-q1-queue-core.md for exactly what is live and what
+is not (Q-2 concurrency and barrier/depends_on satisfaction
+semantics, Q-3 outcome-unknown recovery, Q-4 measurement).
+
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import
 them without a cycle; :mod:`si.gaia.shadow`, :mod:`si.gaia.corpus`,
