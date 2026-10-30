@@ -78,6 +78,15 @@ carries the whole trail — ``journal_query`` and the provenance
 walk work on the far side exactly as on the near side (proven by
 the B-3 test that copies a bundle after a task and queries the
 copy). Nothing in this module needs the bundle's original path.
+
+B-5 (SI-46) extension, additive only: :func:`run_task` and
+:func:`record_task_entry` accept an optional ``submitter`` /
+``submitted_via`` pair. When a task arrives through the B-5
+service adapter (:mod:`si.gaia.service`), the submitter identity
+is journaled on the task entry as a mandatory provenance field
+(RFC §12.5(a) — no identity, no task), labelled
+:data:`SUBMITTER_IDENTITY_LABEL`: asserted, never authenticated.
+Operator-opened tasks pass neither field and are unchanged.
 """
 from __future__ import annotations
 
@@ -110,9 +119,26 @@ _INTEGRITY_MARKERS = (
 )
 
 
+#: Label carried on every service-submitted task entry (SI-46/B-5):
+#: the submitter identity is a journaled provenance field — who the
+#: submission CLAIMS to be from — and is not authentication. No
+#: credential is checked by B-3's machinery or by B-5's adapter;
+#: the precedent is ``si admit``'s --operator (an attribution /
+#: authorization record in the journal, NOT cryptographic
+#: authentication). Single source so the journal record, the
+#: service response, and the provenance trail can never drift.
+SUBMITTER_IDENTITY_LABEL = (
+    "submitter identity is an asserted provenance field, journaled "
+    "verbatim — it is NOT authentication: no credential was "
+    "checked, and the identity is not verified (SI-41 §12.5(a); "
+    "the si admit --operator precedent)")
+
+
 def record_task_entry(journal, instruction: str, work_root: str,
                       budgets: dict | None = None,
-                      operator: str = "operator") -> dict:
+                      operator: str = "operator",
+                      submitter: str | None = None,
+                      submitted_via: str | None = None) -> dict:
     """Journal a real operator task entry (RFC §10.1).
 
     Same shape as B-1's scripted fixture — kind ``task`` in
@@ -121,6 +147,14 @@ def record_task_entry(journal, instruction: str, work_root: str,
     entry a real task opens with. Returns ``{"seq", "ref",
     "row_id"}`` where ``ref`` is ``task@<seq>``, the parent ref
     every step in the task chains to (gate check 5, §5.2).
+
+    B-5 (SI-46) adds two optional provenance fields, present only
+    when a service submitted the task: ``submitter`` (mandatory
+    on the B-5 surface — no identity, no task) and
+    ``submitted_via``, plus :data:`SUBMITTER_IDENTITY_LABEL`
+    stating what the identity is and is not. Operator-opened
+    tasks (``si task``) pass neither and their entries are
+    unchanged.
     """
     record = {
         "kind": "task",
@@ -130,6 +164,10 @@ def record_task_entry(journal, instruction: str, work_root: str,
         "work_root": work_root,
         "budgets": dict(budgets or {}),
     }
+    if submitter is not None:
+        record["submitter"] = submitter
+        record["submitted_via"] = submitted_via
+        record["submitter_identity_label"] = SUBMITTER_IDENTITY_LABEL
     row_id = journal.record_experience("task", record, "")
     rows = journal.backend.find("experiences", filter={"kind": "task"},
                                 sort="-seq", limit=1)
@@ -238,7 +276,9 @@ def _run_completion(journal, gate, ctx, intent: Intent) -> dict:
 def run_task(bundle_dir: str, proposer, instruction: str,
              work_root: str | None = None, cycles: int | None = None,
              operator: str = "operator",
-             policy: dict | None = None) -> dict:
+             policy: dict | None = None,
+             submitter: str | None = None,
+             submitted_via: str | None = None) -> dict:
     """Run one operator task against a bundle on disk (§10).
 
     Opens (journals) the task before any cycle, then runs serial
@@ -297,7 +337,9 @@ def run_task(bundle_dir: str, proposer, instruction: str,
 
         # The task is journaled BEFORE any cycle runs (§10.1).
         task = record_task_entry(journal, instruction, root,
-                                 budgets=budgets, operator=operator)
+                                 budgets=budgets, operator=operator,
+                                 submitter=submitter,
+                                 submitted_via=submitted_via)
         ctx.tool_task_seq = task["seq"]
 
         is_mind = hasattr(proposer, "perceive") \
