@@ -31,7 +31,12 @@ returns the result with its provenance trail serialised from
 the journal. Exposure through the Hearth gateway remains
 proposal H-2, not built. Demo bundles keep shadow
 behaviour throughout — claiming otherwise would be fabrication
-(RFC §15).
+(RFC §15). SI-47 adds :mod:`si.gaia.events`: the SSE event
+spine — every journal row serialised as a server-sent event
+whose id IS the journal seq (Last-Event-ID = journal seq, so
+replay and live stream are one mechanism), exposed as
+``GET /events`` on the B-5 service; the live tail is
+poll-the-journal, labelled as polling.
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import
