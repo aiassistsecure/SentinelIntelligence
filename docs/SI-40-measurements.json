@@ -1,0 +1,83 @@
+{
+ "checkpoint": "/home/hatch/workspace/smollm2-360m-safetensors",
+ "bundle": "/home/hatch/workspace/sentinel-smollm2.si",
+ "token_ids": [
+  504,
+  3575,
+  282,
+  4649,
+  314
+ ],
+ "phases": {
+  "assemble:bf16": {
+   "phase": "assemble:bf16",
+   "assemblies_held": 1,
+   "assembled_bytes": 723642240,
+   "wall_s": 0.023903471999801695,
+   "parameters": 361821120,
+   "peak_rss_bytes": 250638336,
+   "subprocess_wall_s": 4.664590737000253
+  },
+  "assemble:float32": {
+   "phase": "assemble:float32",
+   "assemblies_held": 1,
+   "assembled_bytes": 1447284480,
+   "wall_s": 2.1075066259982123,
+   "parameters": 361821120,
+   "peak_rss_bytes": 2408792064,
+   "subprocess_wall_s": 8.650389807000465
+  },
+  "assemble:float32_pair": {
+   "phase": "assemble:float32_pair",
+   "assemblies_held": 2,
+   "assembled_bytes": 2894568960,
+   "wall_s": 5.5270644149968575,
+   "parameters": 361821120,
+   "peak_rss_bytes": 3857412096,
+   "subprocess_wall_s": 10.54449949699847
+  },
+  "assemble:float64": {
+   "phase": "assemble:float64",
+   "assemblies_held": 1,
+   "assembled_bytes": 2894568960,
+   "wall_s": 6.124031006998848,
+   "parameters": 361821120,
+   "peak_rss_bytes": 3856203776,
+   "subprocess_wall_s": 15.975078185998427
+  },
+  "forward": {
+   "phase": "forward",
+   "wall_s": 2.712628034998488,
+   "sequence_length": 5,
+   "logits_shape": [
+    5,
+    49152
+   ],
+   "logits_checksum": 521539.89322682284,
+   "last_position_argmax": 7042,
+   "peak_rss_bytes": 2408947712,
+   "subprocess_wall_s": 12.393348745001276
+  },
+  "verify_compare": {
+   "phase": "verify_compare",
+   "compare": {
+    "max_abs_diff": 0.0,
+    "first_differing_tensor": null,
+    "tensors_compared": 290
+   },
+   "wall_s": 6.975817476999509,
+   "assembled_bytes": 2894568960,
+   "peak_rss_bytes": 3857244160,
+   "subprocess_wall_s": 19.387136100001953
+  },
+  "verify_bundle": {
+   "phase": "verify_bundle",
+   "wall_s": 7.085242911998648,
+   "stored_bytes": 0,
+   "referenced_bytes": 723642240,
+   "tensor_count": 290,
+   "peak_rss_bytes": 52154368,
+   "subprocess_wall_s": 8.137716285000351
+  }
+ }
+}
