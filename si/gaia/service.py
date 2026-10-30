@@ -344,13 +344,15 @@ def build_provenance_trail(journal, task_seq: int) -> dict:
                 changed = True
 
     # SI-51 (SI-50 §5): the task's queue entries — batch entries,
-    # claims, recovery re-claims, claim refusals, operator stops
-    # and resumes — are part of the task's provenance: they are
-    # how its intents were claimed before they ran. Collected by
+    # claims, recovery re-claims, claim refusals, skips, operator
+    # stops and resumes — are part of the task's provenance: they
+    # are how its intents were claimed before they ran (or, for
+    # skips, why they never ran). Collected by
     # the record's own task_seq, in journal order (the same rule
     # the SSE spine's task filter uses, si.gaia.events).
     queue_kinds = ("queue_batch", "queue_claim",
                    "queue_recovery_reclaim", "queue_refusal",
+                   "queue_skip",
                    "queue_stop", "queue_resume")
     queue_rows = [r for r in outcomes
                   if r.get("kind") in queue_kinds

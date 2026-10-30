@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -143,7 +144,11 @@ class EmbeddedBackend(JournalBackend):
     def __init__(self, journal_dir: str):
         os.makedirs(journal_dir, exist_ok=True)
         self.path = os.path.join(journal_dir, "journal.sqlite3")
-        self._conn = sqlite3.connect(self.path)
+        # check_same_thread=False + _db_lock: this backend may be shared
+        # across the Q-2 read pool's worker threads; every operation is
+        # serialized through the lock, so the single connection stays safe.
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._db_lock = threading.RLock()
         self._conn.execute("PRAGMA journal_mode=WAL")
 
     def _table(self, collection: str) -> str:
@@ -163,62 +168,65 @@ class EmbeddedBackend(JournalBackend):
         return collection
 
     def insert(self, collection: str, doc: dict) -> str:
-        table = self._table(collection)
-        doc = _jsonable(doc)
-        cur = self._conn.execute(
-            f'INSERT INTO "{table}" ("seq","prev_hash","entry_hash","doc") VALUES (?,?,?,?)',
-            (doc.get("seq"), doc.get("prev_hash"), doc.get("entry_hash"),
-             json.dumps(doc, sort_keys=True, separators=(",", ":"))),
-        )
-        self._conn.commit()
-        return str(cur.lastrowid)
+        with self._db_lock:
+            table = self._table(collection)
+            doc = _jsonable(doc)
+            cur = self._conn.execute(
+                f'INSERT INTO "{table}" ("seq","prev_hash","entry_hash","doc") VALUES (?,?,?,?)',
+                (doc.get("seq"), doc.get("prev_hash"), doc.get("entry_hash"),
+                 json.dumps(doc, sort_keys=True, separators=(",", ":"))),
+            )
+            self._conn.commit()
+            return str(cur.lastrowid)
 
     def update(self, collection: str, row_id: str, doc: dict) -> None:
-        table = self._table(collection)
-        doc = _jsonable(doc)
-        self._conn.execute(
-            f'UPDATE "{table}" SET "seq"=?, "prev_hash"=?, "entry_hash"=?, "doc"=? WHERE "_id"=?',
-            (doc.get("seq"), doc.get("prev_hash"), doc.get("entry_hash"),
-             json.dumps(doc, sort_keys=True, separators=(",", ":")),
-             int(row_id)),
-        )
-        self._conn.commit()
+        with self._db_lock:
+            table = self._table(collection)
+            doc = _jsonable(doc)
+            self._conn.execute(
+                f'UPDATE "{table}" SET "seq"=?, "prev_hash"=?, "entry_hash"=?, "doc"=? WHERE "_id"=?',
+                (doc.get("seq"), doc.get("prev_hash"), doc.get("entry_hash"),
+                 json.dumps(doc, sort_keys=True, separators=(",", ":")),
+                 int(row_id)),
+            )
+            self._conn.commit()
 
     def find(self, collection: str, filter: dict | None = None,
              sort: list | str | None = None, limit: int | None = None) -> list:
-        table = self._table(collection)
-        where, params = [], []
-        for key, value in (filter or {}).items():
-            if key in ("_id", "seq", "prev_hash", "entry_hash"):
-                where.append(f'"{key}" = ?')
-                params.append(int(value) if key in ("_id", "seq") else value)
-            else:
-                where.append("json_extract(\"doc\", ?) = ?")
-                params.append("$." + key)
-                params.append(value)
-        order = ""
-        norm_sort = self._normalize_sort(sort)
-        if norm_sort:
-            parts = []
-            for field, desc in norm_sort:
-                if field in ("_id", "seq", "prev_hash", "entry_hash"):
-                    parts.append(f'"{field}" {"DESC" if desc else "ASC"}')
+        with self._db_lock:
+            table = self._table(collection)
+            where, params = [], []
+            for key, value in (filter or {}).items():
+                if key in ("_id", "seq", "prev_hash", "entry_hash"):
+                    where.append(f'"{key}" = ?')
+                    params.append(int(value) if key in ("_id", "seq") else value)
                 else:
-                    parts.append(
-                        'json_extract("doc", \'$.' + field + f"') {'DESC' if desc else 'ASC'}"
-                    )
-            order = " ORDER BY " + ", ".join(parts)
-        sql = f'SELECT "_id","doc" FROM "{table}"'
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += order
-        if limit is not None:
-            sql += f" LIMIT {int(limit)}"
-        rows = []
-        for row_id, doc_text in self._conn.execute(sql, params):
-            doc = json.loads(doc_text)
-            rows.append({"_id": str(row_id), **doc})
-        return rows
+                    where.append("json_extract(\"doc\", ?) = ?")
+                    params.append("$." + key)
+                    params.append(value)
+            order = ""
+            norm_sort = self._normalize_sort(sort)
+            if norm_sort:
+                parts = []
+                for field, desc in norm_sort:
+                    if field in ("_id", "seq", "prev_hash", "entry_hash"):
+                        parts.append(f'"{field}" {"DESC" if desc else "ASC"}')
+                    else:
+                        parts.append(
+                            'json_extract("doc", \'$.' + field + f"') {'DESC' if desc else 'ASC'}"
+                        )
+                order = " ORDER BY " + ", ".join(parts)
+            sql = f'SELECT "_id","doc" FROM "{table}"'
+            if where:
+                sql += " WHERE " + " AND ".join(where)
+            sql += order
+            if limit is not None:
+                sql += f" LIMIT {int(limit)}"
+            rows = []
+            for row_id, doc_text in self._conn.execute(sql, params):
+                doc = json.loads(doc_text)
+                rows.append({"_id": str(row_id), **doc})
+            return rows
 
     @staticmethod
     def _normalize_sort(sort):
@@ -241,14 +249,24 @@ class EmbeddedBackend(JournalBackend):
         return self._conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._db_lock:
+            self._conn.close()
 
 
 class Journal:
-    """The mind's memory: every self-edit recorded, hash-chained, sequenced."""
+    """The mind's memory: every self-edit recorded, hash-chained, sequenced.
+
+    Thread-safety: journal appends are serialized by design (SI-50 §8.3:
+    outcome journaling is serial even when executions overlap). ``_lock``
+    enforces that serialization, making a Journal safe to share across
+    the Q-2 read pool's worker threads on the embedded backend.
+    """
 
     def __init__(self, backend: JournalBackend):
         self.backend = backend
+        # Serializes seq allocation + hash-chain linking + backend insert
+        # as one atomic unit (see class docstring / SI-50 §8.3).
+        self._lock = threading.RLock()
         self._seq = 0
         self._last_hash = GENESIS_PREV
         self._edit_n = 0
@@ -286,15 +304,19 @@ class Journal:
 
     # -- core append path: nothing bypasses seq/chain ----------------------
     def _append(self, collection: str, payload: dict) -> dict:
-        payload = _jsonable(payload)
-        hash_payload = {k: v for k, v in payload.items() if k not in MUTABLE_KEYS}
-        seq = self.next_seq()
-        entry_hash = _entry_hash(self._last_hash, seq, hash_payload)
-        doc = {"ts": _utcnow(), **payload,
-               "seq": seq, "prev_hash": self._last_hash, "entry_hash": entry_hash}
-        row_id = self.backend.insert(collection, doc)
-        self._last_hash = entry_hash
-        return {"_id": row_id, "seq": seq, "entry_hash": entry_hash}
+        # Whole body under _lock: seq allocation + hash chain + backend
+        # insert must be atomic, so concurrent outcome appends serialize
+        # and the hash chain never forks / seqs never duplicate.
+        with self._lock:
+            payload = _jsonable(payload)
+            hash_payload = {k: v for k, v in payload.items() if k not in MUTABLE_KEYS}
+            seq = self.next_seq()
+            entry_hash = _entry_hash(self._last_hash, seq, hash_payload)
+            doc = {"ts": _utcnow(), **payload,
+                   "seq": seq, "prev_hash": self._last_hash, "entry_hash": entry_hash}
+            row_id = self.backend.insert(collection, doc)
+            self._last_hash = entry_hash
+            return {"_id": row_id, "seq": seq, "entry_hash": entry_hash}
 
     def _chain_payload(self, row: dict) -> dict:
         return {k: v for k, v in row.items()
@@ -326,31 +348,34 @@ class Journal:
                          gate_verdict: str, gate_report: dict,
                          operator: str | None = None) -> str:
         """Journal a proposed self-write. Returns the stable edit id."""
-        self._edit_n += 1
-        edit_id = f"se_{self._edit_n:04d}"
-        self._append("self_edits", {
-            "edit_id": edit_id,
-            "kind": kind,
-            "intent": intent,
-            "reason": reason,
-            "gate_verdict": gate_verdict,
-            "gate_report": gate_report,
-            "operator": operator,
-            "result": "pending",
-            "delta_id": None,
-        })
-        return edit_id
+        # RLock is re-entrant: _append re-acquires it safely.
+        with self._lock:
+            self._edit_n += 1
+            edit_id = f"se_{self._edit_n:04d}"
+            self._append("self_edits", {
+                "edit_id": edit_id,
+                "kind": kind,
+                "intent": intent,
+                "reason": reason,
+                "gate_verdict": gate_verdict,
+                "gate_report": gate_report,
+                "operator": operator,
+                "result": "pending",
+                "delta_id": None,
+            })
+            return edit_id
 
     def set_edit_result(self, edit_id: str, result: str, delta_id: str | None = None) -> None:
-        rows = self.backend.find("self_edits", filter={"edit_id": edit_id}, limit=1)
-        if not rows:
-            raise KeyError(f"unknown edit_id {edit_id}")
-        row = rows[0]
-        row_id = row.pop("_id")
-        row["result"] = result
-        if delta_id is not None:
-            row["delta_id"] = delta_id
-        self.backend.update("self_edits", row_id, row)
+        with self._lock:
+            rows = self.backend.find("self_edits", filter={"edit_id": edit_id}, limit=1)
+            if not rows:
+                raise KeyError(f"unknown edit_id {edit_id}")
+            row = rows[0]
+            row_id = row.pop("_id")
+            row["result"] = result
+            if delta_id is not None:
+                row["delta_id"] = delta_id
+            self.backend.update("self_edits", row_id, row)
 
     # -- deltas ------------------------------------------------------------
     def record_delta(self, delta_id: str, parent: str, blob: str, byte_len: int,
@@ -405,13 +430,14 @@ class Journal:
         return res["_id"]
 
     def set_delta_status(self, delta_id: str, status: str) -> None:
-        rows = self.backend.find("deltas", filter={"id": delta_id}, limit=1)
-        if not rows:
-            raise KeyError(f"unknown delta_id {delta_id}")
-        row = rows[0]
-        row_id = row.pop("_id")
-        row["status"] = status
-        self.backend.update("deltas", row_id, row)
+        with self._lock:
+            rows = self.backend.find("deltas", filter={"id": delta_id}, limit=1)
+            if not rows:
+                raise KeyError(f"unknown delta_id {delta_id}")
+            row = rows[0]
+            row_id = row.pop("_id")
+            row["status"] = status
+            self.backend.update("deltas", row_id, row)
 
     # -- checkpoints -------------------------------------------------------
     def checkpoint(self, head: str, manifest_hash: str, note: str, **extra) -> dict:

@@ -49,12 +49,15 @@ queue's entry kinds (batch / claim / recovery re-claim / refusal
 / operator stop / resume) and folds queue state from the journal
 alone, and :mod:`si.gaia.drain` admits batched proposals
 (per-member verdicts, gate-priced ordering keys and depends_on)
-and drains them serially — concurrency fixed at 1 by policy in
-Q-1 — under claim-before-execute through the B-2/B-3 executor,
-returning one batched perception per sync point. See
-docs/SI-51-q1-queue-core.md for exactly what is live and what
-is not (Q-2 concurrency and barrier/depends_on satisfaction
-semantics, Q-3 outcome-unknown recovery, Q-4 measurement).
+and drains them under claim-before-execute through the
+B-2/B-3 executor, returning one batched perception per sync
+point. SI-52 (Q-2) adds depends_on requirement semantics with
+journaled skips, barrier sync points, claim-time residence
+refusals, and the bounded read pool (unkeyed reads concurrent,
+default bound 4; keyed and state-changing work serial). See
+docs/SI-51-q1-queue-core.md and
+docs/SI-52-q2-concurrency-deps.md for exactly what is live and
+what is not (Q-3 outcome-unknown recovery, Q-4 measurement).
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import

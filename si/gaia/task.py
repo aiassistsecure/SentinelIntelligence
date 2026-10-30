@@ -94,18 +94,23 @@ proposal is now a BATCH (§6 — a list of intents; a lone intent is
 the degenerate batch of one, so every B-3 behaviour above is
 preserved for singleton proposals). Tool members are admitted —
 gated and journaled, per-member verdicts — into the task's
-queue, and a serial drainer (si/gaia/drain.py, concurrency fixed
-at 1 by policy in Q-1) claims and executes them under
-claim-before-execute (§5.3) before ONE batched perception
-returns to the proposer (§10). The stop rules are §12.4's: budget
-and reject-streak refusals halt proposing, not draining; an
-escalation halts proposing and the queued members drain; an
-integrity failure freezes the drain. Q-1's stated limits:
-depends_on is parsed, priced, and journaled, and its
-satisfaction is treated as sequence order (full barrier /
-requirement semantics are Q-2); concurrency is 1 (Q-2);
-write/execute outcome-unknown recovery is Q-3; all queue
-performance is UNMEASURED (Q-4). See docs/SI-51-q1-queue-core.md.
+queue, and the drainer (si/gaia/drain.py) claims and executes
+them under claim-before-execute (§5.3) before ONE batched
+perception returns to the proposer (§10). The stop rules are
+§12.4's: budget and reject-streak refusals halt proposing, not
+draining; an escalation halts proposing and the queued members
+drain; an integrity failure freezes the drain.
+
+SI-52 (SI-50 §16 Q-2) grows the same drainer: depends_on
+requirement semantics (outcome vs success, with journaled
+skips), barrier as a real perception sync point (§10.2
+point 2), claim-time residence refusals (§12.2), and the
+bounded read pool (§8 — unkeyed reads concurrent up to
+``queue_max_concurrent_reads``, default 4; everything keyed
+or state-changing still serial). Q-1's remaining stated
+limits stand: write/execute outcome-unknown recovery is Q-3;
+all queue performance is UNMEASURED (Q-4). See
+docs/SI-51-q1-queue-core.md and docs/SI-52-q2-concurrency-deps.md.
 """
 from __future__ import annotations
 

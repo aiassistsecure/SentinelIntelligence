@@ -270,8 +270,9 @@ class Intent:
     # earlier journal sequences in the same task, each an int (an
     # ``outcome`` requirement) or {"seq": int, "requirement":
     # "outcome"|"success"} (§7.3 — priced by check 2, §6.2);
-    # ``barrier`` declares a perception sync point (§10.2 — parsed
-    # and journaled in Q-1; barrier sync semantics land in Q-2).
+    # ``barrier`` declares a perception sync point (§10.2 —
+    # parsed and journaled in Q-1; a live sync point since
+    # SI-52/Q-2).
     # Empty / ignored for every other kind.
     ordering_key: str | None = None
     depends_on: list = field(default_factory=list)
@@ -1034,9 +1035,10 @@ class Gate:
         sub("depends_on", not dep_problems,
             "; ".join(dep_problems) if dep_problems else
             (f"{len(deps)} dependency declaration(s) priced: "
-             f"{deps!r} (SI-50 §7.3; Q-1 journals them and treats "
-             "satisfaction as sequence order — requirement "
-             "semantics land in Q-2)"
+             f"{deps!r} (SI-50 §7.3; priced here, journaled "
+             "with the verdict, and enforced by the drainer "
+             "with full outcome/success requirement semantics "
+             "since SI-52/Q-2)"
              if deps else
              "no dependencies declared (SI-50 §7.3)"))
 
