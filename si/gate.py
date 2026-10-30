@@ -106,6 +106,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from si.gaia.policy import resolve_tool_policy
+from si.gaia.registry import LIVE_TOOLS_B2 as _LIVE_TOOLS_B2
 from si.gaia.registry import get_tool as _get_tool_spec
 from si.gaia.registry import validate_args as _validate_tool_args
 from si.transformer_delta import (
@@ -121,6 +122,30 @@ from si.transformer_delta import (
 #: no tool intent executes; a report that claimed otherwise would be
 #: fabrication. B-2/B-3 replace this label when execution lands.
 TOOL_SHADOW_EXECUTION = "not-evaluated — shadow mode"
+
+#: SI-43 (SI-41 RFC §15 B-2): the execution labels for LIVE contexts
+#: (a context carrying ``tool_live_execution`` — the miniature loop
+#: path only; every other context keeps TOOL_SHADOW_EXECUTION
+#: byte-for-byte). An ADMIT under a live context authorises the
+#: B-2 executor (si.gaia.executor) for the read/write live set.
+TOOL_LIVE_EXECUTION = (
+    "live execution authorised — SI-43/B-2 (miniature-scoped, "
+    "read/write classes)")
+#: A passing intent outside B-2's live scope on a live context:
+#: execute-class tools (B-3) and external-effective intents (B-2's
+#: live scope is work-root-contained) hold at ESCALATE.
+TOOL_B2_NOT_LIVE_EXECUTION = (
+    "not-evaluated — outside SI-43/B-2 live scope (execution tools "
+    "land in B-3; external effects are held at ESCALATE in B-2)")
+#: A passing intent whose class policy rule is ``escalate``, on a
+#: live context: escalated by the operator's policy dial (§7.3).
+TOOL_LIVE_ESCALATED_EXECUTION = (
+    "not-evaluated — escalated by class policy (SI-43/B-2)")
+#: A rejected intent on a live context: nothing executed because
+#: the gate refused it — distinct from shadow, where nothing
+#: executed because no executor existed for its path.
+TOOL_LIVE_REJECTED_EXECUTION = (
+    "not executed — rejected at gate (SI-43/B-2)")
 
 #: SI-41 RFC §5.3: the detail recorded on checks 3/4 for tool intents.
 TOOL_PROBES_NOT_APPLICABLE = (
@@ -263,8 +288,10 @@ class GateReport:
     verdict: str  # ADMIT | REJECT | ESCALATE
     checks: list  # list[CheckResult]
     # SI-42: for tool reports only, the execution outcome the report
-    # records — in B-1 always TOOL_SHADOW_EXECUTION. None for every
-    # other kind, so their dict form is byte-for-byte unchanged.
+    # records — in B-1 always TOOL_SHADOW_EXECUTION; SI-43/B-2 adds
+    # the live-context labels (TOOL_LIVE_EXECUTION and siblings) for
+    # the miniature path only. None for every other kind, so their
+    # dict form is byte-for-byte unchanged.
     execution: str | None = None
 
     def to_dict(self) -> dict:
@@ -357,7 +384,7 @@ class Gate:
                 "wellformed", False,
                 "reason is required and missing: a mind that can't say why "
                 "it's changing itself isn't ready to", None)],
-                execution=(TOOL_SHADOW_EXECUTION
+                execution=(self._tool_rejected_execution(ctx)
                            if intent.kind == "tool" else None))
 
         checks.append(self._constitution_check(intent))
@@ -537,7 +564,15 @@ class Gate:
             measured=float(len(intent.parents) + len(intent.source_seqs)),
         )
 
-    # -- tool intents (SI-42, SI-41 RFC §5; shadow, B-1) -------------------
+    # -- tool intents (SI-42, SI-41 RFC §5; SI-43 B-2 live scope) -----------
+    @staticmethod
+    def _tool_rejected_execution(ctx) -> str:
+        """The execution label for a tool REJECT: the live label on
+        a live context, B-1's shadow label everywhere else."""
+        if ctx is not None and getattr(ctx, "tool_live_execution", False):
+            return TOOL_LIVE_REJECTED_EXECUTION
+        return TOOL_SHADOW_EXECUTION
+
     def _tool_policy(self) -> dict:
         """Resolve the §6.2 tool policy keys, fail closed (§6.2)."""
         return resolve_tool_policy(self.policy)
@@ -612,19 +647,38 @@ class Gate:
 
     def _evaluate_tool(self, intent: Intent, checks: list,
                        ctx) -> GateReport:
-        """RFC §5's mapping + B-1's shadow discipline (§15).
+        """RFC §5's mapping, B-1's shadow discipline (§15), and
+        SI-43/B-2's live scope.
 
         Five checks, in order. Checks 1/2/5 are decisive; checks 3/4
         are recorded not-applicable per §5.3 (labelled, measured
-        None). Any decisive failure REJECTs. Otherwise the verdict
-        is ESCALATE — by class policy when the effective class's
-        rule is ``escalate``, and in every other passing case by
-        B-1 shadow discipline: no executor exists yet, so an ADMIT
-        would claim an execution path that has not been built, let
-        alone measured. Every tool report records execution as
-        :data:`TOOL_SHADOW_EXECUTION`.
+        None). Any decisive failure REJECTs (a ``deny`` class rule
+        fails check 2, so it lands here too).
+
+        On a NON-live context (every context that does not carry
+        ``tool_live_execution`` — the demo loop, the B-1 corpus,
+        scripted contexts) the verdict discipline is B-1's exactly:
+        every passing intent ESCALATEs and records
+        :data:`TOOL_SHADOW_EXECUTION`, byte-for-byte as SI-42 built
+        it — the demo path is priced separately and B-2 does not
+        flip it (RFC §15 B-2).
+
+        On a LIVE context (the miniature loop path only), §5.4's
+        algebra becomes real for B-2's live set:
+
+        - tool in the B-2 live set (§8.1/§8.2 read/write tools),
+          effective class read/write, class rule ``admit``
+          -> **ADMIT**, execution :data:`TOOL_LIVE_EXECUTION` —
+          the B-2 executor may run the journaled intent;
+        - class rule ``escalate`` -> ESCALATE by class policy;
+        - anything else that passes — execute-class tools (B-3)
+          and external-effective intents (B-2's live scope is
+          work-root-contained, so external holds at ESCALATE in
+          this slice even under an ``external: admit`` policy —
+          a slice-scoped hold recorded in the SI-43 slice doc,
+          not a §7.3 cage) -> ESCALATE, not-evaluated.
         """
-        safety, _info = self._tool_safety_check(intent, ctx)
+        safety, info = self._tool_safety_check(intent, ctx)
         checks.append(safety)
         for name in ("identity_continuity", "capability_floor"):
             checks.append(CheckResult(
@@ -634,11 +688,28 @@ class Gate:
         decisive = [c for c in checks
                     if c.name not in ("identity_continuity",
                                       "capability_floor")]
+        live = ctx is not None and bool(
+            getattr(ctx, "tool_live_execution", False))
         if not all(c.passed for c in decisive):
-            return GateReport("REJECT", checks,
+            return GateReport(
+                "REJECT", checks,
+                execution=(TOOL_LIVE_REJECTED_EXECUTION if live
+                           else TOOL_SHADOW_EXECUTION))
+        if not live:
+            return GateReport("ESCALATE", checks,
                               execution=TOOL_SHADOW_EXECUTION)
+        spec = info.get("spec")
+        effective = info.get("effective_class")
+        rule = info.get("class_rule")
+        if spec is not None and spec.name in _LIVE_TOOLS_B2 \
+                and effective in ("read", "write") and rule == "admit":
+            return GateReport("ADMIT", checks,
+                              execution=TOOL_LIVE_EXECUTION)
+        if rule == "escalate":
+            return GateReport("ESCALATE", checks,
+                              execution=TOOL_LIVE_ESCALATED_EXECUTION)
         return GateReport("ESCALATE", checks,
-                          execution=TOOL_SHADOW_EXECUTION)
+                          execution=TOOL_B2_NOT_LIVE_EXECUTION)
 
     def _tool_safety_check(self, intent: Intent, ctx) -> tuple:
         """Check 2 for tools (RFC §5.2): the declared action, priced.

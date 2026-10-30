@@ -19,6 +19,13 @@ intent:
   priced against ``max_tool_cycles_per_task`` at check 2 (§10.3).
 - ``tool_result_bytes_used`` (int): inline result bytes already
   drawn in the task; priced against ``tool_max_task_result_bytes``.
+- ``tool_live_execution`` (bool, SI-43 / B-2): the context's loop
+  path is priced LIVE for the B-2 set (read/write tools on a
+  miniature bundle — RFC §15 B-2, by the SI-17 precedent of pricing
+  paths separately). The miniature loop's ``ProbeContext`` carries
+  True; every other context (the demo ``LoopContext``, scripted
+  contexts that do not set it) defaults to False and keeps B-1
+  shadow behaviour exactly.
 
 RFC status, stated honestly: §6.2 pins the policy caps and §10.3
 pins the budgets, but the *runtime bookkeeping* that tracks spend
@@ -43,3 +50,4 @@ class ToolContext:
     tool_task_seq: int | None = None
     tool_cycles_used: int = 0
     tool_result_bytes_used: int = 0
+    tool_live_execution: bool = False

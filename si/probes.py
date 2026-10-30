@@ -274,6 +274,19 @@ class ProbeContext:
         self.bundle_dir = bundle_dir
         self.manifest = manifest
         self.policy = policy
+        # SI-43 (RFC SI-41 §15 B-2): the miniature loop path is the
+        # LIVE tool-execution path — this context carries the gate's
+        # tool-context contract with live execution on, so a tool
+        # intent gated here can ADMIT for the B-2 read/write set
+        # (si.gaia.executor runs it). The demo LoopContext carries
+        # the same attributes with live execution OFF (B-1 shadow).
+        # Task bookkeeping defaults are the out-of-task values; a
+        # task driver (B-3) sets them per task.
+        self.tool_live_execution = True
+        self.tool_work_root: str | None = None
+        self.tool_task_seq: int | None = None
+        self.tool_cycles_used = 0
+        self.tool_result_bytes_used = 0
         self._status: tuple[bool, str] | None = None
         self._artifact: dict | None = None
         self._artifact_hash: str | None = None

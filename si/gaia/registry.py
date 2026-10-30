@@ -301,6 +301,19 @@ RFC_V1_TOOL_NAMES = frozenset({
     "shell_exec", "code_exec", "test_run",
 })
 
+#: The SI-43 / B-2 LIVE set (RFC §15 B-2): the read/write-class
+#: tools of §8.1 + §8.2 whose execution is live, miniature-scoped,
+#: from B-2. The execute-class tools (``shell_exec`` / ``code_exec``
+#: / ``test_run``) are B-3 and stay shadow/escalate-only in B-2.
+#: This set is a slice boundary, not a capability cage: B-3 grows
+#: it on its own evidence (RFC §7.3 — classes are policy dials,
+#: never constructional walls).
+LIVE_TOOLS_B2 = frozenset({
+    "fs_list", "fs_read", "fs_search",
+    "fs_write", "fs_edit", "fs_mkdir",
+    "journal_query", "bundle_status", "probe_run",
+})
+
 
 def get_tool(name) -> ToolSpec | None:
     """The spec for ``name``, or None — an unlisted name is not a tool."""

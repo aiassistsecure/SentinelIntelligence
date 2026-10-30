@@ -50,6 +50,11 @@ class LoopContext:
         self.bundle_dir = bundle_dir
         self.mind = mind
         self.journal = journal
+        # SI-43 (RFC SI-41 §15 B-2): the demo loop path keeps B-1
+        # shadow behaviour for tool intents — B-2 prices the
+        # miniature path live and the demo path separately (the
+        # SI-17 precedent), so this context is explicitly NOT live.
+        self.tool_live_execution = False
         # The verified manifest, exposed for the gate's SI-9b
         # transformer-delta evaluation (manifest only; the gate never
         # reads base tensor bytes). Demo evaluation does not use it.
@@ -122,19 +127,35 @@ def _next_delta_id(manifest: dict) -> str:
 
 
 def _record_tool_shadow_outcome(journal: Journal, gate: Gate, intent,
-                                ctx, edit_id: str, verdict: str) -> None:
-    """SI-42 (SI-41 RFC §15 B-1): journal a tool cycle's shadow outcome.
+                                ctx, edit_id: str, verdict: str,
+                                report=None) -> None:
+    """SI-42 (SI-41 RFC §15 B-1) + SI-43 (B-2): journal a tool
+    cycle's non-execution outcome.
 
-    In B-1 a tool intent can only REJECT or ESCALATE (no executor
-    exists), and its outcome is journaled as a ``tool_result``
-    experience recording execution as not-evaluated — shadow mode,
-    via the same writer si.gaia.shadow uses, so the loop path and
-    the standalone path record identically shaped outcomes.
+    A tool intent that REJECTs or ESCALATEs executed nothing, and
+    its outcome is journaled as a ``tool_result`` experience. When
+    the gate report carries B-1's shadow label (every non-live
+    context — the demo path, unchanged), the record is written by
+    si.gaia.shadow's writer, byte-for-byte as in B-1. On the live
+    miniature path the report carries a B-2 label (rejected at the
+    gate / escalated by class policy / outside B-2's live scope),
+    and the record is written with that label and no fabricated
+    measured fields, via si.gaia.executor's non-execution writer —
+    so the loop path and the standalone path record identically
+    shaped outcomes on both disciplines.
     """
-    from si.gaia.shadow import record_shadow_outcome
+    from si.gate import TOOL_SHADOW_EXECUTION
     info = gate.classify_tool_intent(intent, ctx)
-    record_shadow_outcome(journal, intent, edit_id, verdict,
-                          effective_class=info.get("effective_class"))
+    label = getattr(report, "execution", None)
+    if label is None or label == TOOL_SHADOW_EXECUTION:
+        from si.gaia.shadow import record_shadow_outcome
+        record_shadow_outcome(journal, intent, edit_id, verdict,
+                              effective_class=info.get("effective_class"))
+        return
+    from si.gaia.executor import record_non_execution_outcome
+    record_non_execution_outcome(
+        journal, intent, edit_id, verdict, label,
+        effective_class=info.get("effective_class"))
 
 
 def _record_training_hyperparams(journal: Journal, candidate,
@@ -238,7 +259,8 @@ def run_cycle(bundle_path: str, mind, gate: Gate | None = None) -> dict:
                 edit_id, "rejected" if report.verdict == "REJECT" else "escalated")
             if intent.kind == "tool":
                 _record_tool_shadow_outcome(
-                    journal, gate, intent, ctx, edit_id, report.verdict)
+                    journal, gate, intent, ctx, edit_id, report.verdict,
+                    report=report)
             manifest = _save_and_anchor(
                 bundle_dir, journal, manifest,
                 note=f"{report.verdict.lower()} {edit_id}")
@@ -458,6 +480,13 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
       to the rollback core with ``mind=None`` — the core's demo
       probe re-check cannot run on a miniature bundle, and
       claiming it did would be fabrication).
+    - SI-43: tool intents are LIVE on this path (the probe
+      context carries ``tool_live_execution``): an ADMITted B-2
+      read/write intent is executed by si.gaia.executor from its
+      journaled record, with the §4.4 execution record journaled
+      and §11.1 VERIFY (result conformance + post-state) reported
+      as the cycle's ``verified``. The demo path above keeps B-1
+      shadow behaviour for tool intents, unchanged.
     - SI-21: a trained candidate's hyperparams are journaled as
       a ``training-hyperparams`` provenance note on both verdict
       paths (see :func:`_record_training_hyperparams`), so a
@@ -487,7 +516,8 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
             edit_id, "rejected" if report.verdict == "REJECT" else "escalated")
         if intent.kind == "tool":
             _record_tool_shadow_outcome(
-                journal, gate, intent, ctx, edit_id, report.verdict)
+                journal, gate, intent, ctx, edit_id, report.verdict,
+                report=report)
         _record_training_hyperparams(journal, candidate, edit_id, [])
         manifest = _save_and_anchor(
             bundle_dir, journal, manifest,
@@ -511,6 +541,34 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
         journal.record_provenance(
             child=edit_id, parents=list(intent.source_seqs),
             relation="learned_from", note="source journal sequences")
+
+    if intent.kind == "tool":
+        # SI-43 (RFC SI-41 §15 B-2): EXECUTE replaces MATERIALIZE
+        # for tool intents on the miniature path — the only path
+        # whose gate context is live, so an ADMIT here is a B-2
+        # live-set intent the gate priced for real. The intent and
+        # verdict are already journaled above (journal-before-
+        # execute, RFC §4.2); the executor re-reads the journaled
+        # intent and runs exactly it (§9.2), journals the §4.4
+        # execution record, and VERIFYs by result conformance +
+        # post-state (§11.1). Head does not move and no delta is
+        # recorded: a tool cycle changes the world, not the bundle.
+        # There is no rollback of a world effect (§11.2) — a failed
+        # execution returns as its journaled record, and `verified`
+        # reports whether the execution completed and verified.
+        from si.gaia.executor import Executor
+        info = gate.classify_tool_intent(intent, ctx)
+        executor = Executor(bundle_dir, manifest, journal, policy,
+                            info.get("work_root") or bundle_dir)
+        execution = executor.execute_journaled(
+            edit_id, expected_effective_class=info.get("effective_class"))
+        manifest = _save_and_anchor(
+            bundle_dir, journal, manifest,
+            note=f"tool executed {edit_id} {execution.get('status')}")
+        return {"verdict": "ADMIT", "edit_id": edit_id,
+                "delta_id": None, "head": manifest["head"],
+                "verified": execution.get("status") == "completed",
+                "rolled_back": False, "tool_execution": execution}
 
     prev_head = manifest["head"]
     if is_tf:
