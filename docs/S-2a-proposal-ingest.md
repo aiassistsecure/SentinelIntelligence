@@ -178,6 +178,16 @@ Interop (brief criterion 5) is §4 below.
 
 ## 3. The registry gap — the slice's headline honesty item
 
+> **Superseded by SI-55/S-2b (docs/S-2b-hearth-registry.md):**
+> the gap described below is CLOSED. `hearth.restart` and
+> `hearth.notify` are now registered in SI's registry as
+> external-class seam-crossing tools; watcher proposals gate
+> on their merits (default external policy ESCALATEs, an
+> `external: admit` policy ADMITs to a journaled pending
+> self-edit), and S-3's ADMIT path is unblocked on this point.
+> S-3/S-4/S-5 remain unbuilt. The text below is the S-2a-era
+> record, kept for provenance.
+
 SI's tool registry (`si/gaia/registry.py`) registers **only
 the 12 SI-41 tools** (`fs_*`, `journal_query`, `bundle_status`,
 `probe_run`, `shell_exec`, `code_exec`, `test_run`). The fork
@@ -273,6 +283,7 @@ through the real `HttpProposalSink` and prints the
   submission **UNBUILT** (an ADMIT submits nothing yet); leash
   crossing and outcome return unbuilt; watcher proposals
   REJECT at `tool_registered` until a registry slice registers
-  `hearth.*` (§3); no authentication, loopback v1 (G-9 §14);
+  `hearth.*` (§3 — that slice is SI-55/S-2b, merged after S-2a;
+  watcher proposals now gate on their merits); no authentication, loopback v1 (G-9 §14);
   all ingest performance **UNMEASURED**; miniature scope
   unchanged — nothing executes at ingest, on any verdict.

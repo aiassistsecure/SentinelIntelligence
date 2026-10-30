@@ -68,16 +68,19 @@ the whole flow:
    ``{"task_seq", "journal_seq", "verdict"}`` where
    ``journal_seq`` is the self-edit row's journal sequence.
 
-**Registry gap — stated, never hidden.** :data:`REGISTRY_GAP_LABEL`:
-SI's tool registry (:mod:`si.gaia.registry`) registers only
-the 12 SI-41 tools; the fork's ``hearth.*`` tool names are
-**not** registered, so a watcher proposal gates REJECT at
-check 2's ``tool_registered`` sub-check — the gate's own
-report says exactly that — until a future registry slice
-registers them. This module does not map, rename, or
-special-case ``hearth.*`` names anywhere: the REJECT is the
-honest current price of a watcher proposal, journaled like
-any other verdict.
+**Registry gap — CLOSED by SI-55/S-2b, stated plainly.**
+:data:`REGISTRY_GAP_LABEL` now records the closed state:
+SI-55/S-2b registered the fork's ``hearth.*`` tools
+(``hearth.restart``, ``hearth.notify``) in SI's registry
+(:mod:`si.gaia.registry`) as external-class, seam-crossing
+tools, so a watcher proposal now gates on its merits instead
+of REJECTing at check 2's ``tool_registered`` sub-check —
+under the default ``external: escalate`` class rule it
+ESCALATEs; under an ``external: admit`` policy it ADMITs and
+rests ``pending``. Registration is existence only: this module
+still does not map, rename, or special-case ``hearth.*`` names,
+no local executor exists for them, and an ADMIT submits
+nothing (S-3 unbuilt — see below).
 
 **What is NOT built here.** An ADMIT at the seam submits
 nothing anywhere: S-3 work submission back to the fork is
@@ -150,16 +153,25 @@ SEAM_INGEST_LABEL: str = (
     "there is no authentication — loopback only (G-9 §14); "
     "performance UNMEASURED")
 
-#: The registry gap, stated plainly (see the module docstring):
-#: watcher proposals for hearth.* tools gate REJECT today,
-#: and the gate report itself is the evidence.
+#: The registry status, stated plainly (see the module
+#: docstring): the S-2a gap is CLOSED by SI-55/S-2b — the
+#: hearth.* names are registered (external-class, seam-crossing)
+#: and watcher proposals gate on their merits. The constant
+#: keeps its S-2a name for import compatibility; its text is
+#: the current truth, and REGISTRY_STATUS_LABEL is the alias.
 REGISTRY_GAP_LABEL: str = (
-    "registry gap: SI's registry (si/gaia/registry.py) "
-    "registers only the 12 SI-41 tools; the fork's hearth.* "
-    "tool names are NOT registered, so watcher proposals gate "
-    "REJECT at check 2's tool_registered sub-check until a "
-    "future registry slice registers them — no hearth.* name "
+    "registry gap CLOSED by SI-55/S-2b: hearth.restart and "
+    "hearth.notify are registered in SI's registry "
+    "(si/gaia/registry.py) as external-class seam-crossing "
+    "tools, so watcher proposals gate on their merits (default "
+    "external policy ESCALATEs; an external:admit policy ADMITs "
+    "to a journaled pending self-edit) — registration is "
+    "existence only: no local executor exists for them, an "
+    "ADMIT submits nothing (S-3 UNBUILT), and no hearth.* name "
     "is mapped, renamed, or special-cased at the seam")
+
+#: Alias with the accurate name (SI-55/S-2b).
+REGISTRY_STATUS_LABEL: str = REGISTRY_GAP_LABEL
 
 #: Label on a refused (validation-failed) ingest: the refusal
 #: is total — nothing was journaled, by construction.

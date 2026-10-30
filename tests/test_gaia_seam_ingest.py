@@ -27,16 +27,18 @@ What is asserted:
   an env-gated live test runs the real client when the
   coordinator supplies its probe binary.
 
-The registry gap, stated plainly: the v1 registry registers
-ONLY SI's own 12 tools. The fork's ``hearth.restart`` is NOT
-registered, so watcher proposals REJECT at the
-``tool_registered`` sub-check of ``safety_bounds`` — that is
-the correct, expected verdict in this slice, not a failure of
-the pipeline. The ``fs_list`` control proves the pipeline
-end-to-end: a registered tool under the corpus policy on this
-live miniature bundle ADMITs (and stays ``pending`` — queued,
-never executed SI-side in S-2a). Watcher tools cannot ADMIT
-until a later registry slice registers ``hearth.*``.
+The registry gap, stated plainly (historical in S-2a;
+CLOSED by SI-55/S-2b): the v1 registry originally registered
+ONLY SI's own 12 tools, so watcher proposals REJECTed at the
+``tool_registered`` sub-check. SI-55/S-2b registered
+``hearth.restart`` / ``hearth.notify`` as external-class
+seam-crossing tools, so the watcher fixture now gates on its
+merits: under the corpus policy (``external: escalate``) it
+ESCALATEs with ``tool_registered`` passing. The ADMIT path
+(under an ``external: admit`` policy, resting ``pending``,
+executing nothing) is pinned by
+tests/test_gaia_s2b_hearth_registry.py. The ``fs_list``
+control still proves the pipeline end-to-end.
 
 S-3 is UNBUILT: nothing here executes an admitted proposal,
 drains a queue, or journals ``gaia_work`` entries, and these
@@ -178,9 +180,11 @@ def test_watcher_proposal_is_gated_and_journaled(mini):
                           policy=corpus_policy(work))
     assert out["status"] == "acked"
     assert out["deduped"] is False
-    # The registry gap (module docstring): hearth.restart is
-    # not a registered tool, so the honest verdict is REJECT.
-    assert out["verdict"] == "REJECT"
+    # SI-55/S-2b closed the registry gap: hearth.restart is
+    # registered (external class); the corpus policy's
+    # external rule is escalate, so the merits verdict is
+    # ESCALATE — not the old tool_registered REJECT.
+    assert out["verdict"] == "ESCALATE"
     ack = out["ack"]
     assert set(ack) == {"task_seq", "journal_seq", "verdict"}
     assert ack == {"task_seq": out["task_seq"],
@@ -202,15 +206,18 @@ def test_watcher_proposal_is_gated_and_journaled(mini):
         row = edits[0]
         assert row["seq"] == ack["journal_seq"]
         assert row["edit_id"] == out["edit_id"]
-        assert row["gate_verdict"] == "REJECT"
+        assert row["gate_verdict"] == "ESCALATE"
         safety = _check(row["gate_report"], "safety_bounds")
-        assert safety["passed"] is False
-        failed = _failed_subchecks(safety)
-        assert "tool_registered" in [s["name"] for s in failed]
+        registered = next(
+            x for x in safety["subchecks"]
+            if x["name"] == "tool_registered")
+        assert registered["passed"] is True
         # The ingest gate report rides the return value too.
         out_safety = _check(out["gate_report"], "safety_bounds")
-        assert "tool_registered" in [
-            s["name"] for s in _failed_subchecks(out_safety)]
+        out_registered = next(
+            x for x in out_safety["subchecks"]
+            if x["name"] == "tool_registered")
+        assert out_registered["passed"] is True
         intent = row["intent"]
         assert intent["parents"] == [f"task@{ack['task_seq']}"]
         assert intent["source_seqs"] == [ack["task_seq"]]
@@ -339,7 +346,11 @@ def _iter_dicts(value):
 
 def test_reject_creates_no_submission_artefacts(mini):
     bundle_dir, work = mini
-    out = submit_proposal(bundle_dir, _watcher(),
+    # Since SI-55/S-2b the watcher tool is registered, so a true
+    # REJECT here uses a still-unregistered hearth.* name.
+    payload = _watcher()
+    payload["tool"] = "hearth.reap"
+    out = submit_proposal(bundle_dir, payload,
                           policy=corpus_policy(work))
     assert out["status"] == "acked" and out["verdict"] == "REJECT"
     task_seq = out["task_seq"]
@@ -387,7 +398,7 @@ def test_registered_tool_control_admits(mini):
     bundle_dir, work = mini
     # This control proves the gate pipeline end-to-end; watcher
     # tools cannot ADMIT until a registry slice registers
-    # hearth.* (the registry gap, module docstring).
+    # hearth.* under the corpus policy (see module docstring).
     proposal = {
         "model": "muse",
         "tool": "fs_list",
@@ -527,7 +538,7 @@ def test_http_wire_shape_and_ack_body(server):
     assert isinstance(body["task_seq"], int)
     assert not isinstance(body["task_seq"], bool)
     assert body["verdict"] in VERDICTS
-    assert body["verdict"] == "REJECT"  # the registry gap
+    assert body["verdict"] == "ESCALATE"  # SI-55: registered, external=escalate
 
     # The trailing-slash route is the same route (a retry: the
     # deduped ack is still exactly the ack dict).
@@ -632,10 +643,12 @@ def test_live_egress_interop(server):
         capture_output=True, text=True, timeout=60)
     assert "Acked" in proc.stdout
     # The probe prints the SendOutcome's Debug form, whose
-    # verdict variant is spelled "Reject"; the ACK only parses
-    # (verdict: Reject) if the wire body carried the §8.3
-    # spelling "REJECT" — Acked IS the wire-spelling proof.
-    assert "Reject" in proc.stdout
+    # verdict variant is spelled "Escalate" (SI-55/S-2b: the
+    # watcher tool is registered; the corpus policy escalates
+    # the external class); the ACK only parses if the wire body
+    # carried the §8.3 spelling "ESCALATE" — Acked IS the
+    # wire-spelling proof.
+    assert "Escalate" in proc.stdout
     journal = _open(server.bundle_dir)
     try:
         assert len(_edits_citing(

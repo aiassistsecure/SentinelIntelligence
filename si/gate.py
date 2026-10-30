@@ -106,6 +106,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from si.gaia.policy import resolve_tool_policy
+from si.gaia.registry import SEAM_CROSSING_TOOLS as _SEAM_TOOLS
 from si.gaia.registry import LIVE_TOOLS_B2 as _LIVE_TOOLS_B2
 from si.gaia.registry import LIVE_TOOLS_B3 as _LIVE_TOOLS_B3
 from si.gaia.registry import get_tool as _get_tool_spec
@@ -173,6 +174,27 @@ TOOL_B3_ESCALATED_EXECUTION = (
 #: A rejected execute-class intent on a live context.
 TOOL_B3_REJECTED_EXECUTION = (
     "not executed — rejected at gate (SI-44/B-3)")
+
+#: SI-55 (S-2b): the execution labels for seam-crossing tools
+#: (``hearth.*``, registered in si.gaia.registry as external-class,
+#: in NO local live set). Registration lets the gate price them on
+#: their merits; it does not create a local executor. On a live
+#: context with the external class rule ``admit``, a passing seam
+#: intent ADMITs with the pending label: its self-edit rests
+#: ``pending`` in the journal — S-3 work submission to the gaia
+#: fork is UNBUILT, so nothing is submitted and nothing executes
+#: SI-side. Any label claiming local execution would be false.
+TOOL_SEAM_PENDING_EXECUTION = (
+    "not executed locally — seam-crossing tool (SI-55/S-2b): "
+    "ADMIT rests pending; S-3 work submission to the gaia fork "
+    "is UNBUILT, so nothing is submitted or executed SI-side")
+#: A passing seam intent escalated by its class policy rule.
+TOOL_SEAM_ESCALATED_EXECUTION = (
+    "not executed — escalated by class policy for a seam-crossing "
+    "tool (SI-55/S-2b); S-3 work submission is UNBUILT")
+#: A rejected seam intent on a live context.
+TOOL_SEAM_REJECTED_EXECUTION = (
+    "not executed — rejected at gate (SI-55/S-2b seam-crossing tool)")
 
 #: SI-41 RFC §5.3: the detail recorded on checks 3/4 for tool intents.
 TOOL_PROBES_NOT_APPLICABLE = (
@@ -755,6 +777,15 @@ class Gate:
         ordering_key = None
         if isinstance(declared_key, str) and declared_key:
             ordering_key = declared_key
+        elif spec is not None and spec.name in _SEAM_TOOLS:
+            # Seam-crossing actuations for one model serialise on
+            # that model (SI-55/S-2b): two restarts of the same
+            # model must never race across the seam.
+            model = intent.args.get("model") \
+                if isinstance(intent.args, dict) else None
+            ordering_key = (f"hearth:{model}"
+                            if isinstance(model, str) and model
+                            else "hearth")
         elif spec is not None:
             if spec.consequence_class == "write":
                 target = resolved.get("path")
@@ -829,6 +860,17 @@ class Gate:
         forward from B-2, not a §7.3 cage), labelled
         :data:`TOOL_B3_NOT_LIVE_EXECUTION`. Non-live contexts
         are untouched: B-1 shadow, byte-for-byte.
+
+        SI-55/S-2b adds ONE seam exception to the external hold,
+        priced before the B-3 branch: a registered seam-crossing
+        tool (``hearth.*`` — external by registry class, not by
+        path pricing) with class rule ``admit`` ADMITs with
+        :data:`TOOL_SEAM_PENDING_EXECUTION`. The exception is
+        about *admission*, not execution: the admitted self-edit
+        rests pending, no executor runs it (the B-3 executor
+        refuses tools outside its live set), and S-3 submission
+        to the fork is unbuilt. External-effective *local* tools
+        (path/cwd-priced) keep the B-3 hold exactly.
         """
         safety, info = self._tool_safety_check(intent, ctx)
         checks.append(safety)
@@ -861,15 +903,25 @@ class Gate:
         if not all(c.passed for c in decisive):
             rejected = TOOL_SHADOW_EXECUTION
             if live:
-                rejected = (TOOL_B3_REJECTED_EXECUTION
-                            if info.get("effective_class") == "execute"
-                            else TOOL_LIVE_REJECTED_EXECUTION)
+                spec0 = info.get("spec")
+                if spec0 is not None and spec0.name in _SEAM_TOOLS:
+                    rejected = TOOL_SEAM_REJECTED_EXECUTION
+                elif info.get("effective_class") == "execute":
+                    rejected = TOOL_B3_REJECTED_EXECUTION
+                else:
+                    rejected = TOOL_LIVE_REJECTED_EXECUTION
             return _report("REJECT", rejected)
         if not live:
             return _report("ESCALATE", TOOL_SHADOW_EXECUTION)
         spec = info.get("spec")
         effective = info.get("effective_class")
         rule = info.get("class_rule")
+        if spec is not None and spec.name in _SEAM_TOOLS:
+            if rule == "admit":
+                return _report("ADMIT", TOOL_SEAM_PENDING_EXECUTION)
+            if rule == "escalate":
+                return _report("ESCALATE", TOOL_SEAM_ESCALATED_EXECUTION)
+            return _report("ESCALATE", TOOL_B3_NOT_LIVE_EXECUTION)
         if spec is not None and spec.name in _LIVE_TOOLS_B3 \
                 and effective in ("read", "write", "execute") \
                 and rule == "admit":
