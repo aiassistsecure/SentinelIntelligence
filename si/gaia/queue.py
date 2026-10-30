@@ -10,7 +10,8 @@ kinds:
 
 - **Writers** — :func:`record_queue_batch`,
   :func:`record_queue_claim`, :func:`record_queue_recovery_reclaim`,
-  :func:`record_queue_refusal`, :func:`record_queue_stop`, and
+  :func:`record_queue_refusal`, :func:`record_queue_skip`,
+  :func:`record_queue_stop`, and
   :func:`record_queue_resume` journal ``queue_*`` experiences via
   the journal's existing ``record_experience`` (the record dict
   rides in the experience's ``record`` field, exactly like
@@ -43,9 +44,17 @@ Fold rules (§5.2, §5.4, §11, §13.1), as implemented here:
   recovery form also records ``recovery_of`` — the original
   claim it supersedes, §13.3); a ``queue_refusal`` moves it to
   ``refused-at-claim`` (unless already executed); a
-  ``queue_skip`` to ``skipped``; a ``tool_result`` outcome to
-  ``executed`` (or ``refused-at-claim`` when the execution
-  status is ``refused``).
+  ``queue_skip`` to ``skipped`` and carries the skip fields
+  (``skip_cause``, ``skip_dependency_seq`` and
+  ``skip_dependency_outcome_seq`` — §7.3: a queued intent
+  whose ``success`` dependency concluded any other way is
+  skipped, journaled with the cause and the dependency's
+  outcome sequence, and never executes); a ``tool_result``
+  outcome to ``executed`` (or ``refused-at-claim`` when the
+  execution status is ``refused``). An intent's ``intent_ts``
+  is the ``ts`` of its own self-edit row — the admission
+  timestamp recorded in the journal, from which Q-2 measures
+  claim-time residence.
 - ``queue_stop`` / ``queue_resume`` are per-task operator leash
   entries (§11): after folding, a task with a stop in force has
   its still-``queued`` intents derived to ``held``; a later
@@ -217,6 +226,29 @@ def record_queue_refusal(journal, task_seq, edit_id, intent_seq,
     return _record_queue_entry(journal, "queue_refusal", record)
 
 
+def record_queue_skip(journal, task_seq, edit_id, intent_seq,
+                      cause, dependency_seq=None,
+                      dependency_outcome_seq=None) -> dict:
+    """Journal a skip entry (§7.3): a queued intent whose
+    ``success`` dependency concluded any other way is skipped
+    — journaled with the cause and the dependency's outcome
+    sequence — and never executes. ``dependency_seq`` is the
+    intent sequence of the dependency and
+    ``dependency_outcome_seq`` the journal sequence of its
+    concluding outcome, or None when not applicable."""
+    record = {
+        "kind": "queue_skip",
+        "source": "drainer",
+        "task_seq": task_seq,
+        "edit_id": edit_id,
+        "intent_seq": intent_seq,
+        "cause": cause,
+        "dependency_seq": dependency_seq,
+        "dependency_outcome_seq": dependency_outcome_seq,
+    }
+    return _record_queue_entry(journal, "queue_skip", record)
+
+
 def record_queue_stop(journal, task_seq, cause, detail="",
                       operator="operator") -> dict:
     """Journal an operator stop entry (§11.1): the leash against
@@ -289,6 +321,17 @@ class QueueIntentState:
     #: intent, when one exists (the state carries the outcome of
     #: the refusal; this carries its reason).
     refusal_cause: str | None = None
+    #: The journaled fields of a ``queue_skip`` naming this
+    #: intent, when one exists (§7.3): its cause, the intent
+    #: sequence of the dependency that concluded another way,
+    #: and the journal sequence of that dependency's outcome.
+    skip_cause: str | None = None
+    skip_dependency_seq: int | None = None
+    skip_dependency_outcome_seq: int | None = None
+    #: The ``ts`` of this intent's own self-edit row — the
+    #: admission timestamp recorded in the journal, from which
+    #: Q-2 measures claim-time residence.
+    intent_ts: str | None = None
 
 
 @dataclass
@@ -421,6 +464,7 @@ def _start_intent(row: dict, task_seqs: set,
         state=state,
         source_seqs=list(intent.get("source_seqs") or []),
         parents=list(intent.get("parents") or []),
+        intent_ts=row.get("ts"),
     )
 
 
@@ -611,6 +655,10 @@ def fold_queue(journal, task_seq=None) -> QueueFold:
             if state is None or state.state in TERMINAL_STATES:
                 continue
             state.state = "skipped"
+            state.skip_cause = record.get("cause")
+            state.skip_dependency_seq = record.get("dependency_seq")
+            state.skip_dependency_outcome_seq = \
+                record.get("dependency_outcome_seq")
             continue
 
         if kind == "tool_result" and row.get("self_edit_id"):

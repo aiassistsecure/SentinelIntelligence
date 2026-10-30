@@ -1,6 +1,7 @@
-"""Gaia Q-1 queue-drain core: admission without execution, the
-serial drainer, and batched perception (SI-50 §§4.2, 5.3, 7.1,
-7.2, 10, 12.4, 13, 16 Q-1, 17; slice SI-51).
+"""Gaia queue-drain: admission without execution, the
+drainer, and batched perception (SI-50 §§4.2, 5.3, 7, 7.1,
+7.2, 7.3, 8, 10, 12.2, 12.4, 13, 16 Q-1/Q-2, 17; slices
+SI-51 and SI-52).
 
 Q-1 builds the queue core of SI-50 on the journal SI already has.
 The journal *is* the queue (§4): an intent is enqueued at the
@@ -28,28 +29,67 @@ the one admission helper the batched task surface needs:
   claim/intent mismatch refuses at the executor and journals
   the refusal).
 
-**Concurrency in Q-1 is fixed at 1 by policy** (§16 Q-1):
-:data:`Q1_CONCURRENCY` is 1, the drainer is strictly serial —
-one claim, one execution, one outcome, in that order, before
-the next claim — whatever §8's measured bound later becomes.
-Ordering keys (§7.2) and the leash fold (§11) are therefore
-enforced by construction as well as by :meth:`Drainer.claimable`.
+**Concurrency (Q-2, §8):** Q-1 fixed the drainer serial by
+policy (:data:`Q1_CONCURRENCY` = 1, kept as the historical
+record of that policy). Q-2 spends concurrency only where a
+mistake is free: **unkeyed read-class intents** execute
+concurrently in a bounded pool — policy
+``queue_max_concurrent_reads``, default 4, hard cap 16,
+malformed or sub-1 values resolving to 1 (serial, the most
+restrictive reading). Everything else — every keyed intent
+(writes key on their target, executions on the work root,
+house tools on ``house``, reads with a proposer-declared key)
+— still drains strictly serially: one claim, one execution,
+one outcome. Claims are journaled serially in intent order
+before a pool batch runs; outcome journaling stays serial
+(the journal serializes its own appends — §8.3), so outcomes
+append in completion order and the fold does not care. The
+bound is a policy, **UNMEASURED** (Q-4): no throughput claim
+is made for it anywhere in this slice.
 
-``depends_on`` in Q-1, labelled precisely (§16 Q-1): the fields
-are parsed, priced by the gate, journaled, and folded, and
-:meth:`Drainer.claimable` treats a dependency as satisfied when
-the named earlier intent has **concluded in any terminal
-state**. The §7.3 requirement distinction (``outcome`` vs
-``success``, with ``skipped`` for an unmet ``success``) is Q-2:
-Q-1's serial admission order means a dependency was priced and
-concluded before its dependent is reached, and Q-1 does not
-pretend to the finer semantics it has not built.
+``depends_on`` requirement semantics (Q-2, §7.3):
+``outcome`` is satisfied when the dependency reaches
+``executed``, ``refused-at-claim``, ``skipped``, ``rejected``,
+or ``escalated`` — any recorded conclusion; the dependent
+runs knowing the dependency *concluded*, not how. ``success``
+is satisfied only by ``executed`` with outcome status
+``completed`` (a ``timed-out`` execution's partial result
+does not satisfy it — pinned here, where the spec leaves the
+slice the choice). A queued intent whose ``success``
+dependency concludes any other way is **skipped**: the
+drainer journals a ``queue_skip`` naming the cause and the
+dependency's outcome sequence, the intent never executes,
+and the skip cascades to its own ``success`` dependents. A
+dependency naming no folded intent still fails closed: the
+dependent is blocked — never skipped on a guess, never run.
 
-**Barrier is NOT a sync point in Q-1** (§10.2 point 2 is Q-2):
-a ``barrier: true`` intent is parsed, priced, journaled, and
-folded, but a drain does not stop at it — Q-1 perception sync
-points are queue-empty, a stop rule (§12.4), and drain-budget
-exhaustion (§10.2 points 1, 3, 4).
+**Barrier is a sync point (Q-2, §10.2 point 2):** when an
+intent declared ``barrier: true`` concludes during a drain —
+executed, refused at claim, or skipped — the drain stops and
+perception returns with sync reason ``barrier``; intents
+after it stay queued for the next drain. Q-1's sync points
+(queue empty, a stop rule, drain-budget exhaustion) are
+unchanged.
+
+**Claim-time residence refusals (Q-2, §12.2):** an intent
+still ``queued`` longer than policy
+``queue_max_residence_seconds`` (default 3600; malformed 0 —
+the most-restrictive reading this module already uses for
+its other bounds) after its journaled admission timestamp is
+refused at claim with cause ``stale-admission`` when the
+drainer reaches it, however it would re-validate; an
+unparseable admission timestamp fails closed (never stale
+on a guess), exactly like the claim-lease reading in
+recovery.
+
+**Pipelining (§9)** is real at the admission/drain boundary:
+admission (gate + journal) shares no mutable state with a
+drain in flight beyond the journal itself, whose appends
+serialize, so batch N+1 can be admitted while batch N
+executes — exercised under test with the journal's sequences
+as the witness. The task loop's propose → admit → drain →
+perceive cycle is unchanged; its next drain picks up
+whatever was admitted meanwhile.
 
 **Write/execute outcome-unknown recovery is NOT in Q-1**
 (§13.3's write/execute arm is Q-3): :meth:`Drainer.recover`
@@ -69,6 +109,7 @@ import inspect
 import os
 import secrets
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from si.gaia.executor import Executor, record_non_execution_outcome
@@ -78,15 +119,30 @@ from si.gaia.queue import (
     queue_summary,
     record_queue_claim,
     record_queue_recovery_reclaim,
+    record_queue_refusal,
+    record_queue_skip,
 )
 from si.gaia.registry import get_tool
 from si.gaia.shadow import record_shadow_outcome
 from si.gate import TOOL_SHADOW_EXECUTION
 
 #: Q-1's concurrency, fixed at 1 by policy (SI-50 §16 Q-1): the
-#: drainer is strictly serial. §8's bounded read concurrency is
-#: Q-2, on Q-4's measurements; it is not tuned here.
+#: drainer was strictly serial. Kept as the historical record
+#: of that policy; Q-2's bounded read pool (below) supersedes
+#: it as the drainer's live concurrency rule.
 Q1_CONCURRENCY = 1
+
+#: Q-2's read-pool bound (SI-50 §8.2): the policy
+#: ``queue_max_concurrent_reads`` defaults to 4 and is hard-
+#: capped at 16 — a policy value above the cap resolves to the
+#: cap; a malformed or sub-1 value resolves to 1 (serial, the
+#: most restrictive reading). The number is UNMEASURED (Q-4).
+Q2_DEFAULT_MAX_CONCURRENT_READS = 4
+Q2_MAX_CONCURRENT_READS_CAP = 16
+
+#: Q-2's claim-time residence bound (SI-50 §12.2): the policy
+#: ``queue_max_residence_seconds`` defaults to 3600.
+Q2_DEFAULT_MAX_RESIDENCE_SECONDS = 3600
 
 #: Detail markers of an execution-integrity refusal (SI-50
 #: §12.4 rule 4, extending SI-41 §9.2/§10.4.4's markers with the
@@ -209,6 +265,80 @@ def _dep_seq(dep):
     if isinstance(dep, int):
         return dep
     return _field(dep, "seq", "intent_seq", "depends_on_seq")
+
+
+def _dep_requirement(dep) -> str:
+    """The requirement one ``depends_on`` entry declares (§7.3):
+    ``success``, or ``outcome`` — the default, and the reading
+    for anything else (malformed requirements are priced out at
+    the gate, §6.2; the drainer never upgrades one to
+    ``success`` on a guess)."""
+    if isinstance(dep, dict):
+        req = dep.get("requirement")
+    else:
+        req = _field(dep, "requirement")
+    return "success" if req == "success" else "outcome"
+
+
+#: Folded states that satisfy an ``outcome`` dependency (§7.3):
+#: the dependency reached a recorded conclusion — it executed
+#: (however the execution itself turned out), was refused at
+#: claim, was skipped, or was never queued (rejected /
+#: escalated at the gate, each with its journaled non-execution
+#: outcome). ``outcome-unknown`` is deliberately absent: an
+#: intent whose outcome is *unknown* has not concluded in any
+#: sense a dependent may rely on; its dependents wait for the
+#: Q-3 operator disposition.
+_OUTCOME_DEP_STATES = frozenset({
+    "executed", "refused-at-claim", "skipped", "rejected",
+    "escalated",
+})
+
+
+def _dep_success(dep_state) -> bool:
+    """True iff the dependency *succeeded* (§7.3): folded
+    ``executed`` with outcome status ``completed``. A failed
+    or timed-out execution concluded, but did not succeed."""
+    return _state_name(dep_state) == "executed" \
+        and _field(dep_state, "outcome_status") == "completed"
+
+
+def _dep_satisfied(dep_state, requirement: str) -> bool:
+    """True iff ``dep_state`` satisfies ``requirement`` (§7.3)."""
+    if requirement == "success":
+        return _dep_success(dep_state)
+    return _state_name(dep_state) in _OUTCOME_DEP_STATES
+
+
+def _parse_journal_ts(raw) -> datetime | None:
+    """Parse a journal timestamp (ISO ``Z`` text, an epoch
+    number, or a datetime) to an aware datetime, or None when
+    unparseable — callers fail closed on None, never guessing
+    an age (the §13.1 claim-lease discipline)."""
+    if isinstance(raw, datetime):
+        claimed_at = raw
+    elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        try:
+            claimed_at = datetime.fromtimestamp(
+                float(raw), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    elif isinstance(raw, str):
+        text = raw.strip()
+        try:
+            claimed_at = datetime.fromtimestamp(
+                float(text), tz=timezone.utc)
+        except ValueError:
+            iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+            try:
+                claimed_at = datetime.fromisoformat(iso)
+            except ValueError:
+                return None
+    else:
+        return None
+    if claimed_at.tzinfo is None:
+        claimed_at = claimed_at.replace(tzinfo=timezone.utc)
+    return claimed_at
 
 
 def _task_stop_in_force(fold, task_seq) -> bool:
@@ -504,8 +634,9 @@ def build_observation_set(journal, fold, task_seq, outcome_seqs,
 # -- the drainer --------------------------------------------------------------------
 
 class Drainer:
-    """The Q-1 drainer (SI-50 §4.2): fold, claim, execute —
-    serially, concurrency fixed at 1 (:data:`Q1_CONCURRENCY`).
+    """The drainer (SI-50 §4.2): fold, claim, execute — serially
+    for everything keyed or state-changing, with Q-2's bounded
+    concurrent pool for unkeyed read-class intents (§8).
 
     Constructed by the runtime with the bundle's journal, its
     verified manifest, the bundle policy (raw, as the gate takes
@@ -538,6 +669,40 @@ class Drainer:
         return _policy_nonneg_int(
             self.policy, "queue_drain_budget_seconds", 1920)
 
+    def max_concurrent_reads(self) -> int:
+        """The read-pool bound (§8.2): policy
+        ``queue_max_concurrent_reads`` — absent → the default
+        (:data:`Q2_DEFAULT_MAX_CONCURRENT_READS`); a valid int
+        ≥ 1 → itself, capped at
+        (:data:`Q2_MAX_CONCURRENT_READS_CAP`); anything else
+        (malformed, bool, sub-1) → 1, serial — the most
+        restrictive reading. UNMEASURED (Q-4)."""
+        if "queue_max_concurrent_reads" not in self.policy:
+            return Q2_DEFAULT_MAX_CONCURRENT_READS
+        value = self.policy.get("queue_max_concurrent_reads")
+        if isinstance(value, bool) or not isinstance(value, int) \
+                or value < 1:
+            return 1
+        return min(value, Q2_MAX_CONCURRENT_READS_CAP)
+
+    def _max_residence_seconds(self) -> int:
+        return _policy_nonneg_int(
+            self.policy, "queue_max_residence_seconds",
+            Q2_DEFAULT_MAX_RESIDENCE_SECONDS)
+
+    def _residence_expired(self, state, now: datetime) -> bool:
+        """True iff ``state`` has been queued past the residence
+        bound (§12.2), measured from its journaled admission
+        timestamp (the fold's ``intent_ts``). An unparseable
+        timestamp is treated as *unexpired* — fail closed: an
+        intent is never refused as stale on a guessed age."""
+        admitted = _parse_journal_ts(
+            _field(state, "intent_ts", "admitted_ts", "ts"))
+        if admitted is None:
+            return False
+        return admitted + timedelta(
+            seconds=float(self._max_residence_seconds())) <= now
+
     # -- claimability (§7.1) ---------------------------------------------
     def claimable(self, state, fold) -> bool:
         """True iff ``state`` may be claimed now (§7.1, Q-1 form).
@@ -549,12 +714,15 @@ class Drainer:
         in a non-terminal state; and every ``depends_on``
         dependency has concluded.
 
-        ``depends_on`` satisfaction is Q-1's, labelled in the
-        module docstring: a dependency whose folded state is
-        terminal — *any* terminal state — satisfies. The
-        outcome/success requirement distinction and ``skipped``
-        are Q-2 (§7.3). A dependency naming no folded intent
-        fails closed: not claimable."""
+        ``depends_on`` satisfaction is §7.3's (Q-2): each
+        dependency must satisfy its declared requirement —
+        ``outcome`` by any recorded conclusion, ``success``
+        only by a completed execution (see the module
+        docstring). A ``success`` dependency that concluded
+        any other way does not make the intent claimable: the
+        drainer skips it instead (:meth:`_propagate_skips`).
+        A dependency naming no folded intent fails closed:
+        not claimable."""
         if _state_name(state) != "queued":
             return False
         task_seq = _task_seq_of(state)
@@ -581,9 +749,105 @@ class Drainer:
             if dep_seq is None:
                 return False
             dep_state = _find_by_intent_seq(fold, dep_seq)
-            if dep_state is None or not _is_terminal(dep_state):
+            if dep_state is None or not _dep_satisfied(
+                    dep_state, _dep_requirement(dep)):
                 return False
         return True
+
+    # -- dependency skips (§7.3) -----------------------------------------
+    def _propagate_skips(self, task_seq=None) -> list:
+        """Journal ``queue_skip`` entries for every queued
+        intent whose ``success`` dependency has concluded any
+        other way (§7.3), cascading until no queued intent has
+        an unmet-but-concluded ``success`` dependency.
+
+        Each skip names its cause and the dependency's outcome
+        sequence; the skipped intent is never claimed and never
+        executed. A dependency naming no folded intent never
+        causes a skip (fail closed — the dependent stays
+        blocked, §7.3's construction makes the name a journaled
+        fact or a gate error, not a drainer guess). Returns the
+        skip entries journaled by this call, in the order
+        journaled (dependent intent-sequence order per pass)."""
+        skips: list = []
+        while True:
+            fold = _fold(self.journal, task_seq)
+            target = None
+            states = sorted(
+                (s for s in _fold_intents(fold)
+                 if task_seq is None or _task_seq_of(s) is None
+                 or _task_seq_of(s) == task_seq),
+                key=lambda s: (_intent_seq(s) is None,
+                               _intent_seq(s) or 0))
+            for state in states:
+                if _state_name(state) != "queued":
+                    continue
+                for dep in _field(state, "depends_on",
+                                  default=None) or []:
+                    if _dep_requirement(dep) != "success":
+                        continue
+                    dep_seq = _dep_seq(dep)
+                    if dep_seq is None:
+                        continue
+                    dep_state = _find_by_intent_seq(fold, dep_seq)
+                    if dep_state is None \
+                            or not _is_terminal(dep_state) \
+                            or _dep_success(dep_state):
+                        continue
+                    target = (state, dep_seq, dep_state)
+                    break
+                if target is not None:
+                    break
+            if target is None:
+                return skips
+            state, dep_seq, dep_state = target
+            cause = (
+                f"depends_on success requirement unmet: dependency "
+                f"intent seq {dep_seq} concluded as "
+                f"{_state_name(dep_state)} (outcome status "
+                f"{_field(dep_state, 'outcome_status')!r}, outcome "
+                f"seq {_field(dep_state, 'outcome_seq')}) — "
+                f"dependent skipped per SI-50 §7.3, never executed")
+            raw = record_queue_skip(
+                self.journal, _task_seq_of(state), _edit_id(state),
+                _intent_seq(state), cause,
+                dependency_seq=dep_seq,
+                dependency_outcome_seq=_field(
+                    dep_state, "outcome_seq"))
+            skips.append(raw if isinstance(raw, dict) else {
+                "edit_id": _edit_id(state),
+                "intent_seq": _intent_seq(state), "cause": cause})
+
+    # -- claim-time residence refusals (§12.2) ----------------------------
+    def _refuse_stale(self, state) -> dict:
+        """Journal the §12.2 stale-admission refusal for one
+        queued intent the drainer has reached: refused at claim
+        with cause ``stale-admission``, never executed under a
+        stale price. Returns the refusal entry."""
+        cause = (
+            f"stale-admission: intent admitted at "
+            f"{_field(state, 'intent_ts')!r} exceeded "
+            f"queue_max_residence_seconds="
+            f"{self._max_residence_seconds()} before claim "
+            f"(SI-50 §12.2) — refused at claim, never executed "
+            f"under a stale price; re-propose at fresh prices")
+        raw = record_queue_refusal(
+            self.journal, _task_seq_of(state), _edit_id(state),
+            _intent_seq(state), cause)
+        return raw if isinstance(raw, dict) else {
+            "edit_id": _edit_id(state),
+            "intent_seq": _intent_seq(state), "cause": cause}
+
+    # -- read-pool eligibility (§8.1) ---------------------------------------
+    @staticmethod
+    def _pool_eligible(state) -> bool:
+        """True iff ``state`` may execute in the read pool
+        (§8.1): read-class (the folded, gate-priced effective
+        class) with **no ordering key**. A read with a declared
+        key is keyed work and drains serially like everything
+        else (§7.2)."""
+        return _field(state, "effective_class") == "read" \
+            and _field(state, "ordering_key") is None
 
     # -- claiming (§5.3) ----------------------------------------------------
     def claim(self, state) -> dict:
@@ -754,43 +1018,68 @@ class Drainer:
     # -- the drain ----------------------------------------------------------------
     def drain_task(self, task_seq, budget_seconds=None,
                    max_intents=None) -> dict:
-        """Drain one task's queue, serially (§7.1, §10, §12.4).
+        """Drain one task's queue (§7.1, §8, §10, §12.4).
 
         Recovery runs first (§13). Then, re-folding after every
         step (the fold is the state; nothing is cached across an
-        execution): if the task's stop is in force, stop
-        (``stop-in-force``); an intent already claimed by *this*
-        drainer with no outcome (e.g. just recovery-re-claimed)
-        executes first; otherwise the lowest-sequence claimable
-        intent is claimed (§5.3) and executed. An integrity
-        refusal (§12.4 rule 4 — claim/intent mismatch, TOCTOU,
-        class change, schema re-validation) freezes the drain
-        (``integrity-failure``). When nothing is claimable:
-        ``stop-in-force`` if a held intent remains, ``blocked``
-        if queued/claimed work remains unconcluded, else
-        ``queue-empty``. When the drain budget (the argument, or
-        the policy's ``queue_drain_budget_seconds`` — absent
-        1920, malformed 0) elapses with non-terminal intents
-        remaining: ``drain-budget-exhausted`` (§10.2 point 4).
+        execution):
 
-        Returns {"task_seq", "claims", "executions",
+        - dependency skips propagate (§7.3): a queued intent
+          whose ``success`` dependency concluded any other way
+          is journaled ``skipped`` and never runs;
+        - if the task's stop is in force, stop
+          (``stop-in-force``);
+        - a barrier intent that concluded during this drain
+          flushes perception (``barrier``, §10.2 point 2);
+        - an intent already claimed by *this* drainer with no
+          outcome (e.g. just recovery-re-claimed) executes
+          first, serially;
+        - otherwise the lowest-sequence claimable intent is
+          reached: stale ones (past the §12.2 residence bound)
+          are refused at claim, and the claimable set is then
+          either executed serially (keyed / write / execute
+          work) or — when the lowest claimable intent is an
+          unkeyed read and the §8 bound allows — claimed in
+          intent order and executed concurrently in the read
+          pool, up to ``queue_max_concurrent_reads`` at once.
+
+        An integrity refusal (§12.4 rule 4 — claim/intent
+        mismatch, TOCTOU, class change, schema re-validation)
+        freezes the drain (``integrity-failure``). When nothing
+        is claimable: ``stop-in-force`` if a held intent
+        remains, ``blocked`` if queued/claimed work remains
+        unconcluded, else ``queue-empty``. When the drain
+        budget (the argument, or the policy's
+        ``queue_drain_budget_seconds`` — absent 1920, malformed
+        0) elapses with non-terminal intents remaining:
+        ``drain-budget-exhausted`` (§10.2 point 4).
+
+        Returns {"task_seq", "claims", "executions", "skips",
         "perception", "sync_reason", "integrity_failure",
-        "summary"}: the claims this drain journaled (recovery
-        re-claims included), each execution by edit id, ONE
-        batched observation set (§10) over the outcomes concluded
-        during this drain, and the final queue summary."""
+        "concurrency_bound", "summary"}: the claims this drain
+        journaled (recovery re-claims included), the skips it
+        journaled (§7.3), each execution by edit id, ONE batched
+        observation set (§10) over the outcomes concluded during
+        this drain, and the final queue summary."""
         started = time.monotonic()
         budget = budget_seconds if budget_seconds is not None \
             else self._drain_budget_seconds()
+        bound = self.max_concurrent_reads()
 
         baseline_fold = _fold(self.journal, task_seq)
         baseline_outcomes = {
             _field(s, "outcome_seq") for s in _fold_intents(baseline_fold)
             if _field(s, "outcome_seq") is not None}
+        # Barrier intents still open when this drain began: if
+        # one concludes during the drain, §10.2 point 2 fires.
+        baseline_barrier = {
+            _edit_id(s) for s in _fold_intents(baseline_fold)
+            if _field(s, "barrier") and not _is_terminal(s)}
 
         recovery = self.recover(task_seq=task_seq)
         claims: list = list(recovery["reclaimed"])
         executions: dict = {}
+        skips: list = []
         collected: set = set()
         integrity_failure = False
         sync_reason = "queue-empty"
@@ -803,7 +1092,23 @@ class Drainer:
                         and outcome_seq not in baseline_outcomes:
                     collected.add(outcome_seq)
 
+        def _barrier_concluded(fold) -> bool:
+            return any(
+                _edit_id(s) in baseline_barrier and _is_terminal(s)
+                for s in _fold_intents(fold))
+
+        def _integrity_hit(execution) -> bool:
+            return isinstance(execution, dict) \
+                and execution.get("status") == "refused" \
+                and any(marker in str(execution.get("detail") or "")
+                        for marker in _INTEGRITY_MARKERS)
+
         while True:
+            # §7.3: conclusions from the previous round may have
+            # left success dependents unmet — skip them (and
+            # cascade) before anything else is claimed.
+            skips.extend(self._propagate_skips(task_seq))
+
             fold = _fold(self.journal, task_seq)
             _collect(fold)
             states = [s for s in _fold_intents(fold)
@@ -815,6 +1120,9 @@ class Drainer:
             if _task_stop_in_force(fold, task_seq) or any(
                     _state_name(s) == "held" for s in states):
                 sync_reason = "stop-in-force"
+                break
+            if _barrier_concluded(fold):
+                sync_reason = "barrier"
                 break
             if not non_terminal:
                 sync_reason = "queue-empty"
@@ -846,46 +1154,104 @@ class Drainer:
                      "edit_id": _edit_id(state),
                      "intent_seq": _intent_seq(state),
                      "drainer_id": self.drainer_id})
-            else:
-                claimable = [s for s in states
-                             if self.claimable(s, fold)]
-                if not claimable:
-                    if any(_state_name(s) == "held" for s in states):
-                        sync_reason = "stop-in-force"
-                    elif any(_state_name(s) in (
-                            "queued", "claimed") for s in states):
-                        sync_reason = "blocked"
-                    else:
-                        sync_reason = "queue-empty"
+                attempt_key = (_edit_id(state),
+                               claim.get("seq")
+                               if isinstance(claim, dict) else None)
+                if attempt_key in attempted:
+                    # This claim was already executed in this drain
+                    # and the fold still shows no outcome: executing
+                    # it again would break at-most-once per claim
+                    # (§14).
+                    sync_reason = "blocked"
                     break
-                state = min(
-                    claimable,
-                    key=lambda s: (_intent_seq(s) is None,
-                                   _intent_seq(s) or 0))
-                claim = self.claim(state)
-                claims.append(claim)
+                attempted.add(attempt_key)
+                execution = self.execute_claim(state, claim)
+                executions[_edit_id(state)] = execution
+                if _integrity_hit(execution):
+                    integrity_failure = True
+                    sync_reason = "integrity-failure"
+                    break
+                continue
 
+            claimable = sorted(
+                (s for s in states if self.claimable(s, fold)),
+                key=lambda s: (_intent_seq(s) is None,
+                               _intent_seq(s) or 0))
+            if not claimable:
+                if any(_state_name(s) == "held" for s in states):
+                    sync_reason = "stop-in-force"
+                elif any(_state_name(s) in (
+                        "queued", "claimed") for s in states):
+                    sync_reason = "blocked"
+                else:
+                    sync_reason = "queue-empty"
+                break
+
+            # §12.2: claim-time residence. A claimable intent the
+            # drainer has reached that has been queued past the
+            # residence bound is refused at claim, stale-priced,
+            # however it would re-validate.
+            now = datetime.now(timezone.utc)
+            stale = [s for s in claimable
+                     if self._residence_expired(s, now)]
+            if stale:
+                for state in stale:
+                    self._refuse_stale(state)
+                continue
+
+            head = claimable[0]
+            batch = []
+            if bound > 1 and self._pool_eligible(head):
+                batch = [s for s in claimable
+                         if self._pool_eligible(s)][:bound]
+            if len(batch) >= 2:
+                # §8: claims journaled serially, in intent order,
+                # BEFORE any of the batch executes; executions
+                # then overlap in the pool; outcome journaling
+                # serializes in the journal itself (§8.3).
+                batch_claims = []
+                for state in batch:
+                    claim = self.claim(state)
+                    claims.append(claim)
+                    batch_claims.append((state, claim))
+                    attempted.add((
+                        _edit_id(state),
+                        claim.get("seq")
+                        if isinstance(claim, dict) else None))
+                with ThreadPoolExecutor(
+                        max_workers=len(batch_claims)) as pool:
+                    futures = {
+                        pool.submit(self.execute_claim, state, claim):
+                        state
+                        for state, claim in batch_claims}
+                    for future in as_completed(futures):
+                        state = futures[future]
+                        executions[_edit_id(state)] = future.result()
+                fold = _fold(self.journal, task_seq)
+                _collect(fold)
+                if any(_integrity_hit(e) for e in (
+                        executions[_edit_id(s)] for s in batch)):
+                    integrity_failure = True
+                    sync_reason = "integrity-failure"
+                    break
+                continue
+
+            # Serial step: keyed, write-class, and execute-class
+            # work — and every intent when the bound resolves to
+            # 1 — claims and executes one at a time (§8.1).
+            state = head
+            claim = self.claim(state)
+            claims.append(claim)
             attempt_key = (_edit_id(state),
                            claim.get("seq")
                            if isinstance(claim, dict) else None)
             if attempt_key in attempted:
-                # This claim was already executed in this drain and
-                # the fold still shows no outcome: executing it
-                # again would break at-most-once per claim (§14).
                 sync_reason = "blocked"
                 break
             attempted.add(attempt_key)
-
             execution = self.execute_claim(state, claim)
             executions[_edit_id(state)] = execution
-
-            fold = _fold(self.journal, task_seq)
-            _collect(fold)
-
-            if isinstance(execution, dict) \
-                    and execution.get("status") == "refused" \
-                    and any(marker in str(execution.get("detail") or "")
-                            for marker in _INTEGRITY_MARKERS):
+            if _integrity_hit(execution):
                 integrity_failure = True
                 sync_reason = "integrity-failure"
                 break
@@ -898,8 +1264,10 @@ class Drainer:
             "task_seq": task_seq,
             "claims": claims,
             "executions": executions,
+            "skips": skips,
             "perception": perception,
             "sync_reason": sync_reason,
             "integrity_failure": integrity_failure,
+            "concurrency_bound": bound,
             "summary": queue_summary(final_fold, task_seq),
         }

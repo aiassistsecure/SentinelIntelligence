@@ -36,8 +36,10 @@ B-3's ``_live_ctx`` (a :class:`ToolContext` with
 - batched perception (§10, §17.6): a two-intent drain returns
   ONE observation set, two provenance-complete observations in
   outcome-sequence order, with the queue summary attached;
-- claimable (§7.1) as a unit: per-key FIFO, Q-1 ``depends_on``
-  satisfaction (any terminal state), the stop fold, and a
+- claimable (§7.1) as a unit: per-key FIFO, ``depends_on``
+  satisfaction (Q-1's any-terminal-state reading, superseded
+  by SI-52/Q-2's §7.3 requirement semantics — the claimable
+  test below asserts the Q-2 reading), the stop fold, and a
   missing dependency failing closed; Q-1 concurrency is 1.
 """
 import os
@@ -555,13 +557,25 @@ def test_claimable_fifo_dependencies_and_stop():
     dependent = _qs("e-dep", 12,
                     deps=[{"seq": 10, "requirement": "outcome"}])
     fold = _fold_of(done, dependent)
-    # Q-1 depends_on semantics: the dependency concluded in ANY
-    # terminal state — satisfied (requirement semantics are Q-2).
+    # Q-1 depends_on semantics (any terminal state satisfies)
+    # were superseded by SI-52/Q-2's §7.3 requirement semantics:
+    # an `outcome` dependent is satisfied by the dependency's
+    # recorded conclusion (here: executed).
     assert drainer.claimable(dependent, fold) is True
     rejected_dep = _qs("e-dep2", 13,
                        deps=[{"seq": 10, "requirement": "success"}])
-    done.state = "rejected"  # also terminal, also satisfies in Q-1
-    assert drainer.claimable(rejected_dep, _fold_of(done, rejected_dep))
+    done.state = "rejected"
+    # Q-2: a `success` requirement is NOT satisfied by a
+    # rejected dependency — the dependent is not claimable;
+    # the drainer skips it instead (§7.3, SI-52).
+    assert drainer.claimable(rejected_dep, _fold_of(done, rejected_dep)) \
+        is False
+    # Q-2: `outcome` IS satisfied by that same rejection — any
+    # recorded conclusion satisfies `outcome`.
+    outcome_dep = _qs("e-dep3", 17,
+                      deps=[{"seq": 10, "requirement": "outcome"}])
+    assert drainer.claimable(outcome_dep, _fold_of(done, outcome_dep)) \
+        is True
 
     # A dependency naming no folded intent fails closed.
     orphan = _qs("e-orphan", 14, deps=[{"seq": 777,
