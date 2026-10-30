@@ -131,6 +131,20 @@ def build_corpus(work_root: str, outside_path: str) -> list:
     row("valid-test_run", _intent("test_run", {"path": "tests"}),
         "ESCALATE", "execute", "Valid test run; shadow ESCALATE.")
 
+    row("valid-hearth_restart",
+        _intent("hearth.restart",
+                {"model": "muse",
+                 "spine_event": {"hash": "hash-corpus", "seq": 41}}),
+        "ESCALATE", "external",
+        "Valid seam-crossing restart proposal (SI-55/S-2b); "
+        "external class, shadow ESCALATE on this non-live context.")
+    row("valid-hearth_notify",
+        _intent("hearth.notify",
+                {"model": "muse", "message": "model muse was lost"}),
+        "ESCALATE", "external",
+        "Valid seam-crossing notify proposal (SI-55/S-2b); "
+        "external class, shadow ESCALATE on this non-live context.")
+
     # -- class-policy escalation (distinct from shadow) -----------------
     row("class-policy-escalate-write",
         _intent("fs_write", {"path": "notes/plan.md", "content": "x"}),

@@ -68,7 +68,11 @@ docs/SI-54-q4-measurement.md: the §16 quantities are
 measured for the scripted miniature workloads (the
 §8.2 default of 4 is kept on that evidence); the Hearth
 path, NEDB-backend, non-miniature and claim-lease
-quantities remain UNMEASURED.
+quantities remain UNMEASURED. SI-55 (S-2b) registers the
+seam-crossing ``hearth.*`` tools in the registry
+(external-class, no local executor): watcher proposals gate
+on their merits and an ADMIT rests pending — S-3 work
+submission to the gaia fork remains unbuilt.
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import
@@ -78,10 +82,12 @@ paths.
 """
 from si.gaia.policy import TOOL_POLICY_DEFAULTS, resolve_tool_policy
 from si.gaia.registry import (
+    HEARTH_SEAM_TOOL_NAMES,
     LIVE_TOOLS_B2,
     LIVE_TOOLS_B3,
     REGISTRY,
     RFC_V1_TOOL_NAMES,
+    SEAM_CROSSING_TOOLS,
     TOOL_CLASSES,
     ToolSpec,
     get_tool,
@@ -90,10 +96,12 @@ from si.gaia.registry import (
 )
 
 __all__ = [
+    "HEARTH_SEAM_TOOL_NAMES",
     "LIVE_TOOLS_B2",
     "LIVE_TOOLS_B3",
     "REGISTRY",
     "RFC_V1_TOOL_NAMES",
+    "SEAM_CROSSING_TOOLS",
     "TOOL_CLASSES",
     "TOOL_POLICY_DEFAULTS",
     "ToolSpec",

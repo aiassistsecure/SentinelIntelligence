@@ -106,8 +106,13 @@ def test_tool_kind_cannot_be_redressed_as_delta():
 
 # -- criterion 2: the registry ----------------------------------------------
 def test_registry_name_set_equals_rfc_section8_table():
-    assert set(REGISTRY) == set(RFC_V1_TOOL_NAMES)
-    assert len(REGISTRY) == 12
+    # SI-55/S-2b grows the registry by exactly the hearth seam
+    # names; the RFC §8 subset still equals the RFC table exactly.
+    from si.gaia.registry import HEARTH_SEAM_TOOL_NAMES
+    assert set(RFC_V1_TOOL_NAMES) <= set(REGISTRY)
+    assert set(REGISTRY) == set(RFC_V1_TOOL_NAMES) | set(
+        HEARTH_SEAM_TOOL_NAMES)
+    assert len(REGISTRY) == 14
 
 
 def test_every_tool_is_fully_specified():
@@ -121,7 +126,9 @@ def test_every_tool_is_fully_specified():
         assert spec.reversibility in ("reversible", "compensable",
                                       "one-way")
         assert spec.default_timeout_seconds >= 1
-        assert spec.introduced_by == "SI-41/B-1"
+        assert spec.introduced_by == (
+            "SI-55/S-2b" if name.startswith("hearth.")
+            else "SI-41/B-1")
         assert spec.to_dict()["name"] == name
 
 
@@ -138,6 +145,10 @@ def test_registry_classes_and_reversibility_match_rfc():
         "shell_exec": ("execute", "one-way"),
         "code_exec": ("execute", "one-way"),
         "test_run": ("execute", "one-way"),
+        # SI-55/S-2b seam-crossing tools: external class (the
+        # effect lands on the fork's system, not SI's work root).
+        "hearth.restart": ("external", "compensable"),
+        "hearth.notify": ("external", "one-way"),
     }
     for name, (cls, rev) in expect.items():
         spec = get_tool(name)
@@ -223,7 +234,7 @@ def corpus(tmp_path_factory):
 def test_corpus_is_complete(corpus):
     _root, rows = corpus
     names = {r["name"] for r in rows}
-    assert len(rows) == 27
+    assert len(rows) == 29  # 27 B-1 rows + 2 SI-55/S-2b hearth rows
     # Every registered tool appears in a valid row.
     valid_tools = {r["intent"].tool for r in rows
                    if r["name"].startswith("valid-")}

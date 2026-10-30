@@ -29,6 +29,19 @@ arg the registry did not declare is an arg the gate cannot price.
 ``type`` may be a string or a list of strings (the one extension the
 result schemas need, e.g. a measured value that is a number or
 ``None``); every other feature stays inside the RFC's subset.
+
+SI-55 / S-2b adds the seam-crossing ``hearth.*`` tools (see the
+§8.4 block below): names evidenced in-repo by the S-2a slice —
+``hearth.restart`` (the seam test fixture's watcher proposal) and
+``hearth.notify`` (named alongside it in docs/S-2a-proposal-
+ingest.md §3 as a fork watcher candidate name). Registering a name
+is *existence only*: these tools are NOT in any local live set and
+no SI executor handler exists for them — their execution, if it
+ever happens, crosses the seam to the gaia fork (S-3, unbuilt).
+Their consequence class is ``external`` — the honest class for an
+actuation whose effect lands on a system outside SI's work root —
+which answers the class-vocabulary question G-9 §16.4 left open
+for these names: no new class was invented.
 """
 from __future__ import annotations
 
@@ -86,16 +99,38 @@ class ToolSpec:
 
 
 def _spec(name, description, args_schema, result_schema, cls, rev,
-          timeout=30):
+          timeout=30, introduced_by="SI-41/B-1"):
     return ToolSpec(
         name=name, version=1, description=description,
         args_schema=args_schema, result_schema=result_schema,
         consequence_class=cls, reversibility=rev,
-        default_timeout_seconds=timeout)
+        default_timeout_seconds=timeout, introduced_by=introduced_by)
 
 
-# The complete v1 surface (RFC §8) — 12 tools, no more, no fewer.
-# A test asserts this name set equals the RFC §8 table exactly.
+#: args.spine_event in a watcher proposal (G-9 §8.2): the fork
+#: spine event the watcher observed, duplicating the proposal's
+#: caused_by by construction (the seam validates agreement).
+_SPINE_EVENT = {
+    "type": "object", "required": ["hash", "seq"],
+    "properties": {
+        "hash": _STR,
+        "seq": {"type": "integer", "minimum": 0}}}
+
+#: The SI-side result record for a seam-crossing tool at this
+#: slice: the intent rests pending — nothing was submitted to the
+#: fork (S-3 unbuilt) and nothing executed locally. This is NOT a
+#: fork outcome shape; outcome return is S-5, unbuilt.
+_SEAM_PENDING_RESULT = {
+    "type": "object", "required": ["status", "model"],
+    "properties": {
+        "status": {"type": "string", "enum": ["pending"]},
+        "model": {"type": "string"},
+        "detail": {"type": "string"}}}
+
+# The v1 surface: the RFC §8 table (12 tools) plus, since
+# SI-55/S-2b, the two seam-crossing hearth.* tools of §8.4 below.
+# A test asserts the RFC subset equals the RFC §8 table exactly
+# and the full registry equals RFC + hearth seam names exactly.
 _TOOLS = [
     # -- §8.1 filesystem and navigation (read / write) ----------------
     _spec(
@@ -287,6 +322,43 @@ _TOOLS = [
              "parse": {"type": "string", "enum": ["ok", "failed"]},
              "output": {"type": "string"}}},
         "execute", "one-way", timeout=120),
+    # -- §8.4 seam-crossing tools (SI-55 / S-2b) --------------------
+    # NOT locally executable: no executor handler exists and these
+    # names are in no LIVE_TOOLS set — the B-2/B-3 executor refuses
+    # them by construction. An ADMIT rests pending (see gate.py's
+    # seam labels); S-3 work submission to the fork is unbuilt.
+    _spec(
+        "hearth.restart",
+        "Ask the gaia fork to restart a model it manages (the "
+        "fork residency watcher's proposal for a model observed "
+        "lost, G-9 §8). Seam-crossing: SI registers the name so "
+        "the gate can price it; SI does NOT restart anything — "
+        "execution belongs to the fork via S-3 (unbuilt), so an "
+        "ADMIT here is a journaled pending self-edit only. Args "
+        "are the watcher proposal's args exactly as evidenced by "
+        "the S-2a fixture: the model name, plus the observed "
+        "spine event when the watcher carries one.",
+        {"type": "object", "required": ["model"],
+         "properties": {"model": _STR, "spine_event": _SPINE_EVENT}},
+        _SEAM_PENDING_RESULT,
+        "external", "compensable", timeout=120,
+        introduced_by="SI-55/S-2b"),
+    _spec(
+        "hearth.notify",
+        "Ask the gaia fork to surface a notification about a "
+        "model it manages (named alongside hearth.restart as a "
+        "fork watcher candidate name in docs/S-2a-proposal-"
+        "ingest.md §3). Seam-crossing, like hearth.restart: no "
+        "local execution exists. Only `model` is required — no "
+        "in-repo evidence pins a message field, so `message` is "
+        "declared optional rather than invented as required; "
+        "undeclared args still REJECT at the gate.",
+        {"type": "object", "required": ["model"],
+         "properties": {"model": _STR, "message": {"type": "string"},
+                        "spine_event": _SPINE_EVENT}},
+        _SEAM_PENDING_RESULT,
+        "external", "one-way",
+        introduced_by="SI-55/S-2b"),
 ]
 
 #: name -> ToolSpec, in RFC §8 order.
@@ -300,6 +372,16 @@ RFC_V1_TOOL_NAMES = frozenset({
     "journal_query", "bundle_status", "probe_run",
     "shell_exec", "code_exec", "test_run",
 })
+
+#: The seam-crossing names registered by SI-55 / S-2b: the fork
+#: watcher's candidate tools, evidenced in-repo (see §8.4 above).
+#: Registration is existence only — these names are deliberately
+#: in NEITHER live set below, and the executor refuses them.
+HEARTH_SEAM_TOOL_NAMES = frozenset({"hearth.restart", "hearth.notify"})
+
+#: Alias naming the property, not the origin: tools whose
+#: execution (S-3, unbuilt) crosses the seam to the gaia fork.
+SEAM_CROSSING_TOOLS = HEARTH_SEAM_TOOL_NAMES
 
 #: The SI-43 / B-2 LIVE set (RFC §15 B-2): the read/write-class
 #: tools of §8.1 + §8.2 whose execution is live, miniature-scoped,
