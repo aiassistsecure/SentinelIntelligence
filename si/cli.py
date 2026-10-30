@@ -534,6 +534,19 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_gaia_serve(args) -> int:
+    """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
+    service adapter for a bundle — POST /tasks runs a submitted
+    task through the B-3 machinery and returns the result with
+    its provenance trail. Submitter identity is a mandatory
+    journaled provenance field, NOT authentication; there is no
+    auth and no security claim (localhost by default). Exposure
+    through the Hearth gateway is proposal H-2, not built."""
+    from si.gaia.service import serve_service
+    serve_service(args.path, host=args.host, port=args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="si", description="SI-0 reference runtime: the self-writing loop.")
@@ -684,6 +697,34 @@ def build_parser() -> argparse.ArgumentParser:
                           "entry (attribution record, not "
                           "cryptographic authentication)")
     ptk.set_defaults(func=cmd_task)
+
+    pgs = sub.add_parser("gaia-serve", help="SI-46/B-5: serve the "
+                                            "Gaia service adapter "
+                                            "for a bundle over local "
+                                            "HTTP (POST /tasks runs "
+                                            "a submitted task "
+                                            "through the B-3 "
+                                            "machinery and returns "
+                                            "the result with its "
+                                            "journal-serialised "
+                                            "provenance trail; "
+                                            "submitter identity is "
+                                            "a mandatory journaled "
+                                            "provenance field, NOT "
+                                            "authentication; no "
+                                            "auth, localhost by "
+                                            "default; exposure "
+                                            "through the Hearth "
+                                            "gateway is proposal "
+                                            "H-2, not built)")
+    pgs.add_argument("path", help="bundle directory")
+    pgs.add_argument("--host", default="127.0.0.1",
+                     help="bind host (default: 127.0.0.1, localhost "
+                          "only; no auth — do not expose beyond "
+                          "localhost)")
+    pgs.add_argument("--port", type=int, default=8000,
+                     help="bind port (default: 8000; 0 = ephemeral)")
+    pgs.set_defaults(func=cmd_gaia_serve)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "

@@ -22,7 +22,14 @@ residency PERCEIVE adapter (observations tagged
 ``hearth:/residency``, journaled via existing methods), and the
 gateway client whose inference leg is conditional on a
 Hearth-served real base (§12.3) — exercised against a labelled
-replay/stub, with the Hearth path UNMEASURED. Demo bundles keep shadow
+replay/stub, with the Hearth path UNMEASURED. B-5 (SI-46) adds
+:mod:`si.gaia.service`: the §12.5(a) service adapter — a
+stdlib-HTTP service in ``si serve``'s pattern that accepts a
+task with a mandatory journaled submitter identity (asserted,
+not authentication), runs it through the B-3 machinery, and
+returns the result with its provenance trail serialised from
+the journal. Exposure through the Hearth gateway remains
+proposal H-2, not built. Demo bundles keep shadow
 behaviour throughout — claiming otherwise would be fabrication
 (RFC §15).
 
