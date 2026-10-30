@@ -8,19 +8,24 @@ tool policy resolution, the scripted verdict corpus, and the shadow
 journaling helpers; successor slices grow it (executor, task loop,
 SSE stream, Hearth bridge).
 
-B-1 is SHADOW only: tool intents are gated and journaled, every
-outcome ESCALATEs or REJECTs, and execution is recorded as
-``not-evaluated — shadow mode``. No executor exists in this package
-yet and nothing here runs a tool — claiming otherwise would be
-fabrication (RFC §15 B-1).
+B-1 was SHADOW only: tool intents were gated and journaled, every
+outcome ESCALATEd or REJECTed, and execution was recorded as
+``not-evaluated — shadow mode``. B-2 (SI-43) adds
+:mod:`si.gaia.executor`: live execution of the read/write tool set
+on miniature bundles only, under the journaled-args rule. Demo
+bundles keep shadow behaviour, and the execute-class tools stay
+shadow until B-3 — claiming otherwise would be fabrication
+(RFC §15).
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import
-them without a cycle; :mod:`si.gaia.shadow` and
-:mod:`si.gaia.corpus` are imported by their full module paths.
+them without a cycle; :mod:`si.gaia.shadow`, :mod:`si.gaia.corpus`,
+and :mod:`si.gaia.executor` are imported by their full module
+paths.
 """
 from si.gaia.policy import TOOL_POLICY_DEFAULTS, resolve_tool_policy
 from si.gaia.registry import (
+    LIVE_TOOLS_B2,
     REGISTRY,
     RFC_V1_TOOL_NAMES,
     TOOL_CLASSES,
@@ -31,6 +36,7 @@ from si.gaia.registry import (
 )
 
 __all__ = [
+    "LIVE_TOOLS_B2",
     "REGISTRY",
     "RFC_V1_TOOL_NAMES",
     "TOOL_CLASSES",
