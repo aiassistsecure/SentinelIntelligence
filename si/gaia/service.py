@@ -25,6 +25,13 @@ Surface (localhost by default; see the honesty labels below):
     GET  /tasks/<seq>   -> the provenance trail for the task
                            journaled at <seq>, rebuilt from the
                            journal (404 when no such task)
+    GET  /events        -> (SI-47) the SSE event spine: every
+                           journal row serialised as a
+                           server-sent event whose id IS the
+                           journal seq; resume via the
+                           Last-Event-ID header (or ?after=);
+                           replays, then follows live by
+                           poll-the-journal (see si.gaia.events)
 
 A submission is a JSON object::
 
@@ -77,13 +84,30 @@ async handle, no streaming in B-5. The NEDB journal stays the
 source of truth; every response field is serialised from
 journal rows or from the task runner's return, which itself
 summarises journaled steps.
+
+**SI-47 adds ``GET /events``** — the Gaia SSE event spine
+(:mod:`si.gaia.events`): every journal row serialised as a
+server-sent event whose id IS the journal seq, resumable via
+``Last-Event-ID``, replaying then following live by
+poll-the-journal (labelled polling — no push channel exists).
+It rides this same server and the same honesty labels: no
+authentication, localhost by default, and no gateway exposure
+(H-2, unchanged). Reading the stream journals nothing.
 """
 from __future__ import annotations
 
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
+from si.gaia.events import (
+    SSE_RESUME_LABEL,
+    SSE_TAIL_LABEL,
+    format_comment,
+    parse_resume_seq,
+    stream_events,
+)
 from si.gaia.task import SUBMITTER_IDENTITY_LABEL, run_task
 from si.gate import Intent
 
@@ -424,6 +448,8 @@ class ServiceState:
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
             "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
+            "events_tail": SSE_TAIL_LABEL,
+            "events_resume": SSE_RESUME_LABEL,
         }
 
     def description(self) -> dict:
@@ -443,7 +469,15 @@ class ServiceState:
                 "GET /tasks/<seq>": (
                     "the provenance trail for the task journaled "
                     "at <seq>, rebuilt from the journal"),
+                "GET /events": (
+                    "the SSE event spine (SI-47): every journal "
+                    "row as a server-sent event, id == journal "
+                    "seq; Last-Event-ID (or ?after=<seq>) resumes "
+                    "the replay; then follows live by "
+                    "poll-the-journal (?follow=0 for replay only)"),
             },
+            "events_tail": SSE_TAIL_LABEL,
+            "events_resume": SSE_RESUME_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
             "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
@@ -483,13 +517,79 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
             self.end_headers()
             self.wfile.write(body)
 
+        def _handle_events(self) -> None:
+            """GET /events — the SI-47 SSE spine over real HTTP.
+
+            Opens its own journal handle (the B-5 trail's
+            per-request pattern — a following stream polls for
+            as long as the client stays connected, so it never
+            shares the request path's handles), streams the
+            replay from the resume seq, then follows live by
+            poll-the-journal until the client disconnects. A
+            failed write IS the disconnect signal: the stream
+            stops, the journal closes, and the handler thread —
+            a daemon thread, see make_service_server — ends.
+            Nothing is journaled by reading the stream.
+            """
+            from si.bundle import load_bundle
+            from si.journal import open_journal
+            query = parse_qs(urlparse(self.path).query)
+            after_q = (query.get("after", [None])[0]
+                       or query.get("last_event_id", [None])[0])
+            try:
+                after = parse_resume_seq(
+                    self.headers.get("Last-Event-ID"), after_q)
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+                return
+            follow = query.get("follow", ["1"])[0] \
+                not in ("0", "false", "no")
+            manifest = load_bundle(state.bundle_dir)
+            journal = open_journal(state.bundle_dir, manifest)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                # A following stream is keep-alive by nature; a
+                # replay-only stream must CLOSE at its end — with
+                # no Content-Length, the close is how the client
+                # learns the replay is complete.
+                self.send_header("Connection", "keep-alive" if follow
+                                 else "close")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                banner = format_comment(
+                    f"gaia-events (SI-47): replaying journal rows "
+                    f"after seq {after}; {SSE_TAIL_LABEL}; "
+                    f"{SSE_RESUME_LABEL}; "
+                    f"auth: {NO_AUTH_LABEL}")
+                self.wfile.write(banner.encode("utf-8"))
+                self.wfile.flush()
+                for block in stream_events(
+                        journal, after_seq=after, follow=follow):
+                    try:
+                        self.wfile.write(block.encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError,
+                            OSError):
+                        break
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                if not follow:
+                    self.close_connection = True
+                journal.close()
+
         def do_GET(self) -> None:  # noqa: N802 - stdlib name
-            if self.path in ("/health", "/health/"):
+            path = urlparse(self.path).path
+            if path in ("/health", "/health/"):
                 self._send_json(200, state.health())
-            elif self.path == "/":
+            elif path == "/":
                 self._send_json(200, state.description())
-            elif self.path.startswith("/tasks/"):
-                raw = self.path[len("/tasks/"):].strip("/")
+            elif path in ("/events", "/events/"):
+                self._handle_events()
+            elif path.startswith("/tasks/"):
+                raw = path[len("/tasks/"):].strip("/")
                 try:
                     task_seq = int(raw)
                 except ValueError:
@@ -542,7 +642,14 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
                 return
             self._send_json(200, out)
 
-    server = ThreadingHTTPServer((host, int(port)), Handler)
+    class _Server(ThreadingHTTPServer):
+        # SI-47: an /events stream follows for as long as its
+        # client stays connected — handler threads are daemons
+        # so a still-connected stream can never block server
+        # shutdown or process exit.
+        daemon_threads = True
+
+    server = _Server((host, int(port)), Handler)
     server.state = state  # type: ignore[attr-defined]
     return server
 
@@ -563,7 +670,8 @@ def serve_service(bundle_dir: str, host: str = "127.0.0.1",
     print(f"serving gaia-service for bundle {state.bundle_id}")
     print(f"head at startup: {state.startup_head}")
     print(f"listening on http://{actual_host}:{actual_port} "
-          f"(GET /health, POST /tasks, GET /tasks/<seq>)")
+          f"(GET /health, POST /tasks, GET /tasks/<seq>, "
+          f"GET /events)")
     print(f"note: {NO_AUTH_LABEL}")
     print(f"note: {GATEWAY_EXPOSURE_LABEL}")
     try:
