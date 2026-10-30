@@ -54,10 +54,30 @@ Stdlib only, CPU only. No Hearth code is imported and no
 Hearth gateway exposure is built (that route is proposal H-2,
 Mark's); the Hearth residency observations streamed here are
 only the ones B-4 already journaled as ``experiences`` rows.
+
+**SI-48 — filtered subscriptions.** :class:`EventFilter` adds
+the server-side filter SI-47 §2.3 deferred, under exactly the
+rule that section pinned: a filter is a **pure projection of
+this same stream** — it selects events from the one journal
+serialisation, creates no store, journals nothing, and never
+renumbers: a filtered event's ``id`` is still its journal
+``seq``, so gaps in a filtered stream are the filtered-out
+seqs, labelled as such (:data:`SSE_FILTER_LABEL`), not missing
+history. Dimensions: ``collection`` (one of the five journal
+collections), ``event`` (the derived SSE event name),
+``kind`` (the journal row's own ``kind`` field), and ``task``
+(a task seq — membership derived from the journal's own
+§10.2 chain, see :func:`task_member_seqs`). Values within one
+dimension are alternatives (OR); dimensions combine
+conjunctively (AND). Malformed filter values fail closed
+with ``ValueError`` (the service maps it to HTTP 400), exactly
+like malformed resume points. With no filter, the stream is
+byte-identical to SI-47.
 """
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from si.journal import COLLECTIONS
@@ -76,6 +96,21 @@ SSE_TAIL_LABEL = (
     "the NEDB journal remains the source of truth and every "
     "event is a serialisation of one journal row (SI-47)")
 
+#: The SI-48 filter label, carried on the service surface and
+#: on every filtered connection's banner.
+SSE_FILTER_LABEL = (
+    "filtered streams (SI-48) are a projection of the same "
+    "journal stream: event ids remain journal seqs and are "
+    "never renumbered, so gaps in a filtered stream are the "
+    "filtered-out seqs, not missing history; filters create "
+    "no store and journal nothing")
+
+#: Filter query parameters recognised on GET /events (SI-48).
+FILTER_PARAMS = ("collection", "event", "kind", "task")
+
+_FILTER_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
 #: The resume-semantics label, carried on the service surface.
 SSE_RESUME_LABEL = (
     "event id == journal seq: resume with the standard "
@@ -83,6 +118,243 @@ SSE_RESUME_LABEL = (
     "equivalent) and the stream replays exactly the journal "
     "rows after that seq, in order, then follows live "
     "(SI-47)")
+
+
+# -- SI-48: filtered subscriptions (a projection, never a store) -------------
+
+class EventFilter:
+    """A server-side filter over the journal event stream.
+
+    Each dimension is ``None`` (unconstrained) or a frozenset
+    of accepted values; ``task_seq`` is ``None`` or one task's
+    journal seq. An event matches when every constrained
+    dimension accepts it. ``collection`` / ``event`` / ``kind``
+    are per-event checks (:meth:`matches_static`); ``task``
+    membership is a property of the journal's §10.2 chain, not
+    of one row alone, so it is resolved over an event universe
+    by :func:`task_member_seqs` and applied by
+    :func:`apply_event_filter` / the read/stream paths.
+    """
+
+    __slots__ = ("collections", "event_names", "kinds", "task_seq")
+
+    def __init__(self, collections=None, event_names=None, kinds=None,
+                 task_seq=None):
+        self.collections = (frozenset(collections)
+                            if collections is not None else None)
+        self.event_names = (frozenset(event_names)
+                            if event_names is not None else None)
+        self.kinds = frozenset(kinds) if kinds is not None else None
+        self.task_seq = task_seq
+
+    def is_empty(self) -> bool:
+        """True when no dimension is constrained (SI-47 stream)."""
+        return (self.collections is None and self.event_names is None
+                and self.kinds is None and self.task_seq is None)
+
+    def matches_static(self, event: dict) -> bool:
+        """The per-event dimensions: collection, event name, kind.
+
+        A row with no ``kind`` field (checkpoints, provenance)
+        never matches a kind filter — the filter names a field
+        the row does not carry, it does not invent one.
+        """
+        if self.collections is not None \
+                and event["collection"] not in self.collections:
+            return False
+        if self.event_names is not None \
+                and event["event"] not in self.event_names:
+            return False
+        if self.kinds is not None:
+            kind = event["row"].get("kind")
+            if kind is None or kind not in self.kinds:
+                return False
+        return True
+
+    def describe(self) -> str:
+        """A one-line human description, for banners and logs."""
+        if self.is_empty():
+            return "no filter (full journal stream, SI-47)"
+        parts = []
+        if self.collections is not None:
+            parts.append("collection in {"
+                         + ",".join(sorted(self.collections)) + "}")
+        if self.event_names is not None:
+            parts.append("event in {"
+                         + ",".join(sorted(self.event_names)) + "}")
+        if self.kinds is not None:
+            parts.append("kind in {"
+                         + ",".join(sorted(self.kinds)) + "}")
+        if self.task_seq is not None:
+            parts.append(f"task == {self.task_seq} "
+                         f"(journal §10.2 chain membership)")
+        return "filter: " + " AND ".join(parts) \
+            + " — ids remain journal seqs; gaps are filtered-out seqs"
+
+    def __eq__(self, other):
+        return isinstance(other, EventFilter) and all(
+            getattr(self, f) == getattr(other, f) for f in self.__slots__)
+
+    def __repr__(self):
+        return f"EventFilter({self.describe()})"
+
+
+def _filter_values(params: dict, name: str) -> list:
+    """All values given for one filter param: repeated params
+    and comma-separated values both count (``?kind=a&kind=b``
+    and ``?kind=a,b`` are the same filter)."""
+    raw = params.get(name) or []
+    if isinstance(raw, str):
+        raw = [raw]
+    values = []
+    for item in raw:
+        values.extend(str(item).split(","))
+    return values
+
+
+def parse_event_filter(params: dict | None) -> EventFilter:
+    """Build an :class:`EventFilter` from query params; fail closed.
+
+    ``params`` maps names to value lists (``parse_qs`` shape) or
+    single strings. Only :data:`FILTER_PARAMS` are read; other
+    params (``after``, ``follow``…) are the caller's business.
+    Every supplied token is validated: an unknown collection, a
+    blank value, a token with characters no collection / event
+    name / kind can carry, or a non-integer task seq each raise
+    ``ValueError`` — a malformed filter is refused outright,
+    never silently widened to the unfiltered stream (which
+    would quietly deliver history the subscriber did not ask
+    for — and, read the other way, never silently narrowed).
+    """
+    params = params or {}
+    parsed: dict = {}
+    for name in ("collection", "event", "kind"):
+        values = _filter_values(params, name)
+        if not values:
+            continue
+        for v in values:
+            if not v or not _FILTER_TOKEN_RE.match(v):
+                raise ValueError(
+                    f"filter {name} value {v!r} is malformed: "
+                    f"values are non-empty tokens of letters, "
+                    f"digits, '_', '.', '-' (comma-separated or "
+                    f"repeated)")
+        if name == "collection":
+            unknown = [v for v in values if v not in COLLECTIONS]
+            if unknown:
+                raise ValueError(
+                    f"filter collection value(s) {unknown!r} are "
+                    f"not journal collections; the journal's "
+                    f"collections are {list(COLLECTIONS)!r}")
+            parsed["collections"] = values
+        elif name == "event":
+            parsed["event_names"] = values
+        else:
+            parsed["kinds"] = values
+    task_values = _filter_values(params, "task")
+    if task_values:
+        if len(task_values) != 1:
+            raise ValueError(
+                f"filter task takes exactly one task seq, got "
+                f"{task_values!r}")
+        raw = task_values[0]
+        try:
+            task_seq = int(raw.strip())
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"filter task must be a non-negative integer "
+                f"journal seq (the seq of a task entry), got "
+                f"{raw!r}") from None
+        if task_seq < 0:
+            raise ValueError(
+                f"filter task must be a non-negative integer "
+                f"journal seq (the seq of a task entry), got "
+                f"{raw!r}")
+        parsed["task_seq"] = task_seq
+    return EventFilter(**parsed)
+
+
+def task_member_seqs(events: list, task_seq: int) -> set:
+    """The seqs belonging to one task, derived from the journal rows.
+
+    Membership is the B-5 provenance trail's §10.2 chain,
+    computed over ``events`` (the full journal serialisation —
+    pass the unfiltered, untruncated list; membership derived
+    from a truncated universe would silently drop chained
+    rows): the task entry itself; its ``task_stop`` (whose
+    record cites the task seq); every ``self_edits`` row whose
+    intent cites a seq already in the set, or names
+    ``task@<seq>`` among its parents, transitively; the
+    ``provenance`` edges of those edits; the ``experiences``
+    outcomes recorded against those edits; and the ``deltas``
+    rows those edits materialised. Nothing else is a member —
+    in particular checkpoints are shared journal bookkeeping,
+    not task steps, and stay out. An unknown task seq yields
+    just ``{task_seq}`` if such a row exists, else the empty
+    set — membership is derived, never fabricated.
+    """
+    by_id = {e["id"]: e for e in events}
+    task_event = by_id.get(task_seq)
+    if task_event is None or not (
+            task_event["collection"] == "experiences"
+            and (task_event["row"].get("record") or {}).get("kind")
+            == "task"):
+        return set()
+    task_ref = f"task@{task_seq}"
+    members = {task_seq}
+    edit_ids: set = set()
+    for e in events:
+        row = e["row"]
+        if e["collection"] == "experiences" \
+                and (row.get("record") or {}).get("task_seq") == task_seq:
+            members.add(e["id"])
+    changed = True
+    while changed:
+        changed = False
+        for e in events:
+            if e["id"] in members:
+                continue
+            row = e["row"]
+            if e["collection"] == "self_edits":
+                intent = row.get("intent") or {}
+                cited = set(intent.get("source_seqs") or [])
+                parents = set(intent.get("parents") or [])
+                if cited & members or task_ref in parents:
+                    members.add(e["id"])
+                    if row.get("edit_id"):
+                        edit_ids.add(row["edit_id"])
+                    changed = True
+            elif e["collection"] in ("provenance", "deltas"):
+                if row.get("child") in edit_ids \
+                        or row.get("self_edit_id") in edit_ids:
+                    members.add(e["id"])
+                    changed = True
+            elif e["collection"] == "experiences":
+                if row.get("self_edit_id") in edit_ids:
+                    members.add(e["id"])
+                    changed = True
+    return members
+
+
+def apply_event_filter(events: list, event_filter: EventFilter | None,
+                       universe: list | None = None) -> list:
+    """Project ``events`` through ``event_filter`` (SI-48).
+
+    ``universe`` is the full journal serialisation the task
+    dimension derives membership from; it defaults to
+    ``events`` itself (correct whenever ``events`` is a full
+    replay). Order and ids are untouched — projection only.
+    """
+    if event_filter is None or event_filter.is_empty():
+        return list(events)
+    members = None
+    if event_filter.task_seq is not None:
+        members = task_member_seqs(
+            universe if universe is not None else events,
+            event_filter.task_seq)
+    return [e for e in events
+            if event_filter.matches_static(e)
+            and (members is None or e["id"] in members)]
 
 
 # -- reading the journal as an event sequence ---------------------------------
@@ -93,7 +365,8 @@ def _backend_of(source):
 
 
 def read_journal_events(source, after_seq: int = 0,
-                        limit: int | None = None) -> list:
+                        limit: int | None = None,
+                        event_filter: EventFilter | None = None) -> list:
     """Every journal row with ``seq > after_seq``, as events, in order.
 
     ``source`` is a :class:`si.journal.Journal` or its backend.
@@ -103,6 +376,13 @@ def read_journal_events(source, after_seq: int = 0,
     journal's own ordering, not a per-collection concatenation.
     Each event is ``{"id": seq, "event": name, "collection":
     coll, "row": row}`` with ``row`` the full stored row.
+
+    With ``event_filter`` (SI-48) the result is that same list
+    projected through the filter: task membership is derived
+    from the full journal (read from seq 0), never from the
+    truncated ``after_seq`` window, and ``limit`` applies
+    after filtering. Without a filter the result is exactly
+    SI-47's.
     """
     backend = _backend_of(source)
     entries = []
@@ -118,6 +398,12 @@ def read_journal_events(source, after_seq: int = 0,
         "collection": coll,
         "row": _jsonable_row(row),
     } for seq, coll, row in entries]
+    if event_filter is not None and not event_filter.is_empty():
+        universe = events
+        if event_filter.task_seq is not None and after_seq > 0:
+            universe = read_journal_events(source, after_seq=0)
+        events = apply_event_filter(events, event_filter,
+                                    universe=universe)
     if limit is not None:
         events = events[:limit]
     return events
@@ -233,7 +519,8 @@ def parse_resume_seq(header_value=None, query_value=None) -> int:
 def stream_events(source, after_seq: int = 0, follow: bool = False,
                   poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
                   should_stop=None, max_polls: int | None = None,
-                  heartbeat: bool = True):
+                  heartbeat: bool = True,
+                  event_filter: EventFilter | None = None):
     """Yield SSE text blocks for the journal, from ``after_seq``.
 
     Replay first: every row with ``seq > after_seq``, in order,
@@ -252,16 +539,43 @@ def stream_events(source, after_seq: int = 0, follow: bool = False,
     HTTP client bounds it by disconnecting, which the service
     handler turns into ``should_stop`` / a failed write).
 
+    With ``event_filter`` (SI-48) each poll reads the
+    *unfiltered* window and projects it: the cursor advances
+    over every scanned row, matching or not, so filtered-out
+    rows are never re-scanned and the resume point is always a
+    true journal seq — while only matching rows are yielded,
+    with their original seqs as ids (gaps are the filtered-out
+    seqs). Task membership is re-derived from the full journal
+    each poll, so a chained row journaled mid-tail joins its
+    task's stream. Without a filter the yielded blocks are
+    byte-identical to SI-47.
+
     The generator owns no threads and no processes: stopping
     it — by exhausting it, closing it, or letting the consumer
     walk away — leaves nothing behind.
     """
+    filtering = event_filter is not None and not event_filter.is_empty()
     cursor = after_seq
     polls = 0
     while True:
-        events = read_journal_events(source, after_seq=cursor)
+        scanned = read_journal_events(source, after_seq=cursor)
+        if filtering:
+            universe = scanned
+            if event_filter.task_seq is not None:
+                universe = read_journal_events(source, after_seq=0)
+                # The universe read stops at the old cursor for
+                # rows scanned before; rows in `scanned` extend it.
+                seen = {e["id"] for e in universe}
+                universe = universe + [e for e in scanned
+                                       if e["id"] not in seen]
+            events = apply_event_filter(scanned, event_filter,
+                                        universe=universe)
+        else:
+            events = scanned
+        for event in scanned:
+            if event["id"] > cursor:
+                cursor = event["id"]
         for event in events:
-            cursor = event["id"]
             yield format_sse(event)
         if not follow:
             return
@@ -271,9 +585,10 @@ def stream_events(source, after_seq: int = 0, follow: bool = False,
         if should_stop is not None and should_stop():
             return
         if not events and heartbeat:
+            label = "SI-48, filtered" if filtering else "SI-47"
             yield format_comment(
                 f"heartbeat — following journal after seq {cursor} "
-                f"(poll-the-journal every {poll_interval}s, SI-47)")
+                f"(poll-the-journal every {poll_interval}s, {label})")
             # A heartbeat consumer (the HTTP handler) may have
             # walked away during the yield; re-check before sleeping.
             if should_stop is not None and should_stop():
@@ -283,12 +598,18 @@ def stream_events(source, after_seq: int = 0, follow: bool = False,
 
 __all__ = [
     "DEFAULT_POLL_INTERVAL_SECONDS",
+    "FILTER_PARAMS",
+    "SSE_FILTER_LABEL",
     "SSE_RESUME_LABEL",
     "SSE_TAIL_LABEL",
+    "EventFilter",
+    "apply_event_filter",
     "event_name_for_row",
     "format_comment",
     "format_sse",
+    "parse_event_filter",
     "parse_resume_seq",
     "read_journal_events",
     "stream_events",
+    "task_member_seqs",
 ]

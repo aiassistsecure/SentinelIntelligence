@@ -36,7 +36,12 @@ spine — every journal row serialised as a server-sent event
 whose id IS the journal seq (Last-Event-ID = journal seq, so
 replay and live stream are one mechanism), exposed as
 ``GET /events`` on the B-5 service; the live tail is
-poll-the-journal, labelled as polling.
+poll-the-journal, labelled as polling. SI-48 adds filtered
+subscriptions on that surface — ``collection`` / ``event`` /
+``kind`` / ``task`` filters as a pure projection of the same
+stream (ids stay journal seqs; gaps are filtered-out seqs) —
+plus :mod:`si.gaia.events_client`, the stdlib-only reference
+consumer (``si gaia-events``).
 
 This ``__init__`` deliberately imports only the registry and policy
 submodules (stdlib-only, no gate import) so ``si.gate`` can import

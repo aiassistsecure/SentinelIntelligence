@@ -93,6 +93,15 @@ poll-the-journal (labelled polling — no push channel exists).
 It rides this same server and the same honesty labels: no
 authentication, localhost by default, and no gateway exposure
 (H-2, unchanged). Reading the stream journals nothing.
+
+**SI-48 adds filtered subscriptions on ``GET /events``** —
+``?collection=``, ``?event=``, ``?kind=`` and ``?task=<seq>``
+project the same stream server-side (a projection, never a
+second store: ids remain journal seqs, gaps are the
+filtered-out seqs, malformed filter values are refused with
+400 like malformed resume points, and unfiltered requests are
+byte-identical to SI-47). The reference consumer is
+:mod:`si.gaia.events_client` (``si gaia-events``).
 """
 from __future__ import annotations
 
@@ -102,9 +111,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from si.gaia.events import (
+    SSE_FILTER_LABEL,
     SSE_RESUME_LABEL,
     SSE_TAIL_LABEL,
     format_comment,
+    parse_event_filter,
     parse_resume_seq,
     stream_events,
 )
@@ -450,6 +461,7 @@ class ServiceState:
             "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
             "events_tail": SSE_TAIL_LABEL,
             "events_resume": SSE_RESUME_LABEL,
+            "events_filter": SSE_FILTER_LABEL,
         }
 
     def description(self) -> dict:
@@ -474,10 +486,17 @@ class ServiceState:
                     "row as a server-sent event, id == journal "
                     "seq; Last-Event-ID (or ?after=<seq>) resumes "
                     "the replay; then follows live by "
-                    "poll-the-journal (?follow=0 for replay only)"),
+                    "poll-the-journal (?follow=0 for replay only); "
+                    "SI-48 filters project the same stream: "
+                    "?collection=<coll>[,<coll>...], "
+                    "?event=<name>, ?kind=<kind>, ?task=<seq> "
+                    "(repeatable; malformed values are 400; ids "
+                    "stay journal seqs — gaps are filtered-out "
+                    "seqs)"),
             },
             "events_tail": SSE_TAIL_LABEL,
             "events_resume": SSE_RESUME_LABEL,
+            "events_filter": SSE_FILTER_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
             "gateway_exposure": GATEWAY_EXPOSURE_LABEL,
@@ -533,12 +552,14 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
             """
             from si.bundle import load_bundle
             from si.journal import open_journal
-            query = parse_qs(urlparse(self.path).query)
+            query = parse_qs(urlparse(self.path).query,
+                             keep_blank_values=True)
             after_q = (query.get("after", [None])[0]
                        or query.get("last_event_id", [None])[0])
             try:
                 after = parse_resume_seq(
                     self.headers.get("Last-Event-ID"), after_q)
+                event_filter = parse_event_filter(query)
             except ValueError as e:
                 self._send_json(400, {"error": str(e)})
                 return
@@ -558,15 +579,26 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
                                  else "close")
                 self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
-                banner = format_comment(
-                    f"gaia-events (SI-47): replaying journal rows "
-                    f"after seq {after}; {SSE_TAIL_LABEL}; "
-                    f"{SSE_RESUME_LABEL}; "
-                    f"auth: {NO_AUTH_LABEL}")
+                if event_filter.is_empty():
+                    banner_text = (
+                        f"gaia-events (SI-47): replaying journal "
+                        f"rows after seq {after}; {SSE_TAIL_LABEL}; "
+                        f"{SSE_RESUME_LABEL}; "
+                        f"auth: {NO_AUTH_LABEL}")
+                else:
+                    banner_text = (
+                        f"gaia-events (SI-48): replaying journal "
+                        f"rows after seq {after}; "
+                        f"{event_filter.describe()}; "
+                        f"{SSE_FILTER_LABEL}; {SSE_TAIL_LABEL}; "
+                        f"{SSE_RESUME_LABEL}; "
+                        f"auth: {NO_AUTH_LABEL}")
+                banner = format_comment(banner_text)
                 self.wfile.write(banner.encode("utf-8"))
                 self.wfile.flush()
                 for block in stream_events(
-                        journal, after_seq=after, follow=follow):
+                        journal, after_seq=after, follow=follow,
+                        event_filter=event_filter):
                     try:
                         self.wfile.write(block.encode("utf-8"))
                         self.wfile.flush()
