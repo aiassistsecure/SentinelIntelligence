@@ -16,7 +16,13 @@ on miniature bundles only, under the journaled-args rule. B-3
 (SI-44) grows the executor to the execute-class tools
 (``shell_exec`` / ``code_exec`` / ``test_run``) and adds the task
 loop (:mod:`si.gaia.task`: operator tasks, chaining, budgets,
-§10.4 stop rules, the ``si task`` CLI). Demo bundles keep shadow
+§10.4 stop rules, the ``si task`` CLI). B-4 (SI-45) adds
+:mod:`si.gaia.hearth`: the §12.2.1 declaration record, the
+residency PERCEIVE adapter (observations tagged
+``hearth:/residency``, journaled via existing methods), and the
+gateway client whose inference leg is conditional on a
+Hearth-served real base (§12.3) — exercised against a labelled
+replay/stub, with the Hearth path UNMEASURED. Demo bundles keep shadow
 behaviour throughout — claiming otherwise would be fabrication
 (RFC §15).
 
