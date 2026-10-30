@@ -121,6 +121,22 @@ def _next_delta_id(manifest: dict) -> str:
     return f"d{n:04d}"
 
 
+def _record_tool_shadow_outcome(journal: Journal, gate: Gate, intent,
+                                ctx, edit_id: str, verdict: str) -> None:
+    """SI-42 (SI-41 RFC §15 B-1): journal a tool cycle's shadow outcome.
+
+    In B-1 a tool intent can only REJECT or ESCALATE (no executor
+    exists), and its outcome is journaled as a ``tool_result``
+    experience recording execution as not-evaluated — shadow mode,
+    via the same writer si.gaia.shadow uses, so the loop path and
+    the standalone path record identically shaped outcomes.
+    """
+    from si.gaia.shadow import record_shadow_outcome
+    info = gate.classify_tool_intent(intent, ctx)
+    record_shadow_outcome(journal, intent, edit_id, verdict,
+                          effective_class=info.get("effective_class"))
+
+
 def _record_training_hyperparams(journal: Journal, candidate,
                                  child: str, parents: list) -> None:
     """SI-21: journal a trained candidate's hyperparams, when it
@@ -220,6 +236,9 @@ def run_cycle(bundle_path: str, mind, gate: Gate | None = None) -> dict:
                 report.verdict, report.to_dict())
             journal.set_edit_result(
                 edit_id, "rejected" if report.verdict == "REJECT" else "escalated")
+            if intent.kind == "tool":
+                _record_tool_shadow_outcome(
+                    journal, gate, intent, ctx, edit_id, report.verdict)
             manifest = _save_and_anchor(
                 bundle_dir, journal, manifest,
                 note=f"{report.verdict.lower()} {edit_id}")
@@ -466,6 +485,9 @@ def _run_miniature_cycle(bundle_dir: str, manifest: dict, journal,
             report.verdict, report.to_dict())
         journal.set_edit_result(
             edit_id, "rejected" if report.verdict == "REJECT" else "escalated")
+        if intent.kind == "tool":
+            _record_tool_shadow_outcome(
+                journal, gate, intent, ctx, edit_id, report.verdict)
         _record_training_hyperparams(journal, candidate, edit_id, [])
         manifest = _save_and_anchor(
             bundle_dir, journal, manifest,
