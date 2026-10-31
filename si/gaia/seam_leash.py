@@ -138,7 +138,8 @@ LEASH_CROSSING_LABEL: str = (
     "was exercised by this slice (transports are labelled "
     "replay/stub or loopback test double unless an operator "
     "supplies a real URL); live interop and performance "
-    "UNMEASURED")
+    "UNMEASURED"
+    " Measured under S-7 (SI-62): median 124 ms (range 103–156, N=30) for Q-C3 leash per-record crossing on the miniature fixture, embedded journal, Class L transport, double service median 0.4 ms, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Measured under S-7 (SI-62): median 0.1 ms (range 0.1–0.4, N=30) for Q-C1 leash fold check (stop in force) on the miniature fixture, embedded journal, Class S transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED.")
 
 #: Serialises scan → transport → journal per process, so two
 #: concurrent syncs cannot both send one record.

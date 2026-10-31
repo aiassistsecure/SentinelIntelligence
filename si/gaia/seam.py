@@ -154,7 +154,8 @@ SEAM_INGEST_LABEL: str = (
     "(SI-56, si.gaia.seam_submit) is a separate explicit step "
     "on the pending self-edit; "
     "there is no authentication — loopback only (G-9 §14); "
-    "performance UNMEASURED")
+    "performance UNMEASURED"
+    " Measured under S-7 (SI-62): median 192 ms (range 179–246, N=30) for Q-A5 ingest invocation (ESCALATE) on the miniature fixture, embedded journal, Class S transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Measured under S-7 (SI-62): median 187 ms (range 173–321, N=30) for Q-A6 HTTP ingest on the miniature fixture, embedded journal, Class L transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED.")
 
 #: The registry status, stated plainly (see the module
 #: docstring): the S-2a gap is CLOSED by SI-55/S-2b — the

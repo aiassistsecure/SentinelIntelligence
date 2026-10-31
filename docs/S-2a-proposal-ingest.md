@@ -25,7 +25,7 @@ plainly what is live and what is not.
 | §10 leash crossing (S-4) | **not built in this slice** — no leash record crossed at S-2a time; built later SI-side by SI-57 (docs/S-4-leash-crossing.md) |
 | §11 Flow 3: outcome return (S-5) | **not built** — no outcome returns to the fork |
 | §14 security posture | **as designed** — no authentication on the route; loopback only; identities are asserted provenance, journaled verbatim |
-| Performance | **UNMEASURED** — no latency/throughput number is claimed for ingest |
+| Performance | Measured under S-7 (SI-62): median 192 ms (range 179–246, N=30) for Q-A5 ingest invocation (ESCALATE) on the miniature fixture, embedded journal, Class S transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Measured under S-7 (SI-62): median 187 ms (range 173–321, N=30) for Q-A6 HTTP ingest on the miniature fixture, embedded journal, Class L transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Live fork egress latency remains **UNMEASURED**. |
 
 ---
 

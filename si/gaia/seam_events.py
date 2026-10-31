@@ -127,7 +127,8 @@ EVENT_FORWARD_LABEL: str = (
     "was exercised by this slice (transports are labelled "
     "replay/stub or loopback test double unless an operator "
     "supplies a real URL); live interop and performance "
-    "UNMEASURED")
+    "UNMEASURED"
+    " Measured under S-7 (SI-62): median 152 ms (range 138–158, N=10) for Q-E4 event forward pass (100 events) on the miniature fixture, embedded journal, Class L transport, double service median 0.3 ms, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Measured under S-7 (SI-62): median 0.55 s (range 0.50–0.58, N=5) for Q-E5 event catch-up (backlog 500, single unlimited pass) on the miniature fixture, embedded journal, Class L transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; fork ingest (UNBUILT) and SSE visibility remain UNMEASURED.")
 
 #: Serialises one forwarding pass per process, so two
 #: concurrent passes cannot push the same window twice or
