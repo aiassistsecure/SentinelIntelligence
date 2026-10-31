@@ -74,8 +74,12 @@ seam-crossing ``hearth.*`` tools in the registry
 on their merits and an ADMIT rests pending. SI-56 (S-3) adds
 :mod:`si.gaia.seam_submit`: a pending ADMIT is submitted
 across the seam in a separate explicit step and journaled as
-a ``gaia_work`` row in state submitted/awaiting outcome —
-S-4 leash crossing and S-5 outcome return remain unbuilt,
+a ``gaia_work`` row in state submitted/awaiting outcome.
+SI-57 (S-4) adds :mod:`si.gaia.seam_leash`: journaled
+operator stops/resumes on a model's seam task cross to the
+fork's leash routes as §12.3 records/heartbeats, journaled
+only on a confirmed ACK, and a stop in force refuses seam
+submission SI-side — S-5 outcome return remains unbuilt,
 and live fork interop is UNMEASURED.
 
 This ``__init__`` deliberately imports only the registry and policy

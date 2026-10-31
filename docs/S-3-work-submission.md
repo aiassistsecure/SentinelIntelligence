@@ -15,7 +15,7 @@ journaled. §0 says plainly what is live and what is not.
 | Submitted item's state | **`submitted/awaiting outcome (S-5 unbuilt)`** — never "completed"; the self-edit's own `result` stays `pending` |
 | Dedup | **live** — one edit, one submission: a repeat attempt returns the journaled submission and calls no transport |
 | Failures | **honest** — non-202, a 202 without a work ID (`submission-unconfirmed`), and transport failures journal no submission; the edit stays pending and a retry is free |
-| §10 leash crossing (S-4) | **not built** — no leash record crosses with a submission; fork-side leash state is not consulted |
+| §10 leash crossing (S-4) | **built after this slice by SI-57** (docs/S-4-leash-crossing.md) — at S-3 time no leash record crossed with a submission and fork-side leash state was not consulted; S-4 now refuses submission SI-side while a stop is in force and carries the §10.3.3 leash tip in the payload |
 | §11 Flow 3: outcome return (S-5) | **not built** — no outcome returns; no fork outcome is claimed anywhere |
 | Live fork interop | **UNMEASURED** — no live fork endpoint was exercised; evidence is the labelled replay/stub transport and a loopback HTTP test double through the real `HttpTransport`. An env-gated live test (`SI_S3_WORK_SUBMISSION_URL`) follows the S-2a egress-probe pattern and skips when unset |
 | Performance | **UNMEASURED** |
@@ -82,8 +82,10 @@ through the real HTTP transport.
 
 ## 2. What remains unbuilt
 
-S-4, S-5 (until it lands a submitted item is
-`submitted/awaiting outcome` forever, by label and by fact),
+S-5 (until it lands a submitted item is
+`submitted/awaiting outcome` forever, by label and by fact;
+S-4 leash crossing has since been built SI-side by SI-57,
+docs/S-4-leash-crossing.md),
 any SI-service HTTP route for submission (outbound and
 operator-invoked here), live fork interop, and all performance
 numbers: **UNMEASURED**.

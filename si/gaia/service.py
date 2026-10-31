@@ -127,7 +127,11 @@ only after journaling (§8.3); dedup by ``caused_by`` makes
 fork retries free. An ADMIT here submits nothing at ingest —
 S-3 work submission (SI-56, si.gaia.seam_submit) is a separate
 explicit step on the pending self-edit, exposed here as
-:func:`submit_work` for callers with a transport/URL. No authentication, localhost
+:func:`submit_work` for callers with a transport/URL.
+S-4 leash crossing (SI-57, si.gaia.seam_leash) is likewise a
+separate explicit step in its own module; a stop in force
+also refuses :func:`submit_work` SI-side.
+No authentication, localhost
 only (G-9 §14); the registry gap label applies
 (``REGISTRY_GAP_LABEL``, imported from :mod:`si.gaia.seam`).
 """
@@ -647,6 +651,7 @@ def submit_work(bundle_dir: str, edit_id: str | None = None,
     if edit_id is not None:
         return submit_seam_edit(bundle_dir, edit_id, **kwargs)
     return submit_pending_seam_work(bundle_dir, **kwargs)
+
 
 
 # -- the HTTP service -------------------------------------------------------------
