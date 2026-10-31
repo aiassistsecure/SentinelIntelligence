@@ -173,6 +173,12 @@ from si.gaia.seam import (
     SEAM_INGEST_LABEL,
     ingest_proposal,
 )
+from si.gaia.seam_outcome import (
+    OUTCOME_RETURN_LABEL,
+    mark_seam_outcome_unknown,
+    poll_seam_outcomes,
+    reconcile_seam_outcomes,
+)
 from si.gaia.seam_submit import (
     WORK_SUBMISSION_LABEL,
     submit_pending_seam_work,
@@ -656,12 +662,53 @@ def submit_work(bundle_dir: str, edit_id: str | None = None,
     ``timeout_s``). No new HTTP route is added in this slice —
     submission is an outbound, operator-invoked act, and its
     results carry WORK_SUBMISSION_LABEL's honesty labels
-    (state submitted/awaiting outcome; S-4/S-5 unbuilt; live
+    (state submitted/awaiting outcome at submit time; S-5
+    outcome return is the separate explicit step below; live
     interop UNMEASURED).
     """
     if edit_id is not None:
         return submit_seam_edit(bundle_dir, edit_id, **kwargs)
     return submit_pending_seam_work(bundle_dir, **kwargs)
+
+
+def poll_outcomes(bundle_dir: str, **kwargs) -> dict:
+    """S-5 (SI-59): poll open seam submissions for outcomes.
+
+    A thin wrapper over :mod:`si.gaia.seam_outcome`'s poller
+    (G-9 §11.2): terminal fork statuses are journaled as
+    ``tool_result`` seam outcomes, once per work_id. Keyword
+    args are the seam module's (``work_url`` / ``transport`` /
+    ``timeout_s``). No new HTTP route is added in this slice —
+    outcome return is an outbound, operator-invoked act, and
+    its results carry OUTCOME_RETURN_LABEL's honesty labels
+    (live interop UNMEASURED).
+    """
+    return poll_seam_outcomes(bundle_dir, **kwargs)
+
+
+def reconcile_outcomes(bundle_dir: str, outcomes_path: str,
+                       **kwargs) -> dict:
+    """S-5 (SI-59): reconcile against the fork outcomes file.
+
+    A thin wrapper over :mod:`si.gaia.seam_outcome`'s
+    read-only ``outcomes.jsonl`` reconciler (G-9 §11.3);
+    ``cursor`` is the caller's persisted byte offset.
+    """
+    return reconcile_seam_outcomes(bundle_dir, outcomes_path,
+                                   **kwargs)
+
+
+def mark_outcome_unknown(bundle_dir: str, work_id: str,
+                         **kwargs) -> dict:
+    """S-5 (SI-59): journal one seam intent outcome-unknown.
+
+    A thin wrapper over :func:`si.gaia.seam_outcome.
+    mark_seam_outcome_unknown` (G-9 §11.4): an explicit
+    operator act; dispositions remain the existing SI-50
+    §13.4 acts, exposed above as task dispositions.
+    """
+    return mark_seam_outcome_unknown(bundle_dir, work_id,
+                                     **kwargs)
 
 
 
@@ -766,6 +813,7 @@ class ServiceState:
             "events_filter": SSE_FILTER_LABEL,
             "seam_ingest": SEAM_INGEST_LABEL,
             "seam_work_submission": WORK_SUBMISSION_LABEL,
+            "seam_outcome_return": OUTCOME_RETURN_LABEL,
             "seam_registry_gap": REGISTRY_GAP_LABEL,
             "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
@@ -1117,7 +1165,10 @@ __all__ = [
     "build_queue_view",
     "intents_from_script",
     "make_service_server",
+    "mark_outcome_unknown",
+    "poll_outcomes",
     "provenance_trail_for_bundle",
+    "reconcile_outcomes",
     "queue_view_for_bundle",
     "serve_service",
     "submit_disposition",
