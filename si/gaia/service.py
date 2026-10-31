@@ -145,6 +145,14 @@ also refuses :func:`submit_work` SI-side.
 No authentication, localhost
 only (G-9 §14); the registry gap label applies
 (``REGISTRY_GAP_LABEL``, imported from :mod:`si.gaia.seam`).
+
+**S-6 adds the SI journal-event forwarder (SI-60)** —
+:func:`forward_events`, delegating to
+:mod:`si.gaia.seam_events`: journal events are pushed in
+ascending SI journal seq order to an operator-supplied fork
+ingest URL, the caller-held cursor advancing only after each
+HTTP 200 (the SI-49 discipline); the fork ingest half is not
+built by that slice, and live interop is UNMEASURED.
 """
 from __future__ import annotations
 
@@ -172,6 +180,10 @@ from si.gaia.seam import (
     REGISTRY_GAP_LABEL,
     SEAM_INGEST_LABEL,
     ingest_proposal,
+)
+from si.gaia.seam_events import (
+    EVENT_FORWARD_LABEL,
+    forward_journal_events,
 )
 from si.gaia.seam_outcome import (
     OUTCOME_RETURN_LABEL,
@@ -698,6 +710,28 @@ def reconcile_outcomes(bundle_dir: str, outcomes_path: str,
                                    **kwargs)
 
 
+def forward_events(bundle_dir: str, **kwargs) -> dict:
+    """S-6 (SI-60): forward SI journal events to the fork.
+
+    A thin wrapper over :mod:`si.gaia.seam_events`'
+    :func:`forward_journal_events` (G-9 §4.5/§15 S-6):
+    journal events after the caller-held ``cursor`` are
+    pushed one per POST, in ascending SI journal seq order,
+    to the operator-supplied ``ingest_url``; the returned
+    cursor advances only after each HTTP 200, and a 409
+    duplicate/refusal raises SeamProtocolError (a protocol
+    failure, not a retry). Keyword args are the seam
+    module's (``ingest_url`` / ``transport`` / ``cursor`` /
+    ``limit`` / ``timeout_s``). No new HTTP route is added
+    in this slice — forwarding is an outbound,
+    operator-invoked act, the forwarder journals nothing,
+    and its results carry EVENT_FORWARD_LABEL's honesty
+    labels (fork ingest half not built by this slice; live
+    interop UNMEASURED).
+    """
+    return forward_journal_events(bundle_dir, **kwargs)
+
+
 def mark_outcome_unknown(bundle_dir: str, work_id: str,
                          **kwargs) -> dict:
     """S-5 (SI-59): journal one seam intent outcome-unknown.
@@ -814,6 +848,7 @@ class ServiceState:
             "seam_ingest": SEAM_INGEST_LABEL,
             "seam_work_submission": WORK_SUBMISSION_LABEL,
             "seam_outcome_return": OUTCOME_RETURN_LABEL,
+            "seam_event_forward": EVENT_FORWARD_LABEL,
             "seam_registry_gap": REGISTRY_GAP_LABEL,
             "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
@@ -1163,6 +1198,7 @@ __all__ = [
     "ServiceState",
     "build_provenance_trail",
     "build_queue_view",
+    "forward_events",
     "intents_from_script",
     "make_service_server",
     "mark_outcome_unknown",
