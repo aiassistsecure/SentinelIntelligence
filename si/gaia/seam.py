@@ -80,12 +80,14 @@ ESCALATEs; under an ``external: admit`` policy it ADMITs and
 rests ``pending``. Registration is existence only: this module
 still does not map, rename, or special-case ``hearth.*`` names,
 no local executor exists for them, and an ADMIT submits
-nothing (S-3 unbuilt — see below).
+nothing at ingest (S-3 submission is a separate explicit
+step — see below).
 
 **What is NOT built here.** An ADMIT at the seam submits
-nothing anywhere: S-3 work submission back to the fork is
-unbuilt, so an admitted proposal is a journaled, pending
-self-edit and nothing more. The operator leash does not cross
+nothing anywhere at ingest: S-3 work submission back to the
+fork (SI-56, :mod:`si.gaia.seam_submit`) is a separate explicit
+step on a pending ADMIT, so an admitted proposal here is a
+journaled, pending self-edit and nothing more. The operator leash does not cross
 the seam in this slice, and no outcome returns to the fork —
 there is no callback, no egress, no second flow. Gate setup
 and contexts mirror :func:`si.gaia.task.run_task` exactly
@@ -147,9 +149,10 @@ SEAM_INGEST_LABEL: str = (
     "seam ingest is live SI-side (G-9 §8/§12.1): a fork watcher "
     "proposal is validated, deduplicated on caused_by, gated, "
     "and journaled under the model's seam task, and the ACK is "
-    "returned only after journaling; S-3 work submission is "
-    "UNBUILT — an ADMIT here submits nothing to the fork yet, "
-    "it is a journaled pending self-edit and nothing more; "
+    "returned only after journaling; an ADMIT here submits "
+    "nothing to the fork at ingest — S-3 work submission "
+    "(SI-56, si.gaia.seam_submit) is a separate explicit step "
+    "on the pending self-edit; "
     "there is no authentication — loopback only (G-9 §14); "
     "performance UNMEASURED")
 
@@ -167,7 +170,9 @@ REGISTRY_GAP_LABEL: str = (
     "external policy ESCALATEs; an external:admit policy ADMITs "
     "to a journaled pending self-edit) — registration is "
     "existence only: no local executor exists for them, an "
-    "ADMIT submits nothing (S-3 UNBUILT), and no hearth.* name "
+    "ADMIT submits nothing at ingest (S-3/SI-56 submission is "
+    "a separate explicit step; S-5 outcome return UNBUILT), "
+    "and no hearth.* name "
     "is mapped, renamed, or special-cased at the seam")
 
 #: Alias with the accurate name (SI-55/S-2b).

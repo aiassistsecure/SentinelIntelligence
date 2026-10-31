@@ -181,17 +181,22 @@ TOOL_B3_REJECTED_EXECUTION = (
 #: their merits; it does not create a local executor. On a live
 #: context with the external class rule ``admit``, a passing seam
 #: intent ADMITs with the pending label: its self-edit rests
-#: ``pending`` in the journal — S-3 work submission to the gaia
-#: fork is UNBUILT, so nothing is submitted and nothing executes
-#: SI-side. Any label claiming local execution would be false.
+#: ``pending`` in the journal — S-3 work submission
+#: (SI-56, si.gaia.seam_submit) is a separate explicit step an
+#: operator invokes on a pending ADMIT; ingest itself submits
+#: nothing and nothing executes SI-side, and S-5 outcome return
+#: is UNBUILT. Any label claiming local execution would be false.
 TOOL_SEAM_PENDING_EXECUTION = (
     "not executed locally — seam-crossing tool (SI-55/S-2b): "
-    "ADMIT rests pending; S-3 work submission to the gaia fork "
-    "is UNBUILT, so nothing is submitted or executed SI-side")
+    "ADMIT rests pending until S-3 work submission "
+    "(SI-56/S-3, si.gaia.seam_submit) submits it across the "
+    "seam; ingest submits nothing, nothing executes SI-side, "
+    "and S-5 outcome return is UNBUILT")
 #: A passing seam intent escalated by its class policy rule.
 TOOL_SEAM_ESCALATED_EXECUTION = (
     "not executed — escalated by class policy for a seam-crossing "
-    "tool (SI-55/S-2b); S-3 work submission is UNBUILT")
+    "tool (SI-55/S-2b); S-3 submits only ADMITs, so an escalated "
+    "intent is never submitted")
 #: A rejected seam intent on a live context.
 TOOL_SEAM_REJECTED_EXECUTION = (
     "not executed — rejected at gate (SI-55/S-2b seam-crossing tool)")
@@ -869,7 +874,7 @@ class Gate:
         about *admission*, not execution: the admitted self-edit
         rests pending, no executor runs it (the B-3 executor
         refuses tools outside its live set), and S-3 submission
-        to the fork is unbuilt. External-effective *local* tools
+        is a separate explicit step (SI-56), not part of admission. External-effective *local* tools
         (path/cwd-priced) keep the B-3 hold exactly.
         """
         safety, info = self._tool_safety_check(intent, ctx)

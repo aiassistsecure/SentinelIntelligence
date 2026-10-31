@@ -37,7 +37,8 @@ SI-55 / S-2b adds the seam-crossing ``hearth.*`` tools (see the
 ingest.md §3 as a fork watcher candidate name). Registering a name
 is *existence only*: these tools are NOT in any local live set and
 no SI executor handler exists for them — their execution, if it
-ever happens, crosses the seam to the gaia fork (S-3, unbuilt).
+ever happens, crosses the seam to the gaia fork (S-3/SI-56
+in si.gaia.seam_submit; submission is not an outcome — S-5 unbuilt).
 Their consequence class is ``external`` — the honest class for an
 actuation whose effect lands on a system outside SI's work root —
 which answers the class-vocabulary question G-9 §16.4 left open
@@ -118,7 +119,8 @@ _SPINE_EVENT = {
 
 #: The SI-side result record for a seam-crossing tool at this
 #: slice: the intent rests pending — nothing was submitted to the
-#: fork (S-3 unbuilt) and nothing executed locally. This is NOT a
+#: fork at ingest (S-3/SI-56 submits a pending ADMIT in a
+#: separate explicit step) and nothing executed locally. NOT a
 #: fork outcome shape; outcome return is S-5, unbuilt.
 _SEAM_PENDING_RESULT = {
     "type": "object", "required": ["status", "model"],
@@ -326,14 +328,15 @@ _TOOLS = [
     # NOT locally executable: no executor handler exists and these
     # names are in no LIVE_TOOLS set — the B-2/B-3 executor refuses
     # them by construction. An ADMIT rests pending (see gate.py's
-    # seam labels); S-3 work submission to the fork is unbuilt.
+    # seam labels); S-3 work submission is SI-56's separate step.
     _spec(
         "hearth.restart",
         "Ask the gaia fork to restart a model it manages (the "
         "fork residency watcher's proposal for a model observed "
         "lost, G-9 §8). Seam-crossing: SI registers the name so "
         "the gate can price it; SI does NOT restart anything — "
-        "execution belongs to the fork via S-3 (unbuilt), so an "
+        "execution belongs to the fork via S-3 (SI-56 submits an "
+        "ADMIT across the seam; S-5 outcome return is unbuilt), so an "
         "ADMIT here is a journaled pending self-edit only. Args "
         "are the watcher proposal's args exactly as evidenced by "
         "the S-2a fixture: the model name, plus the observed "
@@ -380,7 +383,7 @@ RFC_V1_TOOL_NAMES = frozenset({
 HEARTH_SEAM_TOOL_NAMES = frozenset({"hearth.restart", "hearth.notify"})
 
 #: Alias naming the property, not the origin: tools whose
-#: execution (S-3, unbuilt) crosses the seam to the gaia fork.
+#: execution (S-3/SI-56, si.gaia.seam_submit) crosses the seam.
 SEAM_CROSSING_TOOLS = HEARTH_SEAM_TOOL_NAMES
 
 #: The SI-43 / B-2 LIVE set (RFC §15 B-2): the read/write-class
