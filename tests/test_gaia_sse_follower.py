@@ -41,6 +41,7 @@ from si.gaia.events import EventFilter, read_journal_events
 from si.gaia.events_client import (
     FollowConfig,
     FollowError,
+    collect_events,
     collect_followed,
     follow_events,
     verify_events_against_journal,
@@ -616,6 +617,43 @@ def test_real_service_filtered_follow_live_tail(http):
     thread.join(timeout=10)
     assert [e["id"] for e in received] == [expected_seq]
     assert received[0]["event"] == "experience.observation"
+
+
+def test_real_service_events_connect_after_unanchored_write(http):
+    """SI-58 regression: a NEW /events connection made after a
+    writer journaled rows without re-anchoring the manifest
+    must still stream. The pre-fix handler re-ran load_bundle
+    per connection; its anchor == tip demand failed for exactly
+    this legitimate live-journal state, the unhandled
+    TamperError dropped the socket with no HTTP response, and
+    the follower above died in a RemoteDisconnected retry loop
+    whenever its first (re)connection landed after the writes
+    (a thread-scheduling race — the established-stream SI-47
+    test, which connects before writing, passed all along).
+    The fix gates the stream on the startup bundle verification
+    plus a per-connection journal hash-chain check instead."""
+    from si.bundle import TamperError
+    srv, bundle_dir, _ = http
+    base = f"http://127.0.0.1:{srv.port}"
+    writer = _journal(bundle_dir)
+    try:
+        writer.checkpoint("base", "m", "filtered out, walked over")
+        writer.record_experience(
+            "observation", {"kind": "observation", "note": "live"}, "")
+        expected_seq = writer.tip()[0]
+    finally:
+        writer.close()
+    # The scenario's precondition, stated honestly: the journal
+    # tip really is past the manifest anchor at connect time.
+    with pytest.raises(TamperError):
+        load_bundle(bundle_dir)
+    got = collect_events(
+        base,
+        event_filter=EventFilter(
+            event_names={"experience.observation"}),
+        timeout=15)
+    assert [e["id"] for e in got] == [expected_seq]
+    assert got[0]["event"] == "experience.observation"
 
 
 # -- the CLI surface ------------------------------------------------------------------
