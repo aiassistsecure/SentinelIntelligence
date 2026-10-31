@@ -52,8 +52,20 @@ stays ``pending``: submission is not an outcome.
 
 **State, plainly.** A submitted item's state is
 :data:`SUBMITTED_STATE` — never ``completed``: **S-5 outcome
-return is UNBUILT** and **S-4 leash crossing is UNBUILT** (no
-leash record crosses; fork leash state is not consulted).
+return is UNBUILT**.
+
+**The leash, honoured before submission (S-4 / SI-57).**
+Before any transport call, the journal fold is consulted for
+the edit's seam task (:func:`si.gaia.seam_leash.seam_leash_block`):
+while an operator stop is in force for that task, the
+submission is refused as ``leash-held`` — nothing is
+submitted, nothing is journaled by the refusal, and the edit
+stays ``pending`` until a journaled resume folds the stop
+away. The payload also carries the model's current leash tip
+(§10.3.3's watermark piggyback: the latest leash record's
+journal seq, or the seam task's creation seq when none). The
+crossing of the leash records themselves is
+:mod:`si.gaia.seam_leash`'s separate explicit step.
 Ordering note: the transport call precedes journaling (the work
 ID does not exist before the fork answers), so a crash between
 a 202 and the journal write could orphan fork-side work SI has
@@ -83,6 +95,7 @@ import threading
 from si.bundle import _anchor_checkpoint, _write_manifest, load_bundle
 from si.gaia.hearth import HttpTransport
 from si.gaia.registry import SEAM_CROSSING_TOOLS
+from si.gaia.seam_leash import leash_tip, seam_leash_block
 from si.gate import TOOL_SEAM_PENDING_EXECUTION
 from si.journal import open_journal
 
@@ -101,8 +114,10 @@ WORK_SUBMISSION_LABEL: str = (
     "submitted across the seam and the submission (with the "
     "fork work ID from its 202 response) is journaled as a "
     "gaia_work row; the item's state is submitted/awaiting "
-    "outcome — S-5 outcome return is UNBUILT and S-4 leash "
-    "crossing is UNBUILT; no live fork endpoint was exercised "
+    "outcome — S-5 outcome return is UNBUILT; S-4 leash "
+    "crossing (SI-57, si.gaia.seam_leash) is a separate "
+    "explicit step, and a stop in force for the edit's seam "
+    "task refuses submission here as leash-held; no live fork endpoint was exercised "
     "by this slice (transports are labelled replay/stub or "
     "loopback test double unless an operator supplies a real "
     "URL); live interop and performance UNMEASURED")
@@ -129,13 +144,16 @@ def _extract_work_id(body) -> tuple[str | None, str | None]:
     return None, None
 
 
-def build_work_payload(edit_row: dict) -> dict:
+def build_work_payload(edit_row: dict, *, leash_tip: int | None = None) -> dict:
     """The SI-side submission body for one journaled seam edit.
 
     Built only from the journaled self-edit row (journaled-args
     discipline): tool, args, reason, ``caused_by``, edit id,
     journal seq, seam task seq. SI's submission record design,
     not claimed to be a fork-published schema (none documented).
+    ``leash_tip`` (S-4, §10.3.3) is the watermark piggyback:
+    the model's current leash tip as read from the journal by
+    the caller, or None when the caller did not read it.
     """
     intent = edit_row.get("intent") or {}
     source = intent.get("source_seqs") or []
@@ -149,6 +167,7 @@ def build_work_payload(edit_row: dict) -> dict:
         "args": intent.get("args") or {},
         "reason": edit_row.get("reason") or intent.get("reason"),
         "caused_by": intent.get("caused_by"),
+        "leash_tip": leash_tip,
         "state_after_submit": SUBMITTED_STATE,
     }
 
@@ -256,7 +275,25 @@ def submit_seam_edit(bundle_dir: str, edit_id: str, *,
                 return {"status": "refused", "journaled": False,
                         "problems": problems,
                         "label": WORK_SUBMISSION_LABEL}
-            payload = build_work_payload(edit_row)
+            block = seam_leash_block(journal, edit_row)
+            if block is not None:
+                return {"status": "leash-held", "journaled": False,
+                        "leash": block,
+                        "problems": [
+                            "an operator stop is in force for "
+                            f"this edit's seam task "
+                            f"{block['task_seq']} (stop journaled "
+                            f"at seq {block['stop_seq']}) — the "
+                            "leash is honoured SI-side (G-9 §10, "
+                            "S-4): nothing is submitted while "
+                            "leashed; a journaled queue_resume "
+                            "re-enables submission"],
+                        "label": WORK_SUBMISSION_LABEL}
+            source = (edit_row.get("intent") or {}).get(
+                "source_seqs") or []
+            tip = leash_tip(journal, {"task_seq": source[0]}) \
+                if source else None
+            payload = build_work_payload(edit_row, leash_tip=tip)
             try:
                 status, raw = transport(
                     "POST", submission_url or "",

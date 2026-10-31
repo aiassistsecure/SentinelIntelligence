@@ -16,7 +16,7 @@ could ever submit. §0 says plainly what is live and what is not.
 | ADMIT semantics at the seam | **unchanged from S-2a** — the self-edit rests `pending`, gate report journaled; nothing is submitted and nothing executes locally |
 | Local execution of `hearth.*` | **does not exist** — the names are in no LIVE set; the B-3 executor refuses them by construction |
 | S-3 work submission to the fork | **not built in this slice** — an ADMIT was a journaled pending self-edit and nothing more; SI-56/S-3 has since built submission as a separate explicit step (docs/S-3-work-submission.md) |
-| S-4 leash crossing | **not built** |
+| S-4 leash crossing | **not built in this slice** — built later SI-side by SI-57 (docs/S-4-leash-crossing.md) |
 | S-5 outcome return | **not built** — the registered result schema is the SI-side pending shape, not a fork outcome |
 | Performance | **UNMEASURED** — no latency/throughput claim is made for registration, gating, or ingest |
 
@@ -124,7 +124,8 @@ still-unregistered name so it still tests a true REJECT).
 
 S-3 (work submission of ADMIT seam intents to the fork —
 built after this slice by SI-56, docs/S-3-work-submission.md), S-4
-(operator leash crossing the seam), S-5 (outcome return — until
+(operator leash crossing the seam — built after this slice by
+SI-57, docs/S-4-leash-crossing.md), S-5 (outcome return — until
 then no `hearth.*` execution result exists or is claimed).
 Registration performance and ingest performance remain
 UNMEASURED. The fork side is untouched by this slice.
