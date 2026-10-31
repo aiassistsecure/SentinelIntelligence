@@ -1,18 +1,26 @@
-"""Gaia PROPOSE, slice P-1 (SI-63 RFC §6, §7, §19 P-1; SI-64).
+"""Gaia PROPOSE, slices P-1 + P-2 (SI-63 RFC §6–§9, §14, §19;
+SI-64, SI-65).
 
 What this module is, stated honestly: the *skeleton* of the
 SI-63 ``HearthProposer`` — perception assembly (§6) and tool
 catalogue rendering (§7) as pure, journal-derived functions,
 with their digests (§6.4, §7.4) and the §6.3 bounds / truncation
-labels. What it is **not**:
+labels (P-1, §1–§4 below); plus, since P-2 (§5–§7 below), §8's
+proposal output contract as code, §9's six-stage fail-closed
+parser with reference verification against the fold (§9.3),
+signal translation (§8.7–§8.8), and §14 attempt / response
+record journaling — **REPLAY ONLY**: P-2's parser is exercised
+only against scripted replay responses, against the labelled
+replay transport. What it is **not**:
 
-- **The thinking proposer remains UNBUILT beyond P-1.**
-  :meth:`HearthProposer.propose` exists but makes **no gateway
-  call, by construction** — it never invokes its transport (a
-  test asserts exactly that) and returns the labelled
-  ``not-evaluated`` outcome of SI-63 §16.1/§16.2. Parsing (§8/§9),
-  precondition-gated gateway wiring (§10/§11), and any live model
-  contact are P-2/P-3/P-4, not this slice.
+- **The thinking proposer remains UNBUILT beyond P-2 replay
+  parsing.** :meth:`HearthProposer.propose` exists but makes
+  **no gateway call, by construction** — it never invokes its
+  transport (a test asserts exactly that) and returns the
+  labelled ``not-evaluated`` outcome of SI-63 §16.1/§16.2.
+  Precondition-gated gateway wiring (§10/§11) and any live
+  model contact are P-3/P-4, not these slices. **Live
+  model-authored intent has NEVER YET OCCURRED.**
 - **The real Hearth path remains UNMEASURED.** Nothing here
   contacts a Hearth node, and no number in this module is a
   Hearth-path measurement (SI-63 §18; SI-41 §12.3).
@@ -877,3 +885,836 @@ class HearthProposer:
         }
         self.last_outcome = outcome
         return outcome
+
+    def propose_replay(self, journal, raw, *, admit=None) -> dict:
+        """P-2's replay entry point (SI-65): journal an attempt
+        record, parse the scripted replay body ``raw`` with the
+        §9 six-stage parser, optionally admit through the
+        caller's callback, and journal the §14.3 response
+        record — all labelled REPLAY ONLY. Makes no gateway
+        call and invokes no transport; the thinking proposer
+        remains UNBUILT beyond P-2 replay parsing."""
+        outcome = run_replay_proposal(
+            journal, raw, task_seq=self.task_seq, cycle=self.cycle,
+            registry=self.registry, admit=admit)
+        self.cycle += 1
+        self.last_outcome = outcome
+        return outcome
+
+
+# ---------------------------------------------------------------------------
+# 5. The proposal output contract (§8) — as code (P-2, SI-65)
+# ---------------------------------------------------------------------------
+
+#: P-2's scope label, carried on every record, result, and
+#: outcome this section produces (SI-63 §19 P-2): the parser is
+#: exercised only against scripted replay responses. No live
+#: model was contacted, no live claim is made or implied.
+REPLAY_ONLY_LABEL = (
+    "REPLAY ONLY — SI-65 / P-2 output contract + parser "
+    "exercised against scripted replay responses only; no "
+    "gateway call was made, no live model was contacted, and "
+    "live model-authored intent has NEVER YET OCCURRED "
+    "(SI-63 §19 P-2)")
+
+#: The labelled replay transport P-2 journals against (§14):
+#: a scripted response handed to the parser directly, in the
+#: spirit of si.gaia.hearth.ReplayTransport's label — a replay
+#: is never presented as a real node or a real model.
+REPLAY_TRANSPORT_LABEL_P2 = (
+    "replay/stub — scripted response, not a real Hearth node "
+    "and not a live model (SI-65 / P-2, REPLAY ONLY)")
+
+#: Journal kind of the §14.3 proposal response record, pinned
+#: by this slice (decision D-7; SI-63 Appendix A.2/A.3 adopt
+#: this name). The attempt record kind stays P-1's
+#: :data:`ATTEMPT_RECORD_KIND` (``gaia_proposal_attempt``).
+RESPONSE_RECORD_KIND = "gaia_proposal_response"
+
+#: The §8 contract's version. Forward compatibility is by
+#: version bump, not by tolerance (§9.2 stage 2).
+PROPOSAL_VERSION = 1
+
+#: §8's field sets, pinned as code (§8.1/§8.2). Unknown fields
+#: at any of these levels fail stage 2 — the parser reads only
+#: these fields (§9.4: structural ignoring begins with a closed
+#: schema; authority-shaped extra fields are not a channel).
+PROPOSAL_TOP_FIELDS = frozenset({"proposal"})
+PROPOSAL_FIELDS = frozenset({"version", "intents", "task_signal"})
+PROPOSAL_INTENT_FIELDS = frozenset(
+    {"tool", "args", "reason", "depends_on", "ordering_key"})
+PROPOSAL_SIGNAL_FIELDS = frozenset({"kind", "detail"})
+PROPOSAL_DEPENDS_ON_FIELDS = frozenset({"seq", "requirement"})
+
+#: §8.7 / §8.8's signal kinds — the only two that exist.
+SIGNAL_TASK_COMPLETE = "task_complete"
+SIGNAL_CANNOT_PROCEED = "cannot_proceed"
+PROPOSAL_SIGNAL_KINDS = (SIGNAL_TASK_COMPLETE, SIGNAL_CANNOT_PROCEED)
+
+#: §8.8 / decision D-4's pinned mapping: inability joins the
+#: proposer-exhaustion family under this sub-label. It is never
+#: completion and never a §10.4 stop rule.
+INABILITY_STOP_FAMILY = "proposer-exhausted"
+INABILITY_SUB_LABEL = "model-reported-inability"
+
+#: §9.2's six stages, in order, as (number, name) — pinned so
+#: journaled parse outcomes name stages identically everywhere.
+PARSE_STAGES = (
+    (1, "envelope"), (2, "schema"), (3, "registry"),
+    (4, "references"), (5, "bounds"), (6, "signals"))
+
+#: P-2's pinned §15.2 bounds (defaults; every bound is an
+#: explicit argument so P-3's policy keys can supply them).
+#: The batch bound is deliberately small and finite — no
+#: unlimited setting exists (§15.2).
+DEFAULT_MAX_BATCH_INTENTS = 16
+DEFAULT_MAX_REASON_CHARS = 2000
+DEFAULT_MAX_ARGS_BYTES = 16384
+DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024
+
+#: §14.4 / §9.5: a parse failure journals a bounded, labelled
+#: excerpt of the response — never the whole body.
+RESPONSE_EXCERPT_MAX_CHARS = 500
+RESPONSE_EXCERPT_LABEL = (
+    "bounded excerpt of the replay response body, labelled "
+    "as an excerpt (SI-63 §14.4 / §9.5); the full body is "
+    "verifiable via response_digest against the retained "
+    "replay corpus")
+
+
+def _response_text(raw) -> str | None:
+    """The response body as text, or None when ``raw`` is not a
+    text/bytes/dict body at all (a stage-1 envelope failure)."""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            return bytes(raw).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(raw, dict):
+        return canonical_json(raw).decode("utf-8")
+    return None
+
+
+def _excerpt(text: str | None) -> dict | None:
+    if text is None:
+        return None
+    return {"text": text[:RESPONSE_EXCERPT_MAX_CHARS],
+            "truncated": len(text) > RESPONSE_EXCERPT_MAX_CHARS,
+            "label": RESPONSE_EXCERPT_LABEL}
+
+
+def _task_intent_seqs(journal, task_seq) -> set:
+    """The journal seqs of this task's already-journaled tool
+    intents — §9.3's verification scope, read from the fold
+    (§9.3: 'resolves against the current journal fold, inside
+    this task'). Unioned with the perception rows' seqs so an
+    intent the queue fold and the perception disagree about is
+    never silently dropped from the scope."""
+    seqs = set()
+    if journal is None or task_seq is None:
+        return seqs
+    fold = fold_queue(journal, task_seq)
+    for seq, state in (fold.by_seq or {}).items():
+        if state.task_seq == task_seq:
+            seqs.add(seq)
+    for row in _task_intent_rows(journal, task_seq):
+        if row.get("seq") is not None:
+            seqs.add(row["seq"])
+    return seqs
+
+
+def _all_intent_seqs(journal) -> dict:
+    """seq -> task_seq (or None) for every tool intent row in
+    the journal — used only to *diagnose* a stage-4 failure
+    (cross-task vs non-intent vs nonexistent), never to widen
+    the accepted scope."""
+    out = {}
+    if journal is None:
+        return out
+    task_seqs = set()
+    for row in _rows(journal, "experiences", kind="task"):
+        if row.get("seq") is not None:
+            task_seqs.add(row["seq"])
+    for row in _rows(journal, "self_edits", kind="tool"):
+        intent = row.get("intent") or {}
+        derived = None
+        for value in intent.get("source_seqs") or []:
+            if value in task_seqs:
+                derived = value
+                break
+        if derived is None:
+            for parent in intent.get("parents") or []:
+                if isinstance(parent, str) \
+                        and parent.startswith("task@"):
+                    try:
+                        cand = int(parent[len("task@"):])
+                    except ValueError:
+                        continue
+                    if cand in task_seqs:
+                        derived = cand
+                        break
+        out[row.get("seq")] = derived
+    return out
+
+
+def _journal_seqs(journal) -> set:
+    seqs = set()
+    if journal is None:
+        return seqs
+    from si.journal import COLLECTIONS
+    for coll in COLLECTIONS:
+        for row in journal.backend.find(coll) or []:
+            if row.get("seq") is not None:
+                seqs.add(row["seq"])
+    return seqs
+
+
+# ---------------------------------------------------------------------------
+# 6. The six-stage parser (§9) — fail closed, whole batch refused
+# ---------------------------------------------------------------------------
+
+def parse_proposal(raw, *, journal=None, task_seq=None,
+                   registry=None,
+                   max_batch_intents=DEFAULT_MAX_BATCH_INTENTS,
+                   max_reason_chars=DEFAULT_MAX_REASON_CHARS,
+                   max_args_bytes=DEFAULT_MAX_ARGS_BYTES,
+                   max_response_bytes=DEFAULT_MAX_RESPONSE_BYTES) -> dict:
+    """Parse one replay response body against §8's contract.
+
+    Deterministic, SI-side, fail closed (§9.1/§9.2): the six
+    stages run in order and any stage's failure refuses the
+    *whole* response — partial salvage is rejected (§21.4), no
+    intent from a failed response is constructed for admission,
+    and the failure never reaches the gate (§9.5).
+
+    ``raw`` is the response *content* (§8's document itself —
+    a ``str``/``bytes`` JSON document, or an already-decoded
+    ``dict`` from a replay corpus). Stage 1 is strict
+    (decision D-5's default): surrounding prose, markdown
+    fences, multiple documents, or truncated JSON fail.
+
+    Reference verification (stage 4, §9.3) prices every
+    ``depends_on`` seq against the journal fold for
+    ``task_seq``: the seq must name an already-journaled tool
+    intent *of this task*. A future seq, another task's seq, a
+    non-intent row, or a nonexistent seq fails the batch, with
+    the failure detail naming which case it was.
+
+    Structural ignoring (§9.4) is by construction: only §8's
+    fields are read, and no value the model can write is copied
+    into a verdict, a consequence class, or a policy field —
+    the returned :class:`si.gate.Intent` objects carry exactly
+    tool/args/reason/depends_on/ordering_key plus the runner's
+    mechanical task chaining (§8.3). Authority-shaped text
+    inside free-text fields is data and stays data.
+
+    Returns a result dict (never raises for a malformed
+    response): ``outcome`` is ``"ok"`` or ``"parse-failed"``;
+    on success ``intents`` holds the constructed Intent objects
+    (empty for a signal), ``signal_translation`` holds the
+    §8.7 completion Intent or the §8.8 inability record, and
+    ``batch`` summarises members/tools/chaining (§14.3); on
+    failure ``failing_stage``/``problems`` say why, ``intents``
+    is empty, and a bounded labelled ``excerpt`` is carried.
+    Every result carries :data:`REPLAY_ONLY_LABEL`.
+    """
+    import json as _json
+
+    from si.gaia.registry import validate_args as _validate_args
+    from si.gate import Intent
+
+    text = _response_text(raw)
+    response_bytes = len(text.encode("utf-8")) if text is not None else 0
+    result = {
+        "record": "si.gaia.proposer.parse_result",
+        "version": 1,
+        "replay_only": True,
+        "label": REPLAY_ONLY_LABEL,
+        "transport_label": REPLAY_TRANSPORT_LABEL_P2,
+        "outcome": "parse-failed",
+        "task_seq": task_seq,
+        "stage_reached": 0,
+        "failing_stage": None,
+        "failing_stage_name": None,
+        "problems": [],
+        "detail": "",
+        "response_digest": (_digest(text) if text is not None else None),
+        "response_bytes": response_bytes,
+        "intents": [],
+        "task_signal": None,
+        "signal_translation": None,
+        "batch": None,
+        "excerpt": None,
+    }
+
+    def fail(stage, problems):
+        name = dict(PARSE_STAGES)[stage]
+        result["failing_stage"] = stage
+        result["failing_stage_name"] = name
+        result["stage_reached"] = stage - 1
+        result["problems"] = list(problems)
+        result["detail"] = "; ".join(problems)
+        result["excerpt"] = _excerpt(text)
+        result["intents"] = []
+        return result
+
+    # -- Stage 1: envelope ------------------------------------
+    if text is None:
+        return fail(1, ["response body is not UTF-8 text, bytes, "
+                        "or a decoded JSON object — envelope "
+                        "failure (SI-63 §9.2 stage 1)"])
+    if isinstance(raw, dict):
+        doc = raw
+    else:
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            return fail(1, ["response is a fenced block, not one "
+                            "bare JSON document — strict envelope, "
+                            "decision D-5 default (SI-63 §9.2 "
+                            "stage 1)"])
+        try:
+            doc = _json.loads(text)
+        except ValueError as exc:
+            return fail(1, [f"response is not one JSON document: "
+                            f"{exc} (SI-63 §9.2 stage 1)"])
+    result["stage_reached"] = 1
+
+    # -- Stage 2: schema --------------------------------------
+    problems = []
+    if not isinstance(doc, dict):
+        problems.append(
+            f"top level must be an object, got {type(doc).__name__}")
+        return fail(2, problems)
+    unknown_top = sorted(set(doc) - PROPOSAL_TOP_FIELDS)
+    if unknown_top:
+        problems.append(f"unknown top-level field(s) {unknown_top} "
+                        "— only 'proposal' is read (§9.4)")
+    if "proposal" not in doc:
+        problems.append("missing required top-level field 'proposal'")
+        return fail(2, problems)
+    if problems:
+        return fail(2, problems)
+    proposal = doc["proposal"]
+    if not isinstance(proposal, dict):
+        return fail(2, [f"'proposal' must be an object, got "
+                        f"{type(proposal).__name__}"])
+    unknown = sorted(set(proposal) - PROPOSAL_FIELDS)
+    if unknown:
+        problems.append(f"unknown proposal field(s) {unknown} "
+                        "— forward compatibility is by version "
+                        "bump, not tolerance (§9.2 stage 2)")
+    for field_name in ("version", "intents", "task_signal"):
+        if field_name not in proposal:
+            problems.append(f"proposal missing required field "
+                            f"{field_name!r} (§8.1)")
+    if problems:
+        return fail(2, problems)
+    version = proposal["version"]
+    if isinstance(version, bool) or not isinstance(version, int) \
+            or version != PROPOSAL_VERSION:
+        return fail(2, [f"proposal version {version!r} is not the "
+                        f"known version {PROPOSAL_VERSION} (§8.1)"])
+    raw_intents = proposal["intents"]
+    if not isinstance(raw_intents, list):
+        return fail(2, [f"proposal 'intents' must be a list, got "
+                        f"{type(raw_intents).__name__}"])
+    signal = proposal["task_signal"]
+    if signal is not None:
+        if not isinstance(signal, dict):
+            return fail(2, [f"'task_signal' must be null or an "
+                            f"object, got {type(signal).__name__}"])
+        unknown_sig = sorted(set(signal) - PROPOSAL_SIGNAL_FIELDS)
+        if unknown_sig:
+            return fail(2, [f"unknown task_signal field(s) "
+                            f"{unknown_sig} (§8.7/§8.8)"])
+        if "kind" not in signal:
+            return fail(2, ["task_signal missing required field "
+                            "'kind' (§8.7/§8.8)"])
+        if signal.get("detail") is not None \
+                and not isinstance(signal.get("detail"), str):
+            return fail(2, ["task_signal 'detail' must be a string "
+                            "when present (§8.8)"])
+    for i, item in enumerate(raw_intents):
+        if not isinstance(item, dict):
+            return fail(2, [f"intents[{i}] must be an object, got "
+                            f"{type(item).__name__}"])
+        unknown_i = sorted(set(item) - PROPOSAL_INTENT_FIELDS)
+        if unknown_i:
+            return fail(2, [f"intents[{i}] unknown field(s) "
+                            f"{unknown_i} — only §8.2's fields are "
+                            "read (§9.4)"])
+        for field_name in ("tool", "args", "reason"):
+            if field_name not in item:
+                return fail(2, [f"intents[{i}] missing required "
+                                f"field {field_name!r} (§8.2)"])
+        if not isinstance(item["tool"], str) or not item["tool"]:
+            return fail(2, [f"intents[{i}].tool must be a non-empty "
+                            "string (§8.2)"])
+        if not isinstance(item["args"], dict):
+            return fail(2, [f"intents[{i}].args must be a JSON "
+                            "object (§8.2)"])
+        if not isinstance(item["reason"], str):
+            return fail(2, [f"intents[{i}].reason must be a string "
+                            "(§8.2)"])
+        deps = item.get("depends_on", [])
+        if not isinstance(deps, list):
+            return fail(2, [f"intents[{i}].depends_on must be a "
+                            "list (§8.2)"])
+        for j, dep in enumerate(deps):
+            if isinstance(dep, dict):
+                unknown_d = sorted(
+                    set(dep) - PROPOSAL_DEPENDS_ON_FIELDS)
+                if unknown_d:
+                    return fail(2, [
+                        f"intents[{i}].depends_on[{j}] unknown "
+                        f"field(s) {unknown_d} (§8.2)"])
+        key = item.get("ordering_key")
+        if key is not None and not isinstance(key, str):
+            return fail(2, [f"intents[{i}].ordering_key must be a "
+                            "string or null (§8.2)"])
+    result["stage_reached"] = 2
+
+    # -- Stage 3: registry ------------------------------------
+    if registry is None:
+        import si.gaia.registry as registry_module
+        registry = registry_module.REGISTRY
+    for i, item in enumerate(raw_intents):
+        spec = registry.get(item["tool"]) \
+            if isinstance(registry, dict) else None
+        if spec is None:
+            return fail(3, [f"intents[{i}].tool {item['tool']!r} "
+                            "names no registry entry — unknown "
+                            "tools never fall back to a 'closest' "
+                            "tool (§8.2 / §9.2 stage 3)"])
+        violations = _validate_args(spec, item["args"])
+        if violations:
+            return fail(3, [f"intents[{i}] ({item['tool']}): {v}"
+                            for v in violations])
+    result["stage_reached"] = 3
+
+    # -- Stage 4: references (§9.3) ---------------------------
+    scope = _task_intent_seqs(journal, task_seq)
+    all_intents = _all_intent_seqs(journal)
+    journal_seqs = _journal_seqs(journal)
+    tip = journal.tip()[0] if journal is not None else 0
+    normalised = []  # per-intent normalised depends_on
+    for i, item in enumerate(raw_intents):
+        deps_out = []
+        seen = set()
+        for j, dep in enumerate(item.get("depends_on") or []):
+            if isinstance(dep, bool):
+                return fail(4, [f"intents[{i}].depends_on[{j}]: "
+                                f"{dep!r} is not a journal sequence "
+                                "(§9.3)"])
+            if isinstance(dep, int):
+                seq, requirement = dep, "outcome"
+            elif isinstance(dep, dict):
+                seq = dep.get("seq")
+                requirement = dep.get("requirement", "outcome")
+                if isinstance(seq, bool) or not isinstance(seq, int):
+                    return fail(4, [
+                        f"intents[{i}].depends_on[{j}]: seq "
+                        f"{seq!r} is not an integer journal "
+                        "sequence (§9.3)"])
+                if requirement not in ("outcome", "success"):
+                    return fail(4, [
+                        f"intents[{i}].depends_on[{j}]: "
+                        f"requirement {requirement!r} is not "
+                        "'outcome' or 'success' (§9.3)"])
+            else:
+                return fail(4, [f"intents[{i}].depends_on[{j}]: "
+                                f"{dep!r} is neither a journal "
+                                "sequence nor a {seq, requirement} "
+                                "declaration (§9.3)"])
+            if seq <= 0:
+                return fail(4, [f"intents[{i}].depends_on[{j}]: "
+                                f"seq {seq} is not a positive "
+                                "journal sequence (§9.3)"])
+            if seq in seen:
+                return fail(4, [f"intents[{i}].depends_on[{j}]: "
+                                f"seq {seq} is declared twice "
+                                "(§9.3)"])
+            seen.add(seq)
+            if journal is None or task_seq is None:
+                return fail(4, [
+                    f"intents[{i}].depends_on[{j}]: seq {seq} "
+                    "cannot be verified — no journal fold for a "
+                    "task was supplied; reference verification "
+                    "fails closed (§9.3)"])
+            if seq in scope:
+                deps_out.append({"seq": seq,
+                                 "requirement": requirement})
+                continue
+            if seq not in journal_seqs:
+                why = (f"seq {seq} does not exist in the journal "
+                       "fold — hallucinated reference"
+                       + (f", and a future sequence beyond the "
+                          f"journal tip {tip}" if seq > tip else "")
+                       + " (§9.3)")
+            elif seq in all_intents:
+                why = (f"seq {seq} is a tool intent of another "
+                       "task (cross-task reference) (§9.3)") \
+                    if all_intents.get(seq) is not None else (
+                        f"seq {seq} is a tool intent outside this "
+                        "task's fold (§9.3)")
+            elif seq in journal_seqs:
+                why = (f"seq {seq} exists in the journal but is "
+                       "not an intent of this task (§9.3)")
+            else:  # pragma: no cover - unreachable by construction
+                why = f"seq {seq} cannot be verified (§9.3)"
+            return fail(4, [f"intents[{i}].depends_on[{j}]: {why}; "
+                            "the batch is wholly refused (§9.2)"])
+        normalised.append(deps_out)
+    result["stage_reached"] = 4
+
+    # -- Stage 5: bounds (§15.2) ------------------------------
+    if len(raw_intents) > int(max_batch_intents):
+        return fail(5, [f"batch of {len(raw_intents)} intents "
+                        f"exceeds proposer_max_batch_intents "
+                        f"{int(max_batch_intents)} — an over-size "
+                        "batch is a parse failure, not a truncation "
+                        "opportunity (§8.2 / §9.2 stage 5)"])
+    if response_bytes > int(max_response_bytes):
+        return fail(5, [f"response body of {response_bytes} bytes "
+                        f"exceeds proposer_max_response_bytes "
+                        f"{int(max_response_bytes)} (§15.2)"])
+    for i, item in enumerate(raw_intents):
+        if len(item["reason"]) > int(max_reason_chars):
+            return fail(5, [f"intents[{i}].reason of "
+                            f"{len(item['reason'])} chars exceeds "
+                            f"the bound {int(max_reason_chars)} "
+                            "(§9.2 stage 5)"])
+        if not item["reason"].strip():
+            return fail(5, [f"intents[{i}].reason is empty — a "
+                            "non-empty reason is required (§8.2); "
+                            "priced here as a contract failure so "
+                            "it never reaches the gate as a "
+                            "malformed intent (§9.5)"])
+        args_bytes = len(canonical_json(item["args"]))
+        if args_bytes > int(max_args_bytes):
+            return fail(5, [f"intents[{i}].args of {args_bytes} "
+                            f"canonical bytes exceeds the bound "
+                            f"{int(max_args_bytes)} (§9.2 stage 5)"])
+    result["stage_reached"] = 5
+
+    # -- Stage 6: signals (§8.7/§8.8) -------------------------
+    if signal is not None:
+        kind = signal.get("kind")
+        if kind not in PROPOSAL_SIGNAL_KINDS:
+            return fail(6, [f"task_signal kind {kind!r} is not one "
+                            f"of {list(PROPOSAL_SIGNAL_KINDS)} "
+                            "(§8.7/§8.8)"])
+        if raw_intents:
+            return fail(6, [f"task_signal {kind!r} carries no "
+                            "intents, but the proposal carries "
+                            f"{len(raw_intents)} (§8.7/§8.8 / "
+                            "§9.2 stage 6)"])
+        if kind == SIGNAL_CANNOT_PROCEED \
+                and not (signal.get("detail") or "").strip():
+            return fail(6, ["cannot_proceed requires a non-empty "
+                            "'detail' — the inability's stated "
+                            "cause is journaled verbatim (§8.8)"])
+    elif not raw_intents:
+        return fail(6, ["proposal carries no intents and no "
+                        "task_signal — 'intents' may be empty only "
+                        "when 'task_signal' is non-null (§8.2)"])
+    result["stage_reached"] = 6
+
+    # -- Success: construct intents (§8.3) --------------------
+    result["outcome"] = "ok"
+    result["task_signal"] = copy.deepcopy(signal)
+    intents = []
+    for item, deps in zip(raw_intents, normalised):
+        intent = Intent(
+            kind="tool", reason=item["reason"], tool=item["tool"],
+            args=copy.deepcopy(item["args"]),
+            depends_on=copy.deepcopy(deps),
+            ordering_key=item.get("ordering_key"),
+            parents=[f"task@{task_seq}"] if task_seq is not None else [],
+            source_seqs=[task_seq] if task_seq is not None else [])
+        intents.append(intent)
+    result["intents"] = intents
+    model_authored = sum(1 for d in normalised if d)
+    result["batch"] = {
+        "members": len(intents),
+        "tools": [it.tool for it in intents],
+        "chaining": {
+            "model_authored": model_authored,
+            "runner_filled": len(intents) - model_authored,
+            "label": ("model_authored counts members whose "
+                      "depends_on the model declared; "
+                      "runner_filled counts members whose "
+                      "chaining the runner mechanically filled "
+                      "to the task entry (§8.3 / §14.3)"),
+        },
+    }
+    if signal is not None:
+        if signal["kind"] == SIGNAL_TASK_COMPLETE:
+            detail = signal.get("detail") or ""
+            translation = Intent(
+                kind="memory", collection="experiences",
+                record={"kind": "task_complete",
+                        "source": "proposer-signal",
+                        "detail": detail,
+                        "replay_only": True,
+                        "label": REPLAY_ONLY_LABEL},
+                reason=(detail or "model reported task complete "
+                        "via the §8.7 signal (REPLAY ONLY — "
+                        "translated by the P-2 parser; completion "
+                        "remains a gated act, judged by the "
+                        "operator, §8.7)"),
+                parents=[f"task@{task_seq}"]
+                if task_seq is not None else [],
+                source_seqs=[task_seq] if task_seq is not None else [])
+            result["signal_translation"] = translation
+            result["batch"] = {
+                "members": 0, "tools": [],
+                "chaining": {"model_authored": 0, "runner_filled": 0,
+                             "label": result["batch"]["chaining"]["label"]},
+                "signal": SIGNAL_TASK_COMPLETE,
+            }
+        else:  # cannot_proceed (§8.8): no intent is proposed.
+            result["signal_translation"] = {
+                "kind": SIGNAL_CANNOT_PROCEED,
+                "detail": signal.get("detail"),
+                "stop_family": INABILITY_STOP_FAMILY,
+                "sub_label": INABILITY_SUB_LABEL,
+                "label": ("model-reported inability — the task "
+                          "stops as proposer exhaustion with this "
+                          "sub-label; never completion, never a "
+                          "§10.4 stop rule (§8.8 / D-4)"),
+                "replay_only": True,
+            }
+            result["batch"] = {
+                "members": 0, "tools": [],
+                "chaining": {"model_authored": 0, "runner_filled": 0,
+                             "label": result["batch"]["chaining"]["label"]},
+                "signal": SIGNAL_CANNOT_PROCEED,
+            }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 7. Attempt / response journaling (§14) against the replay transport
+# ---------------------------------------------------------------------------
+
+def _journal_experience(journal, kind: str, record: dict) -> int:
+    """Journal one proposer record as an experience and return
+    its journal seq, read back the way record_task_entry does."""
+    journal.record_experience(kind, record, "")
+    rows = journal.backend.find(
+        "experiences", filter={"kind": kind}, sort="-seq", limit=1)
+    return rows[0]["seq"] if rows else journal.tip()[0]
+
+
+def journal_attempt_record(journal, attempt_record: dict) -> int:
+    """Journal a §14.2 attempt record; returns its seq.
+
+    The record is journaled *before* the (replay) response is
+    parsed — in P-2 the 'call' is the handover of a scripted
+    replay body, and the ordering attempt → response → intents
+    is the §14.6 chain a reviewer walks. The record gains P-2's
+    replay labels here so no caller can journal an attempt
+    that reads as live."""
+    record = copy.deepcopy(attempt_record)
+    record["replay_only"] = True
+    record["replay_label"] = REPLAY_ONLY_LABEL
+    record.setdefault("proposer", {})
+    return _journal_experience(journal, ATTEMPT_RECORD_KIND, record)
+
+
+def build_response_record(*, attempt_seq, parse_result: dict,
+                          intent_seqs=(), transport_label=None,
+                          http_status=None) -> dict:
+    """The §14.3 proposal response record for one parsed replay
+    response (pure builder — journals nothing).
+
+    Carries: attempt linkage, transport outcome (the labelled
+    replay transport; latency is a labelled absence — a replay
+    has no meaningful latency and none is invented), response
+    digest, parse outcome (stage reached or failing stage), on
+    success the batch summary + the admitted intents' seqs, on
+    signal the kind + detail verbatim, on failure the labelled
+    failure kind + bounded excerpt (§9.5/§14.4)."""
+    ok = parse_result.get("outcome") == "ok"
+    record = {
+        "kind": RESPONSE_RECORD_KIND,
+        "attempt_seq": attempt_seq,
+        "task_seq": parse_result.get("task_seq"),
+        "replay_only": True,
+        "replay_label": REPLAY_ONLY_LABEL,
+        "transport": {
+            "label": transport_label or REPLAY_TRANSPORT_LABEL_P2,
+            "is_replay": True,
+            "http_status": http_status,
+            "latency_label": (
+                "absent — latency is not recorded for a replay; "
+                "a scripted response has no meaningful latency "
+                "and none is invented (§14.3)"),
+            "usage_label": (
+                "absent — no gateway reported usage for a "
+                "replay response (§14.3 labelled absence)"),
+        },
+        "response_digest": parse_result.get("response_digest"),
+        "response_bytes": parse_result.get("response_bytes"),
+        "parse": {
+            "outcome": "ok" if ok else "parse-failed",
+            "stage_reached": parse_result.get("stage_reached"),
+            "stage": parse_result.get("failing_stage"),
+            "stage_name": parse_result.get("failing_stage_name"),
+            "detail": parse_result.get("detail") or "",
+            "problems": list(parse_result.get("problems") or []),
+        },
+        "batch": None,
+        "signal": None,
+        "excerpt": parse_result.get("excerpt"),
+    }
+    if ok:
+        batch = copy.deepcopy(parse_result.get("batch") or {})
+        batch["intent_seqs"] = list(intent_seqs)
+        batch["intent_seqs_label"] = (
+            "the seqs the resulting intents were journaled "
+            "under at admission — the link that closes attempt "
+            "→ response → intents (§14.3); empty when the "
+            "caller admitted nothing (admission is the gate's "
+            "business, §12, not the parser's)")
+        record["batch"] = batch
+        signal = parse_result.get("task_signal")
+        if signal is not None:
+            record["signal"] = {
+                "kind": signal.get("kind"),
+                "detail": signal.get("detail"),
+                "label": ("signal journaled verbatim (§14.3); "
+                          "translation per §8.7/§8.8 — completion "
+                          "remains gated, inability is never "
+                          "completion"),
+            }
+    return record
+
+
+def journal_response_record(journal, response_record: dict) -> int:
+    """Journal a §14.3 response record; returns its seq."""
+    return _journal_experience(
+        journal, RESPONSE_RECORD_KIND, copy.deepcopy(response_record))
+
+
+def walk_attempt_chain(journal, response_seq) -> dict:
+    """Walk §14.3's linkage for one response record (§14.6):
+    response → attempt → admitted intents, from the journal
+    alone. Returns the chain with each link's seq and whether
+    it resolved — a chain that cannot be walked says so."""
+    rows = journal.backend.find(
+        "experiences", filter={"kind": RESPONSE_RECORD_KIND}) or []
+    response_row = next(
+        (r for r in rows if r.get("seq") == response_seq), None)
+    if response_row is None:
+        return {"response_seq": response_seq, "found": False,
+                "label": REPLAY_ONLY_LABEL}
+    record = response_row.get("record") or {}
+    attempt_seq = record.get("attempt_seq")
+    attempt_rows = journal.backend.find(
+        "experiences", filter={"kind": ATTEMPT_RECORD_KIND}) or []
+    attempt_row = next(
+        (r for r in attempt_rows if r.get("seq") == attempt_seq), None)
+    intent_seqs = list((record.get("batch") or {}).get(
+        "intent_seqs") or [])
+    intent_rows = {}
+    for seq in intent_seqs:
+        found = journal.backend.find(
+            "self_edits", filter={"seq": seq}, limit=1)
+        intent_rows[seq] = found[0] if found else None
+    return {
+        "response_seq": response_seq,
+        "found": True,
+        "attempt_seq": attempt_seq,
+        "attempt_found": attempt_row is not None,
+        "attempt_record": (attempt_row.get("record")
+                           if attempt_row else None),
+        "intent_seqs": intent_seqs,
+        "intents_found": {seq: row is not None
+                          for seq, row in intent_rows.items()},
+        "intent_edit_ids": {seq: (row or {}).get("edit_id")
+                            for seq, row in intent_rows.items()},
+        "all_intents_found": all(
+            row is not None for row in intent_rows.values()),
+        "label": REPLAY_ONLY_LABEL,
+    }
+
+
+def run_replay_proposal(journal, raw, *, task_seq, cycle=0,
+                        perception=None, registry=None,
+                        admit=None, **parse_bounds) -> dict:
+    """One full P-2 replay cycle, journaled end to end (§14).
+
+    Journals the §14.2 attempt record, parses the scripted
+    ``raw`` response with :func:`parse_proposal`, optionally
+    admits the parsed batch through the caller's ``admit``
+    callback (``admit(intent) -> intent_seq`` — admission is
+    the gate's / loop's business, §12; P-2 supplies no gate and
+    fakes no verdict), then journals the §14.3 response record
+    carrying the admitted seqs. Parse failures admit nothing:
+    ``admit`` is never called for a failed response (§9.5).
+
+    For a §8.7 completion signal, ``admit`` (when supplied) is
+    called once with the translated memory Intent; for §8.8
+    inability nothing is admitted. Returns the outcome dict
+    with attempt/response seqs, the parse result, and the
+    intent seqs — every field labelled REPLAY ONLY."""
+    if perception is None:
+        perception = assemble_perception(
+            journal, task_seq, registry=registry)
+    attempt = build_attempt_record(
+        perception, cycle=cycle,
+        transport_label=REPLAY_TRANSPORT_LABEL_P2)
+    attempt["preconditions"] = {
+        "outcome": "replay-only",
+        "label": ("no precondition check and no gateway call "
+                  "exist in P-2 — the response is a scripted "
+                  "replay body (SI-63 §19 P-2); precondition-"
+                  "gated wiring is P-3"),
+    }
+    attempt["request_digest"] = None
+    attempt["request_digest_label"] = (
+        "absent — no gateway request exists in P-2; the replay "
+        "body's digest is journaled on the response record "
+        "(§14.3), and no call is claimed")
+    attempt_seq = journal_attempt_record(journal, attempt)
+
+    parse_result = parse_proposal(
+        raw, journal=journal, task_seq=task_seq,
+        registry=registry, **parse_bounds)
+    parse_result["task_seq"] = task_seq
+    parse_result["attempt_seq"] = attempt_seq
+
+    from si.gate import Intent as _Intent
+    intent_seqs = []
+    if parse_result["outcome"] == "ok" and admit is not None:
+        targets = list(parse_result["intents"])
+        translation = parse_result.get("signal_translation")
+        if isinstance(translation, _Intent):
+            targets = [translation]
+        for intent in targets:
+            seq = admit(intent)
+            if seq is not None:
+                intent_seqs.append(seq)
+
+    response = build_response_record(
+        attempt_seq=attempt_seq, parse_result=parse_result,
+        intent_seqs=intent_seqs)
+    response_seq = journal_response_record(journal, response)
+    return {
+        "record": OUTCOME_RECORD,
+        "version": 2,
+        "replay_only": True,
+        "label": REPLAY_ONLY_LABEL,
+        "hearth_path_performance": HEARTH_PATH_UNMEASURED_LABEL,
+        "outcome": ("ok" if parse_result["outcome"] == "ok"
+                    else "parse-failed"),
+        "attempt_seq": attempt_seq,
+        "response_seq": response_seq,
+        "parse": parse_result,
+        "intent_seqs": intent_seqs,
+        "task_signal": parse_result.get("task_signal"),
+    }
