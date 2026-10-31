@@ -92,7 +92,7 @@ wins until a merged slice doc updates it with evidence.
 | Hearth declaration record | LIVE, SI-side only | SI-45 / B-4; `build_declaration` in `si/gaia/hearth.py` |
 | Hearth residency perception | LIVE, replay-exercised | SI-45 / B-4; poll + journal via `experiences` |
 | Hearth gateway client shape | LIVE, replay-exercised | `GET /v1/models`, `POST /v1/chat/completions` |
-| Real Hearth node contact | NOT DONE | No real node reachable in prior build environments |
+| Real Hearth node contact | PARTIAL, scoped (SI-67) | Discovery, residency poll and served-model discovery against the gaia node on this VM succeeded 2026-10-31 via `si/gaia/live.py`; the node was then lost mid-slice (another lane's rebuild + sandbox EPERM on model start) and the fixture suite did NOT complete — see docs/SI-67-p4-first-live-proposer.md |
 | Real Hearth path performance | UNMEASURED | Stated verbatim in `si/gaia/hearth.py` |
 | Gateway inference leg | CONDITIONAL, not evaluated live | Refuses unless real base asserted + `Resident` |
 | Queue-drain execution (Q-1–Q-3) | LIVE | SI-51–SI-53; `si/gaia/queue.py`, `si/gaia/drain.py` |
@@ -100,7 +100,7 @@ wins until a merged slice doc updates it with evidence.
 | SSE event spine + followers | LIVE | SI-47–SI-49, SI-58 fix |
 | Seam flows S-2a–S-6 (fork ↔ SI) | LIVE, SI-side scoped | Docs S-2a…S-6; fork interop limits stated there |
 | Seam quantities (S-7) | MEASURED, scoped | SI-62; fork-dependent quantities stay UNMEASURED |
-| **A thinking proposer (this RFC)** | **UNBUILT** | **Designed here; no code, no live model call** |
+| **A thinking proposer (this RFC)** | **WIRING BUILT (SI-67), live run NOT COMPLETED** | **`si/gaia/live.py` + the P-4 live scope label; the §18.3 live claim is NOT earned — environmental failure, docs/SI-67-p4-first-live-proposer.md** |
 | **Live model-authored tool intent** | **NEVER YET OCCURRED** | **No merged evidence claims one** |
 | **Model quality / task success rate** | **UNMEASURED** | **No benchmark is designed as already run** |
 | **Prompt construction in §6–§7** | **UNBUILT** | **Design only; no prompt string ships in this RFC as code** |

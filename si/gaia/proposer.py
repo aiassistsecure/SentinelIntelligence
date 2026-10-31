@@ -909,6 +909,16 @@ class HearthProposer:
         ``None`` — with the full labelled outcome always on
         :attr:`last_outcome`.
         """
+        # P-4 adoption (SI-67, minimal): when constructed
+        # without a task (the live fixture wiring), adopt the
+        # task the loop is running from the gate context —
+        # ``run_task`` sets ``ctx.tool_task_seq`` before any
+        # cycle. An explicitly configured task_seq always wins.
+        if self.task_seq is None and ctx is not None:
+            adopted = getattr(ctx, "tool_task_seq", None)
+            if isinstance(adopted, int) and not isinstance(
+                    adopted, bool):
+                self.task_seq = adopted
         policy = self.policy
         if policy is None:
             policy = getattr(ctx, "policy", None)
@@ -1873,6 +1883,22 @@ P3_SCOPE_LABEL = (
     "OCCURRED; the real Hearth path remains UNMEASURED "
     "(SI-63 §18 / §19 P-3)")
 
+#: P-4's live scope label (SI-67): carried on every record and
+#: outcome the gateway path produces when the transport in use
+#: is NOT a replay (``is_replay`` False) — i.e. a real node was
+#: contacted for this cycle. Replay behaviour is unchanged:
+#: replay cycles keep :data:`P3_SCOPE_LABEL` byte-identically.
+P4_LIVE_SCOPE_LABEL = (
+    "P-4 first live proposer (SI-67) — LIVE transport against "
+    "a real gaia node on this VM; records from this cycle are "
+    "live, not replay (SI-63 §19 P-4)")
+
+
+def _scope_label(is_replay: bool) -> str:
+    """The scope label for one gateway cycle: P-3's replay
+    label for a replay transport, P-4's live label otherwise."""
+    return P3_SCOPE_LABEL if is_replay else P4_LIVE_SCOPE_LABEL
+
 #: §16.1's failure vocabulary, pinned verbatim (P-1 pinned
 #: ``not-evaluated`` above; P-3 pins the rest it produces).
 TRANSPORT_FAILED = "transport-failed"
@@ -2365,7 +2391,7 @@ def journal_gateway_attempt_record(journal, attempt_record: dict,
     claims a live call was made before one is."""
     record = copy.deepcopy(attempt_record)
     record["replay_only"] = bool(is_replay)
-    record["scope_label"] = P3_SCOPE_LABEL
+    record["scope_label"] = _scope_label(is_replay)
     if is_replay:
         record["replay_label"] = P3_SCOPE_LABEL
     return _journal_experience(journal, ATTEMPT_RECORD_KIND, record)
@@ -2401,7 +2427,7 @@ def build_gateway_response_record(*, attempt_seq, task_seq,
         "task_seq": task_seq,
         "gateway_attempt": True,
         "replay_only": bool(is_replay),
-        "scope_label": P3_SCOPE_LABEL,
+        "scope_label": _scope_label(is_replay),
         "outcome": outcome_kind,
         "failure_kind": (None if outcome_kind == "ok"
                          else outcome_kind),
@@ -2550,7 +2576,7 @@ def run_gateway_proposal(journal, perception, *, task_seq,
         "version": 3,
         "gateway_attempt": True,
         "replay_only": is_replay,
-        "label": P3_SCOPE_LABEL,
+        "label": _scope_label(is_replay),
         "hearth_path_performance": HEARTH_PATH_UNMEASURED_LABEL,
         "outcome": NOT_EVALUATED,
         "failure_kind": None,
@@ -2572,7 +2598,7 @@ def run_gateway_proposal(journal, perception, *, task_seq,
             model_identity=model,
             declaration_digest=declaration_digest)
         attempt["gateway_attempt"] = True
-        attempt["scope_label"] = P3_SCOPE_LABEL
+        attempt["scope_label"] = _scope_label(is_replay)
         attempt["policy"] = dict(resolved)
         attempt["gateway"] = {
             "base_url": gateway_base_url,
