@@ -20,7 +20,7 @@ together. §0 says plainly what is live and what is not.
 | §11.5 ordering claims | **as spec'd** — at most one journaled outcome per `work_id`; every readable fork outcome is journaled or faulted; outcome journaling never precedes the fork's own outcome record. NOT claimed: outcome latency, cross-work ordering |
 | Service surface | **wrappers only** — `si.gaia.service:poll_outcomes` / `reconcile_outcomes` / `mark_outcome_unknown` and a `seam_outcome_return` description key; no new HTTP route (outcome return is outbound / file-mediated and operator-invoked, like S-3/S-4) |
 | Live fork interop | **UNMEASURED** — no live fork endpoint was exercised; evidence is the labelled replay/stub transport and a loopback HTTP test double through the real `HttpTransport`, plus operator-supplied `outcomes.jsonl` fixtures in the fork's documented record shape. An env-gated live test (`SI_S5_WORK_URL`) follows the S-3/S-4 pattern and skips when unset |
-| Performance / outcome latency | **UNMEASURED** |
+| Performance / outcome latency | Measured under S-7 (SI-62): median 1139 ms (range 1087–1648, N=10) for Q-D1 outcome poll pass (10 outstanding, all terminal) on the miniature fixture, embedded journal, Class L transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Measured under S-7 (SI-62): median 0.76 s (range 0.75–0.77, N=5) for conditional outcome latency at the stated schedule (offset 0 s, period 1 s, terminal at +0.35 s) on the miniature fixture, embedded journal, Class L transport, host fingerprint in docs/S-7-seam-measurements.md; single-run; unconditional outcome latency and live fork interop remain UNMEASURED. |
 
 ---
 

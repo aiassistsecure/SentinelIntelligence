@@ -18,7 +18,7 @@ journaled. §0 says plainly what is live and what is not.
 | §10 leash crossing (S-4) | **built after this slice by SI-57** (docs/S-4-leash-crossing.md) — at S-3 time no leash record crossed with a submission and fork-side leash state was not consulted; S-4 now refuses submission SI-side while a stop is in force and carries the §10.3.3 leash tip in the payload |
 | §11 Flow 3: outcome return (S-5) | **not built** — no outcome returns; no fork outcome is claimed anywhere |
 | Live fork interop | **UNMEASURED** — no live fork endpoint was exercised; evidence is the labelled replay/stub transport and a loopback HTTP test double through the real `HttpTransport`. An env-gated live test (`SI_S3_WORK_SUBMISSION_URL`) follows the S-2a egress-probe pattern and skips when unset |
-| Performance | **UNMEASURED** |
+| Performance | Measured under S-7 (SI-62): median 120 ms (range 108–164, N=30) for Q-B5 work submission invocation (success, loopback) on the miniature fixture, embedded journal, Class L transport, double service median 0.3 ms, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Live fork acceptance remains **UNMEASURED**. |
 
 ---
 

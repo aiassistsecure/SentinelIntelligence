@@ -25,7 +25,7 @@ ordering; this slice does not re-implement or re-claim it.
 | Journaling a crossing | **live, confirmed-only** — an `experiences` row of kind `gaia_leash` (payload + ACK verbatim, transport label) is written only on a 200 carrying a boolean `applied` and an int `last_leash_seq`; non-200 / malformed 200 / transport failure journals no crossing and a retry is free; manifest re-anchored after journaling |
 | §11 Flow 3: outcome return (S-5) | **not built** — no outcome returns; a submitted item is still `submitted/awaiting outcome (S-5 unbuilt)`, and a fork-side leash refusal would be an outcome — SI claims none |
 | Live fork interop | **UNMEASURED** — no live fork endpoint was exercised; evidence is the labelled replay/stub transport and a loopback HTTP test double through the real `HttpTransport`. An env-gated live test (`SI_S4_LEASH_URL`) follows the S-2a/S-3 pattern and skips when unset |
-| Performance | **UNMEASURED** |
+| Performance | Measured under S-7 (SI-62): median 124 ms (range 103–156, N=30) for Q-C3 leash per-record crossing on the miniature fixture, embedded journal, Class L transport, double service median 0.4 ms, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Stop-to-actuator-refusal latency and cadence adequacy remain **UNMEASURED**. |
 
 ---
 

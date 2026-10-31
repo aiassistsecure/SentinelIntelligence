@@ -23,7 +23,7 @@ what is live and what is not.
 | Fork ingest half (`POST /gaia/v1/events/ingest`) | **UNBUILT in this repo / slice** — it is fork-side work in `aiassistsecure/gaia`; nothing here claims the route exists |
 | SI `events_client` consuming the fork stream (§15 S-6 acceptance 1) | **not proven here** — that acceptance runs against the fork's stream once the fork half exists; it is fork-side acceptance, not SI-side evidence |
 | Live fork interop | **UNMEASURED** — no live fork endpoint was exercised; evidence is the labelled replay/stub transport and a loopback HTTP test double implementing the documented ingest contract (200 per event, 409 on duplicate seq) through the real `HttpTransport`, plus an env-gated live test (`SI_S6_INGEST_URL`) that skips when unset |
-| Performance | **UNMEASURED** |
+| Performance | Measured under S-7 (SI-62): median 152 ms (range 138–158, N=10) for Q-E4 event forward pass (100 events) on the miniature fixture, embedded journal, Class L transport, double service median 0.3 ms, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED. Fork ingest (UNBUILT) and SSE visibility remain **UNMEASURED**. |
 
 ---
 

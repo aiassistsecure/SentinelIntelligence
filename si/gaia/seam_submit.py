@@ -120,7 +120,8 @@ WORK_SUBMISSION_LABEL: str = (
     "task refuses submission here as leash-held; no live fork endpoint was exercised "
     "by this slice (transports are labelled replay/stub or "
     "loopback test double unless an operator supplies a real "
-    "URL); live interop and performance UNMEASURED")
+    "URL); live interop and performance UNMEASURED"
+    " Measured under S-7 (SI-62): median 120 ms (range 108–164, N=30) for Q-B5 work submission invocation (success, loopback) on the miniature fixture, embedded journal, Class L transport, double service median 0.3 ms, host fingerprint in docs/S-7-seam-measurements.md; single-run; live fork interop performance remains UNMEASURED.")
 
 #: Response keys checked, in order, for a 202's stable work ID.
 #: No field name is documented in-repo, so the spellings are
