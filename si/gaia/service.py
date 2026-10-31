@@ -119,6 +119,17 @@ filtered-out seqs, malformed filter values are refused with
 byte-identical to SI-47). The reference consumer is
 :mod:`si.gaia.events_client` (``si gaia-events``).
 
+**SI-58 fixes the events handler's connection gate** — it no
+longer re-runs ``load_bundle`` per connection: that check's
+manifest-anchor == journal-tip demand cannot hold for a live
+journal (the tip advances past the anchor between re-anchors),
+and its unhandled failure dropped connections with no HTTP
+response, wedging followers in a RemoteDisconnected retry loop
+(the SI-49 filtered live-tail failure). The handler now relies
+on the startup verification (ServiceState) plus a per-connection
+journal hash-chain verification, failing closed with HTTP 500 —
+see ``_handle_events``.
+
 **S-2a adds the seam ingest (G-9 Flow 1)** — ``POST
 /gaia/proposals`` (:func:`submit_proposal`, delegating to
 :func:`si.gaia.seam.ingest_proposal`): fork watcher proposals
@@ -809,8 +820,32 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
             stops, the journal closes, and the handler thread —
             a daemon thread, see make_service_server — ends.
             Nothing is journaled by reading the stream.
+
+            SI-58: this handler deliberately does NOT call
+            ``load_bundle``. That verification demands the
+            manifest's journal anchor equal the journal tip, but
+            a live journal's tip legitimately advances past the
+            anchor between re-anchors — writers journal first
+            and re-anchor at task boundaries (the executor's
+            mid-cycle rule states the same principle). Demanding
+            anchor equality here made every (re)connection
+            attempted after such a write — or in the window
+            between a task's journal appends and its re-anchor —
+            die on an unhandled TamperError: the socket closed
+            with no HTTP response at all, so a following client
+            saw RemoteDisconnected and retried a permanent
+            condition until its bounds expired (the SI-49
+            filtered live-tail failure). The bundle was already
+            loaded and fully verified once at startup
+            (ServiceState — a tampered bundle is never served);
+            this read-only stream instead opens the journal
+            directly (``open_journal`` reads only the backend
+            name from manifest.json) and fails closed, with a
+            real HTTP 500, when the journal hash chain does not
+            verify at connection time. An established stream is
+            unaffected either way: it polls the backend per poll,
+            exactly as SI-47 designed.
             """
-            from si.bundle import load_bundle
             from si.journal import open_journal
             query = parse_qs(urlparse(self.path).query,
                              keep_blank_values=True)
@@ -825,8 +860,22 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
                 return
             follow = query.get("follow", ["1"])[0] \
                 not in ("0", "false", "no")
-            manifest = load_bundle(state.bundle_dir)
-            journal = open_journal(state.bundle_dir, manifest)
+            try:
+                journal = open_journal(state.bundle_dir)
+                chain_ok = journal.verify_chain()
+            except Exception as e:
+                self._send_json(500, {
+                    "error": f"events stream unavailable: the "
+                             f"journal could not be opened or "
+                             f"verified ({e}) — fail closed"})
+                return
+            if not chain_ok:
+                journal.close()
+                self._send_json(500, {
+                    "error": "journal hash chain is broken — "
+                             "refusing to stream an unverified "
+                             "journal (fail closed)"})
+                return
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
