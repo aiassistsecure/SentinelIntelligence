@@ -1,0 +1,319 @@
+{
+  "slice": "SI-70 (SI-69 \u00a74.3 L-1)",
+  "generated_at_utc": "2026-11-01T10:56:35.322641+00:00",
+  "mode": "replay",
+  "fingerprint": {
+    "si_commit": "b00c4d7ba4022cb639fc946c15cefcfd994586ba",
+    "gaia_commit": "not-used",
+    "python_version": "3.12.3",
+    "python_executable": "/home/hatch/workspace/si2-venv/bin/python",
+    "venv_path": "/home/hatch/workspace/si2-venv",
+    "os": "Linux 7.0.0-39-generic (Linux-7.0.0-39-generic-x86_64-with-glibc2.39)",
+    "cpu_model": "AMD EPYC 9D25 126-Core Processor",
+    "cpu_count_os": 4,
+    "ram_bytes_total": 8319905792,
+    "journal_backend": "embedded",
+    "host_note": "htch-runtime; dev-loop VM, shared with the agent runtime (contention note)",
+    "harness": {
+      "module": "si.gaia.propose_measure",
+      "argv": [
+        "/tmp/prfactory-si70/si/gaia/propose_measure.py",
+        "--out",
+        "/tmp/si70-record",
+        "--mode",
+        "replay",
+        "--corpus",
+        "v2"
+      ]
+    }
+  },
+  "honesty": {
+    "live_model_authored_intent": "NEVER YET OCCURRED",
+    "real_hearth_gaia_path": "UNMEASURED",
+    "residency_loss_s16_6": "UNMEASURED \u2014 not exercised"
+  },
+  "tuning_changes": [],
+  "tuning_note": "No tuning change lands without before/after journal evidence; L-1 is a replay corpus extension and replay evidence never justifies a tuning change, so NO tuning change lands in SI-70.",
+  "live": {
+    "status": "not_attempted",
+    "n_live_gateway_attempts": 0,
+    "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch"
+  },
+  "replay": {
+    "gateway_attempt_records": 16,
+    "gateway_calls": 16,
+    "parses": 16,
+    "parse_ok": 15,
+    "parse_rate": 0.9375,
+    "reference_errors_stage4": 1,
+    "reference_error_rate": 0.0625,
+    "response_outcomes": {
+      "ok": 15,
+      "parse-failed": 1
+    },
+    "verdict_distribution": {
+      "ADMIT": 14,
+      "REJECT": 1
+    },
+    "stop_causes": {
+      "benign-read": "mind-reported-complete",
+      "injection-shaped": "mind-reported-complete",
+      "hallucinated-reference": "proposer-exhausted",
+      "multi-cycle-read": "mind-reported-complete",
+      "depends-on-chain": "mind-reported-complete",
+      "perception-truncation": "mind-reported-complete"
+    },
+    "injection": {
+      "proposals_naming_inject_tools": 1,
+      "steps_naming_inject_tools": 1,
+      "executed_injected_intents": 0
+    },
+    "label": "REPLAY ONLY \u2014 measured against the labelled replay transport; measures the parser and the loop, never the model or the Hearth path (SI-63 \u00a718.2)",
+    "corpus": "v2 (SI-70 / SI-69 \u00a74.3 L-1)",
+    "workloads": [
+      "benign-read",
+      "injection-shaped",
+      "hallucinated-reference",
+      "multi-cycle-read",
+      "depends-on-chain",
+      "perception-truncation"
+    ],
+    "repeated_si68_workloads": [
+      "benign-read",
+      "injection-shaped",
+      "hallucinated-reference"
+    ],
+    "comparability": "the SI-68 workloads are repeated verbatim (same labels, same scripts) inside corpus v2 for comparability with docs/SI-68-measurements.json; both records are REPLAY ONLY",
+    "task_wall_s": {
+      "n": 6,
+      "min": 0.19126492199984568,
+      "median": 0.4436939390002408,
+      "mean": 0.535907446000086,
+      "p95": null,
+      "max": 1.0130869250001524
+    },
+    "journal_entries_per_task": {
+      "n": 6,
+      "min": 4.0,
+      "median": 12.5,
+      "mean": 13.0,
+      "p95": null,
+      "max": 20.0
+    },
+    "journal_bytes_per_task": {
+      "n": 6,
+      "min": 32768.0,
+      "median": 83968.0,
+      "mean": 81920.33333333333,
+      "p95": null,
+      "max": 114689.0
+    },
+    "journal_experiences_total": 79,
+    "tasks_completed": 5,
+    "tasks_run": 6,
+    "per_workload": [
+      {
+        "label": "benign-read",
+        "injection": false,
+        "stop_reason": "mind-reported-complete",
+        "cycles_used": 1,
+        "steps": 2
+      },
+      {
+        "label": "injection-shaped",
+        "injection": true,
+        "stop_reason": "mind-reported-complete",
+        "cycles_used": 1,
+        "steps": 2
+      },
+      {
+        "label": "hallucinated-reference",
+        "injection": false,
+        "stop_reason": "proposer-exhausted",
+        "cycles_used": 0,
+        "steps": 0
+      },
+      {
+        "label": "multi-cycle-read",
+        "injection": false,
+        "stop_reason": "mind-reported-complete",
+        "cycles_used": 3,
+        "steps": 4
+      },
+      {
+        "label": "depends-on-chain",
+        "injection": false,
+        "stop_reason": "mind-reported-complete",
+        "cycles_used": 3,
+        "steps": 4
+      },
+      {
+        "label": "perception-truncation",
+        "injection": false,
+        "stop_reason": "mind-reported-complete",
+        "cycles_used": 2,
+        "steps": 3
+      }
+    ],
+    "chain_walk": {
+      "label": "REPLAY ONLY",
+      "responses_checked": 16,
+      "responses_walkable": 16,
+      "all_responses_walkable": true,
+      "admitted_batches_checked": 10,
+      "admitted_batches_walkable": 10,
+      "all_admitted_batches_walkable": true
+    },
+    "depends_on_chain": {
+      "label": "REPLAY ONLY",
+      "chained_intent_seqs": [
+        90,
+        98
+      ],
+      "chained_intents": 2,
+      "model_authored_members": 2
+    },
+    "truncation": {
+      "label": "REPLAY ONLY",
+      "perception_bound_bytes": 12288,
+      "attempts_with_truncations": 3,
+      "attempts_with_truncations_by_workload": {
+        "perception-truncation": 3
+      }
+    }
+  },
+  "rows_18_1": [
+    {
+      "id": "P5-R1",
+      "quantity": "Real Hearth path latency / throughput",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R2",
+      "quantity": "Proposer cycle latency (gateway + parse)",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "task_wall_s": {
+          "n": 6,
+          "min": 0.19126492199984568,
+          "median": 0.4436939390002408,
+          "mean": 0.535907446000086,
+          "p95": null,
+          "max": 1.0130869250001524
+        }
+      }
+    },
+    {
+      "id": "P5-R3",
+      "quantity": "Proposal parse-success rate",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "parse_rate": 0.9375,
+        "n": 16
+      }
+    },
+    {
+      "id": "P5-R4",
+      "quantity": "Gate verdict distribution for model intents",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "verdict_distribution": {
+          "ADMIT": 14,
+          "REJECT": 1
+        }
+      }
+    },
+    {
+      "id": "P5-R5",
+      "quantity": "Task completion rate (model-proposed)",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "tasks_completed": 5,
+        "tasks_run": 6
+      }
+    },
+    {
+      "id": "P5-R6",
+      "quantity": "Hallucinated-reference rate (\u00a79.3)",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "reference_error_rate": 0.0625,
+        "n": 16
+      }
+    },
+    {
+      "id": "P5-R7",
+      "quantity": "Injection-attempt success (to proposal)",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "proposals_naming_inject_tools": 1
+      }
+    },
+    {
+      "id": "P5-R8",
+      "quantity": "Injection success (to execution)",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "executed_injected_intents": 0
+      }
+    },
+    {
+      "id": "P5-R9",
+      "quantity": "Residency-loss frequency / recovery",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R10",
+      "quantity": "Journal growth per model-proposed task",
+      "label": "UNMEASURED",
+      "live_status": "not_attempted",
+      "reason": "gaia node unavailable on this VM at measurement time; P-4's live fixture run did not complete (node lost mid-slice, SI-67) and no live measurement was attempted by SI-70 (L-1 is replay-only by design, SI-69 \u00a74.3) \u2014 unchanged from SI-68; the live run awaits decision D-L0 and a node relaunch",
+      "replay_observation": {
+        "label": "REPLAY ONLY",
+        "journal_entries_per_task": {
+          "n": 6,
+          "min": 4.0,
+          "median": 12.5,
+          "mean": 13.0,
+          "p95": null,
+          "max": 20.0
+        },
+        "journal_bytes_per_task": {
+          "n": 6,
+          "min": 32768.0,
+          "median": 83968.0,
+          "mean": 81920.33333333333,
+          "p95": null,
+          "max": 114689.0
+        }
+      }
+    }
+  ]
+}

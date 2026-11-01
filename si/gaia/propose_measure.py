@@ -33,6 +33,19 @@ NEVER YET OCCURRED. No tuning change lands here: §19 P-5
 requires before/after journal evidence for any tuning
 change, and there is no live evidence — so none lands.
 
+SI-70 (SI-69 RFC §4.3, slice L-1) extends this harness's
+replay side only: a SECOND replay fixture family (multi-cycle
+tasks, a valid ``depends_on`` batch chain, and a
+perception-truncation case at the SI-63 §6.3 bounds) runs
+alongside a repeat of the SI-68 workloads for comparability,
+all against the labelled replay transport, all statistics
+folded from the journal, and a new machine-readable record
+(``SI-70-measurements.json``) beside the SI-68 pattern. L-1
+earns NO live claim by design: its live section states N=0
+live attempts and every §18.1 row UNMEASURED, unchanged from
+SI-68. Live model-authored intent has NEVER YET OCCURRED;
+the real Hearth/gaia path remains UNMEASURED.
+
 CPU only, stdlib only. Terminology: machine learning
 infrastructure throughout.
 """
@@ -58,7 +71,13 @@ from si.gaia.live import (
     journal_residency_record,
     preflight_live,
 )
-from si.gaia.proposer import HearthProposer
+from si.gaia.hearth import REPLAY_TRANSPORT_LABEL
+from si.gaia.proposer import (
+    ATTEMPT_RECORD_KIND,
+    RESPONSE_RECORD_KIND,
+    HearthProposer,
+    walk_attempt_chain,
+)
 from si.gaia.seam_measure import _cpu_model, _ram_bytes, _si_commit
 from si.gaia.task import run_task
 from si.journal import open_journal
@@ -175,9 +194,10 @@ def _gateway_body(content):
             "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
 
 
-def _intent(tool, args, reason):
+def _intent(tool, args, reason, depends_on=None):
     return {"tool": tool, "args": args, "reason": reason,
-            "depends_on": [], "ordering_key": None}
+            "depends_on": list(depends_on or []),
+            "ordering_key": None}
 
 
 #: Named replay workloads. Each script is the replay transport's
@@ -203,6 +223,357 @@ REPLAY_WORKLOADS = (
                          "detail": "fact reported"}),
     ]),
 )
+
+
+# ---------------------------------------------------------------------------
+# Replay corpus v2 (SI-70; SI-69 §4.3 L-1) — REPLAY ONLY
+# ---------------------------------------------------------------------------
+
+REPLAY_MODEL_ID_V2 = "replay://si-70-proposer-measurement-v2"
+REPLAY_GATEWAY_BASE_V2 = "replay://si-70-proposer-measurement-v2"
+
+#: Why every §18.1 row is UNMEASURED in the SI-70 record:
+#: unchanged from SI-68 in substance — L-1 attempted no live
+#: measurement by design (§4.3 honesty gate).
+NODE_UNAVAILABLE_REASON_V2 = (
+    "gaia node unavailable on this VM at measurement time; "
+    "P-4's live fixture run did not complete (node lost "
+    "mid-slice, SI-67) and no live measurement was attempted "
+    "by SI-70 (L-1 is replay-only by design, SI-69 §4.3) — "
+    "unchanged from SI-68; the live run awaits decision D-L0 "
+    "and a node relaunch")
+
+MULTI_CYCLE_INSTRUCTION = (
+    "List the work root, read note.txt, search the work root "
+    "for the lighthouse fact, then signal completion.")
+CHAIN_INSTRUCTION = (
+    "List the work root, then read note.txt depending on the "
+    "listing, then search depending on the read, then signal "
+    "completion.")
+#: The §6.3 assembly bound the truncation workload prices:
+#: deliberately far below the catalogue + task size, so the
+#: §6.3 truncation order engages and every truncated element
+#: is labelled in the perception and the attempt record.
+TRUNCATION_PERCEPTION_BYTES = 12288
+
+
+def _v2_workload(label, instruction, injection, script, **options):
+    return (label, instruction, injection, script, options)
+
+
+#: Corpus v2: the SI-68 workloads repeated verbatim (same
+#: labels, same scripts — comparability), then the second
+#: fixture family (§4.3): multi-cycle, depends_on chain
+#: (transport-generated, see _ChainReplayTransport), and the
+#: §6.3 perception-truncation case.
+REPLAY_WORKLOADS_V2 = tuple(
+    (label, instruction, injection, script, {})
+    for label, instruction, injection, script in REPLAY_WORKLOADS
+) + (
+    _v2_workload("multi-cycle-read", MULTI_CYCLE_INSTRUCTION,
+                 False, [
+        _doc([_intent("fs_list", {"path": "."},
+                      "list the work root first")]),
+        _doc([_intent("fs_read", {"path": "note.txt"},
+                      "read the note listed")]),
+        _doc([_intent("fs_search",
+                      {"path": ".", "pattern": "lighthouse"},
+                      "search for the lighthouse fact")]),
+        _doc([], signal={"kind": "task_complete",
+                         "detail": "listed, read, and searched"}),
+    ], cycles=6),
+    _v2_workload("depends-on-chain", CHAIN_INSTRUCTION, False,
+                 None, transport="chain", cycles=6),
+    _v2_workload("perception-truncation",
+                 live_mod.TASK_A_INSTRUCTION, False, [
+        _doc([_intent("fs_read", {"path": "note.txt"},
+                      "read the note")]),
+        _doc([_intent("fs_read", {"path": "note.txt"},
+                      "read the note again under a truncated "
+                      "perception")]),
+        _doc([], signal={"kind": "task_complete",
+                         "detail": "fact reported"}),
+    ], cycles=6, max_perception_bytes=TRUNCATION_PERCEPTION_BYTES),
+)
+
+
+def _last_prior_intent_seq(gateway_body):
+    """The most recent prior-cycle intent seq named in a
+    gateway request's rendered perception (the ``prior_cycles``
+    section rides as canonical JSON in the user message,
+    §6.5) — or None when the perception names none."""
+    try:
+        content = gateway_body["messages"][1]["content"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    for line in content.splitlines():
+        if line.startswith("prior_cycles: "):
+            try:
+                cycles = json.loads(line[len("prior_cycles: "):])
+            except ValueError:
+                return None
+            seqs = [c.get("intent_seq") for c in cycles
+                    if isinstance(c, dict)
+                    and isinstance(c.get("intent_seq"), int)]
+            return seqs[-1] if seqs else None
+    return None
+
+
+class _ChainReplayTransport:
+    """A labelled replay transport that AUTHORS a valid
+    ``depends_on`` chain across cycles (SI-70).
+
+    §9.3 stage 4 verifies each declared ``depends_on`` seq
+    against the journal fold — only seqs of THIS task's
+    already-journaled intents verify — so a valid chain cannot
+    be a static script: the seq of cycle N's intent exists
+    only after cycle N is journaled. This transport therefore
+    generates each response at call time, reading the prior
+    intent seq from the perception the gateway request itself
+    carries (exactly what a model would read) and declaring
+    it in the next proposal. It is a replay fixture, labelled
+    with the replay transport label, ``is_replay`` True: it
+    measures the parser, the gate's dependency pricing, and
+    the loop — never a model. A call whose perception names
+    no prior intent (when one is required) raises, a labelled
+    failure the measurement surfaces rather than hides.
+    """
+
+    label = REPLAY_TRANSPORT_LABEL
+    is_replay = True
+
+    def __init__(self):
+        self.calls = []
+        self._step = 0
+
+    def __call__(self, method, url, *, json_body=None,
+                 timeout_s=5.0):
+        self.calls.append({"method": method, "url": url,
+                           "json_body": json_body})
+        self._step += 1
+        if self._step == 1:
+            doc = _doc([_intent("fs_list", {"path": "."},
+                                "list the work root first")])
+        elif self._step in (2, 3):
+            seq = _last_prior_intent_seq(json_body)
+            if seq is None:
+                raise RuntimeError(
+                    "chain replay transport: perception names "
+                    "no prior intent seq to depend on — "
+                    "labelled failure, not a fabricated chain "
+                    "(SI-70)")
+            if self._step == 2:
+                doc = _doc([_intent(
+                    "fs_read", {"path": "note.txt"},
+                    "read the note the listing showed",
+                    depends_on=[{"seq": seq,
+                                 "requirement": "success"}])])
+            else:
+                doc = _doc([_intent(
+                    "fs_search",
+                    {"path": ".", "pattern": "lighthouse"},
+                    "search, building on the read",
+                    depends_on=[{"seq": seq,
+                                 "requirement": "outcome"}])])
+        else:
+            doc = _doc([], signal={
+                "kind": "task_complete",
+                "detail": "chain completed"})
+        return 200, json.dumps(_gateway_body(doc)).encode("utf-8")
+
+
+def _exp_records(journal, kind):
+    rows = journal.backend.find(
+        "experiences", filter={"kind": kind}) or []
+    return [(row.get("seq"), row.get("record") or {})
+            for row in rows]
+
+
+def _v2_extra_folds(journal, results):
+    """The L-1 acceptance folds (§4.3), from the journal only:
+    §14 chain walkability for every gateway response (and for
+    admitted batches specifically), §6.3 truncation labels on
+    attempt records per workload, and the journaled
+    ``depends_on`` chain (self-edit rows whose declared
+    dependencies are non-empty, plus the responses'
+    model-authored chaining counts)."""
+    label_by_seq = {r.get("task_seq"): r.get("label")
+                    for r in results}
+    responses = [(s, r) for s, r in _exp_records(
+        journal, RESPONSE_RECORD_KIND) if r.get("gateway_attempt")]
+    attempts = [(s, r) for s, r in _exp_records(
+        journal, ATTEMPT_RECORD_KIND) if r.get("gateway_attempt")]
+    chains_checked = 0
+    chains_walkable = 0
+    admitted_checked = 0
+    admitted_walkable = 0
+    for seq, rec in responses:
+        walk = walk_attempt_chain(journal, seq)
+        ok = bool(walk.get("found") and walk.get("attempt_found")
+                  and walk.get("all_intents_found"))
+        chains_checked += 1
+        chains_walkable += 1 if ok else 0
+        batch = rec.get("batch") or {}
+        if (rec.get("parse") or {}).get("outcome") == "ok" \
+                and (batch.get("members") or 0) > 0:
+            admitted_checked += 1
+            admitted_walkable += 1 if ok else 0
+    model_authored = 0
+    for _s, rec in responses:
+        chaining = ((rec.get("batch") or {}).get("chaining")
+                    or {})
+        model_authored += int(chaining.get("model_authored")
+                              or 0)
+    truncated_by_workload = {}
+    truncated_attempts = 0
+    for _s, rec in attempts:
+        truncs = (rec.get("perception") or {}).get(
+            "truncations") or []
+        if truncs:
+            truncated_attempts += 1
+            label = label_by_seq.get(rec.get("task_seq"),
+                                     "unknown")
+            truncated_by_workload[label] = \
+                truncated_by_workload.get(label, 0) + 1
+    chained_seqs = []
+    for row in journal.backend.find("self_edits") or []:
+        deps = (row.get("intent") or {}).get("depends_on") or []
+        if deps:
+            chained_seqs.append(row.get("seq"))
+    return {
+        "chain_walk": {
+            "label": "REPLAY ONLY",
+            "responses_checked": chains_checked,
+            "responses_walkable": chains_walkable,
+            "all_responses_walkable":
+                chains_checked == chains_walkable,
+            "admitted_batches_checked": admitted_checked,
+            "admitted_batches_walkable": admitted_walkable,
+            "all_admitted_batches_walkable":
+                admitted_checked == admitted_walkable,
+        },
+        "depends_on_chain": {
+            "label": "REPLAY ONLY",
+            "chained_intent_seqs": chained_seqs,
+            "chained_intents": len(chained_seqs),
+            "model_authored_members": model_authored,
+        },
+        "truncation": {
+            "label": "REPLAY ONLY",
+            "perception_bound_bytes": TRUNCATION_PERCEPTION_BYTES,
+            "attempts_with_truncations": truncated_attempts,
+            "attempts_with_truncations_by_workload":
+                truncated_by_workload,
+        },
+    }
+
+
+def run_replay_measurement_v2(out_dir, *,
+                              workloads=REPLAY_WORKLOADS_V2):
+    """Run corpus v2 end to end and fold the statistics from
+    the journal (the SI-68 runner's shape, plus the §4.3
+    folds). REPLAY ONLY — no node is contacted."""
+    os.makedirs(out_dir, exist_ok=True)
+    paths = live_mod.build_fixture_bundle(
+        os.path.join(out_dir, "replay-v2.si"),
+        os.path.join(out_dir, "work-v2"))
+    policy = fixture_policy(paths["work_root"])
+    journal = open_journal(paths["bundle_dir"])
+    try:
+        journal_residency_record(
+            journal, fleet_name=live_mod.FIXTURE_FLEET_MODEL,
+            served_model_id=REPLAY_MODEL_ID_V2, state="Resident",
+            raw_state="resident", is_replay=True)
+        live_mod.reanchor_bundle(
+            paths["bundle_dir"], journal,
+            note="gaia l1 replay corpus v2: residency journaled "
+                 "(SI-70)")
+    finally:
+        journal.close()
+    results = []
+    wall_s = []
+    growth_entries = []
+    growth_bytes = []
+    for label, instruction, injection, script, options in workloads:
+        journal = open_journal(paths["bundle_dir"])
+        try:
+            before_rows = len(
+                journal.backend.find("experiences") or [])
+        finally:
+            journal.close()
+        before_bytes = _bundle_bytes(paths["bundle_dir"])
+        if options.get("transport") == "chain":
+            transport = _ChainReplayTransport()
+        else:
+            transport = ReplayTransport(
+                [(200, _gateway_body(doc)) for doc in script])
+        proposer_kwargs = {}
+        if options.get("max_perception_bytes") is not None:
+            proposer_kwargs["max_perception_bytes"] = int(
+                options["max_perception_bytes"])
+        proposer = HearthProposer(
+            transport=transport,
+            gateway_base_url=REPLAY_GATEWAY_BASE_V2,
+            model=REPLAY_MODEL_ID_V2,
+            served_models=[REPLAY_MODEL_ID_V2],
+            policy=policy, **proposer_kwargs)
+        started = time.perf_counter()
+        res = run_task(paths["bundle_dir"], proposer, instruction,
+                       work_root=paths["work_root"],
+                       cycles=int(options.get("cycles", 4)),
+                       policy=policy)
+        elapsed = time.perf_counter() - started
+        journal = open_journal(paths["bundle_dir"])
+        try:
+            after_rows = len(
+                journal.backend.find("experiences") or [])
+        finally:
+            journal.close()
+        wall_s.append(elapsed)
+        growth_entries.append(after_rows - before_rows)
+        growth_bytes.append(
+            _bundle_bytes(paths["bundle_dir"]) - before_bytes)
+        results.append({**res, "label": label,
+                        "injection": injection,
+                        "proposer_outcome": proposer.last_outcome,
+                        "wall_s": elapsed})
+    journal = open_journal(paths["bundle_dir"])
+    try:
+        stats = live_mod.aggregate_stats(journal, results)
+        total_rows = len(journal.backend.find("experiences")
+                         or [])
+        extra = _v2_extra_folds(journal, results)
+    finally:
+        journal.close()
+    stats.update({
+        "label": REPLAY_LABEL,
+        "corpus": "v2 (SI-70 / SI-69 §4.3 L-1)",
+        "workloads": [w[0] for w in workloads],
+        "repeated_si68_workloads": [w[0] for w in
+                                    REPLAY_WORKLOADS],
+        "comparability": (
+            "the SI-68 workloads are repeated verbatim (same "
+            "labels, same scripts) inside corpus v2 for "
+            "comparability with docs/SI-68-measurements.json; "
+            "both records are REPLAY ONLY"),
+        "task_wall_s": summarize(wall_s),
+        "journal_entries_per_task": summarize(growth_entries),
+        "journal_bytes_per_task": summarize(growth_bytes),
+        "journal_experiences_total": total_rows,
+        "tasks_completed": sum(
+            1 for r in results
+            if r.get("stop_reason") == "mind-reported-complete"),
+        "tasks_run": len(results),
+        "per_workload": [{
+            "label": r.get("label"),
+            "injection": bool(r.get("injection")),
+            "stop_reason": r.get("stop_reason"),
+            "cycles_used": r.get("cycles_used"),
+            "steps": len(r.get("steps") or []),
+        } for r in results],
+    })
+    stats.update(extra)
+    return stats
 
 
 def _bundle_bytes(bundle_dir):
@@ -440,8 +811,37 @@ def build_live_record(out_dir, *, env=None, transport=None,
     return record
 
 
-def _write_record(out_dir, record):
-    with open(os.path.join(out_dir, "SI-68-measurements.json"),
+def build_replay_record_v2(out_dir, *, argv=None, si_commit=None):
+    """L-1 replay record (SI-70): corpus v2 exercised against
+    the replay transport; live NOT attempted by design; every
+    §18.1 row UNMEASURED, unchanged from SI-68; N=0 live
+    attempts. Written as ``SI-70-measurements.json``."""
+    replay = run_replay_measurement_v2(out_dir)
+    record = _base_record("replay", environment_fingerprint(
+        si_commit=si_commit, argv=argv))
+    record["slice"] = "SI-70 (SI-69 §4.3 L-1)"
+    record["tuning_note"] = (
+        "No tuning change lands without before/after journal "
+        "evidence; L-1 is a replay corpus extension and replay "
+        "evidence never justifies a tuning change, so NO "
+        "tuning change lands in SI-70.")
+    record["live"] = {
+        "status": "not_attempted",
+        "n_live_gateway_attempts": 0,
+        "reason": NODE_UNAVAILABLE_REASON_V2,
+    }
+    record["replay"] = replay
+    record["rows_18_1"] = _rows(
+        _replay_observations(replay),
+        reason=NODE_UNAVAILABLE_REASON_V2)
+    _write_record(out_dir, record,
+                  filename="SI-70-measurements.json")
+    return record
+
+
+def _write_record(out_dir, record,
+                  filename="SI-68-measurements.json"):
+    with open(os.path.join(out_dir, filename),
               "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, default=str)
 
@@ -454,6 +854,9 @@ def main(argv=None) -> int:
                         help="evidence output directory")
     parser.add_argument("--mode", choices=("replay", "live"),
                         default="replay")
+    parser.add_argument("--corpus", choices=("v1", "v2"),
+                        default="v1",
+                        help="replay corpus (v2 = SI-70 L-1)")
     args = parser.parse_args(argv)
     if args.mode == "live":
         if os.environ.get(ENV_LIVE) != "1":
@@ -462,6 +865,8 @@ def main(argv=None) -> int:
                   f"was contacted (SI-68)", file=sys.stderr)
             return 2
         record = build_live_record(args.out)
+    elif args.corpus == "v2":
+        record = build_replay_record_v2(args.out)
     else:
         record = build_replay_record(args.out)
     print(json.dumps({"mode": record["mode"],
