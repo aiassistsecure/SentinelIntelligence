@@ -507,6 +507,29 @@ def journal_excerpts(journal, task_seqs) -> list:
 # 5. The live fixture suite
 # ---------------------------------------------------------------------------
 
+def reanchor_bundle(bundle_dir, journal, *, note) -> dict:
+    """Re-anchor the bundle manifest to the journal tip after
+    journaling OUTSIDE ``run_task`` (SI-68 hardening).
+
+    ``load_bundle`` fails closed when the manifest anchor does
+    not match the journal tip, and ``run_task`` loads the
+    bundle first — so records journaled between tasks
+    (residency polls, operator acts, environmental failures)
+    MUST re-anchor, exactly as the seam ingest does
+    (``si/gaia/seam.py``). P-4's suite journaled residency this
+    way without re-anchoring: had the node stayed up, the
+    first ``run_task`` would have raised ``TamperError`` on
+    the anchor. Returns the updated manifest."""
+    from si.bundle import _anchor_checkpoint, _write_manifest
+    with open(os.path.join(bundle_dir, "manifest.json"),
+              encoding="utf-8") as f:
+        manifest = json.load(f)
+    updated = _anchor_checkpoint(
+        journal, manifest, manifest["head"], note=note)
+    _write_manifest(bundle_dir, updated)
+    return updated
+
+
 def _poll_and_journal(bundle_dir, client, fleet_name, served_id,
                       *, operator_act=False):
     journal = open_journal(bundle_dir)
@@ -515,6 +538,9 @@ def _poll_and_journal(bundle_dir, client, fleet_name, served_id,
             journal, fleet_name, served_id)
         if operator_act:
             journal_operator_act(journal, bundle_name=bundle_dir)
+        reanchor_bundle(
+            bundle_dir, journal,
+            note="gaia live: residency poll journaled (SI-67/SI-68)")
         return ref
     finally:
         journal.close()
@@ -596,6 +622,114 @@ def run_live_fixture_suite(out_dir, *, env=None, transport=None,
               encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=str)
     return stats
+
+
+# ---------------------------------------------------------------------------
+# 6. Preflight + environmental-failure journaling (SI-68 hardening)
+# ---------------------------------------------------------------------------
+
+#: Experience kind for a labelled environmental failure: a run
+#: that could not start (or had to stop) because the ENVIRONMENT
+#: failed — discovery found nothing, the node refused a
+#: connection, residency named no fleet model — as opposed to a
+#: measured result. P-4's live attempt died exactly this way
+#: (node lost mid-slice; the one suite attempt failed at
+#: served-model discovery with connection refused) and left no
+#: journaled record in any bundle. SI-68 (§19 P-5 hardening,
+#: motivated by that evidence): a failed preflight is journaled
+#: under this kind in the caller's measurement bundle, so the
+#: failure is a walkable record, never a partial run dressed as
+#: a measurement.
+ENVIRONMENTAL_FAILURE_KIND = "gaia_environmental_failure"
+
+
+def journal_environmental_failure(journal, *, stage, detail,
+                                  slice_label="SI-68") -> dict:
+    """Journal one labelled environmental-failure record.
+
+    ``stage`` names where readiness failed (``discovery``,
+    ``served_models``, ``residency``); ``detail`` is the
+    labelled failure text. The record states plainly that no
+    measurement was taken and no task ran."""
+    record = {
+        "kind": ENVIRONMENTAL_FAILURE_KIND,
+        "source": "si.gaia.live preflight (SI-68)",
+        "slice": slice_label,
+        "stage": stage,
+        "detail": str(detail),
+        "measurement_taken": False,
+        "tasks_run": 0,
+        "label": (
+            "ENVIRONMENTAL FAILURE — the environment failed "
+            "before any measurement could start; this record is "
+            "evidence of the failure, not a measurement"),
+        "date": utc_now(),
+    }
+    row_id = journal.record_experience(
+        ENVIRONMENTAL_FAILURE_KIND, record, "")
+    rows = journal.backend.find(
+        "experiences", filter={"kind": ENVIRONMENTAL_FAILURE_KIND},
+        sort="-seq", limit=1)
+    seq = rows[0]["seq"] if rows else journal.tip()[0]
+    return {"seq": seq, "row_id": row_id, "record": record}
+
+
+def preflight_live(*, env=None, transport=None, node_md_path=None,
+                   gaia_log_path=None,
+                   fleet_name=FIXTURE_FLEET_MODEL) -> dict:
+    """Readiness check for a live proposer run (SI-68).
+
+    Runs the three readiness legs IN ORDER — inference-base
+    discovery, served-model discovery, residency poll naming
+    the fleet model — and returns the observed facts. Raises
+    :class:`DiscoveryError` with a stage-labelled message on
+    the first failed leg; a transport exception is wrapped the
+    same way. Journals nothing and runs no task: the caller
+    decides whether to proceed, and journals the failure via
+    :func:`journal_environmental_failure` when it does not.
+    Fail-closed: readiness is never assumed from a partial
+    pass."""
+    env = os.environ if env is None else env
+    http = transport if transport is not None else HttpTransport()
+    try:
+        inference_base = discover_inference_base(
+            node_md_path, gaia_log_path, env=env)
+    except DiscoveryError as exc:
+        raise DiscoveryError(f"[stage=discovery] {exc}") from exc
+    try:
+        served = discover_served_models(inference_base, transport=http)
+    except DiscoveryError as exc:
+        raise DiscoveryError(f"[stage=served_models] {exc}") from exc
+    except Exception as exc:
+        raise DiscoveryError(
+            f"[stage=served_models] served-model discovery "
+            f"failed — transport error ({type(exc).__name__}: "
+            f"{exc})") from exc
+    if not served:
+        raise DiscoveryError(
+            "[stage=served_models] served-model discovery "
+            "returned no identifiers — identity cannot be "
+            "verified (§11.1); not ready")
+    client = GaiaResidencyClient(residency_base(env), transport=http)
+    try:
+        entry = client.entry_for(fleet_name)
+    except DiscoveryError as exc:
+        raise DiscoveryError(f"[stage=residency] {exc}") from exc
+    except Exception as exc:
+        raise DiscoveryError(
+            f"[stage=residency] residency poll failed — "
+            f"transport error ({type(exc).__name__}: {exc})"
+        ) from exc
+    return {
+        "ready": True,
+        "inference_base_observed": inference_base,
+        "served_model_id": served[0],
+        "served_models": served,
+        "fleet_model": fleet_name,
+        "residency_state_raw": entry.get("state"),
+        "residency_state": map_residency_state(entry.get("state")),
+        "residency_base": residency_base(env),
+    }
 
 
 def main(argv=None) -> int:
