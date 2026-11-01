@@ -191,6 +191,7 @@ from si.gaia.seam_outcome import (
     poll_seam_outcomes,
     reconcile_seam_outcomes,
 )
+from si.gaia.seam_reconcile import S5_RECONCILIATION_LABEL
 from si.gaia.seam_submit import (
     WORK_SUBMISSION_LABEL,
     submit_pending_seam_work,
@@ -850,6 +851,7 @@ class ServiceState:
             "seam_outcome_return": OUTCOME_RETURN_LABEL,
             "seam_event_forward": EVENT_FORWARD_LABEL,
             "seam_registry_gap": REGISTRY_GAP_LABEL,
+            "seam_label_reconciliation": S5_RECONCILIATION_LABEL,
             "queue_exposure": QUEUE_EXPOSURE_LABEL,
             "submitter_identity": SUBMITTER_IDENTITY_LABEL,
             "auth": NO_AUTH_LABEL,
