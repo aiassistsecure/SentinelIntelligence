@@ -12,7 +12,7 @@ What is live here, stated precisely:
 - **Discovery is runtime, never configured.** The inference
   port of gaia's supervised llama-server child is ephemeral:
   it is discovered from the gaia log line
-  ``gaia: smollm2 loading on 127.0.0.1:<port>`` or from the
+  ``gaia: imagine-v12 loading on 127.0.0.1:<port>`` or from the
   node note (``NODE.md``), or from the operator's
   ``SI_GAIA_INFERENCE_BASE`` override. No inference port is
   hardcoded anywhere in this module. The residency/agency API
@@ -22,7 +22,7 @@ What is live here, stated precisely:
 - **Identity is exact (§11.1).** The served model identity is
   the ``data[0].id`` string ``GET /v1/models`` returns on the
   inference base (a full GGUF path on this node). The
-  residency fleet name (``smollm2``) is a DIFFERENT string;
+  residency fleet name (``imagine-v12``) is a DIFFERENT string;
   the journaled residency record carries both — ``model`` is
   the served id (the identity leg prices it), ``fleet_model``
   is the fleet name.
@@ -91,7 +91,7 @@ LIVE_LABEL = (
     "si.gaia.live (SI-67 / SI-63 §19 P-4); not a replay")
 
 #: The fixture fleet entry this suite prices (NODE.md fleet).
-FIXTURE_FLEET_MODEL = "smollm2"
+FIXTURE_FLEET_MODEL = "imagine-v12"
 
 #: Tools an injected intent would name (§17.4 accounting).
 INJECT_TOOLS = ("shell_exec", "code_exec")

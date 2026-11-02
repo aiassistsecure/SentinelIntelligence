@@ -18,6 +18,7 @@ import pytest
 from si.gaia.hearth import ReplayTransport  # noqa: F401  (label sanity)
 from si.gaia.live import (
     ENVIRONMENTAL_FAILURE_KIND,
+    FIXTURE_FLEET_MODEL,
     DiscoveryError,
     journal_environmental_failure,
     preflight_live,
@@ -72,7 +73,7 @@ def _models_body():
 
 
 def _residency_body(state="resident"):
-    return {"models": [{"model": "smollm2", "state": state}]}
+    return {"models": [{"model": "imagine-v12", "state": state}]}
 
 
 def _doc(intents, signal=None):
@@ -118,6 +119,14 @@ def test_fingerprint_shape():
 
 
 # -- preflight (SI-68 hardening in si/gaia/live.py) ---------------------------
+
+def test_fixture_fleet_model_is_imagine_v12():
+    # SI-73: the node serves imagine-v12 as its Resident mind
+    # (SmolLM2 ditched 2026-11-01); the fixture fleet priced
+    # by the live harness must name that model, or the
+    # residency leg of a live re-run fails closed.
+    assert FIXTURE_FLEET_MODEL == "imagine-v12"
+
 
 def test_preflight_success_with_fakes():
     transport = FakeTransport([(200, _models_body()),
