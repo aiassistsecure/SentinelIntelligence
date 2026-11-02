@@ -208,7 +208,18 @@ into these Ns.
 
 ## 5. Tests
 
-TESTS_PLACEHOLDER
+Builder ran new + affected tests only (full suite is
+the reviewer's, next run):
+
+- `tests/test_gaia_proposer_p4.py` +
+  `tests/test_gaia_proposer_p5.py`: **37 passed** on
+  `~/workspace/si2-venv` (Python 3.12.3), this run.
+  (The run's earlier test attempts were blocked by a
+  sandbox write-EPERM episode — python tempfile writes
+  denied — and are not counted as results; the passing
+  run is the one reported here.)
+- No test files are added or modified by this slice;
+  there is no new code to pin.
 
 ## 6. Repo / seed status at run time
 
