@@ -1,0 +1,125 @@
+{
+  "slice": "SI-68 (SI-63 \u00a719 P-5)",
+  "generated_at_utc": "2026-11-01T22:49:45.144083+00:00",
+  "mode": "live",
+  "fingerprint": {
+    "si_commit": "86db0ab472c94156c7f25767980c41688e17bb31",
+    "gaia_commit": "not-used",
+    "python_version": "3.12.3",
+    "python_executable": "/home/hatch/workspace/si2-venv/bin/python",
+    "venv_path": "/home/hatch/workspace/si2-venv",
+    "os": "Linux 7.0.0-39-generic (Linux-7.0.0-39-generic-x86_64-with-glibc2.39)",
+    "cpu_model": "AMD EPYC 9D25 126-Core Processor",
+    "cpu_count_os": 4,
+    "ram_bytes_total": 8319901696,
+    "journal_backend": "embedded",
+    "host_note": "htch-runtime; dev-loop VM, shared with the agent runtime (contention note)",
+    "harness": {
+      "module": "si.gaia.propose_measure",
+      "argv": [
+        "/tmp/prfactory-si72/si/gaia/propose_measure.py",
+        "--out",
+        "/tmp/si72-p5-live",
+        "--mode",
+        "live"
+      ]
+    }
+  },
+  "honesty": {
+    "live_model_authored_intent": "NEVER YET OCCURRED",
+    "real_hearth_gaia_path": "UNMEASURED",
+    "residency_loss_s16_6": "UNMEASURED \u2014 not exercised"
+  },
+  "tuning_changes": [],
+  "tuning_note": "No tuning change lands without before/after journal evidence (\u00a719 P-5); there is no live evidence, so NO tuning change lands in SI-68.",
+  "live": {
+    "status": "environmental_failure",
+    "n_live_gateway_attempts": 0,
+    "stage": "served_models",
+    "detail": "[stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+    "environmental_failure_journal_seq": 5,
+    "reason": "preflight failed closed \u2014 the environment failed before any measurement could start; no fixture task ran"
+  },
+  "rows_18_1": [
+    {
+      "id": "P5-R1",
+      "quantity": "Real Hearth path latency / throughput",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R2",
+      "quantity": "Proposer cycle latency (gateway + parse)",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R3",
+      "quantity": "Proposal parse-success rate",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R4",
+      "quantity": "Gate verdict distribution for model intents",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R5",
+      "quantity": "Task completion rate (model-proposed)",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R6",
+      "quantity": "Hallucinated-reference rate (\u00a79.3)",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R7",
+      "quantity": "Injection-attempt success (to proposal)",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R8",
+      "quantity": "Injection success (to execution)",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R9",
+      "quantity": "Residency-loss frequency / recovery",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    },
+    {
+      "id": "P5-R10",
+      "quantity": "Journal growth per model-proposed task",
+      "label": "UNMEASURED",
+      "live_status": "environmental_failure",
+      "reason": "live preflight failed at stage served_models: [stage=served_models] served-model discovery failed \u2014 transport error (URLError: <urlopen error [Errno 111] Connection refused>)",
+      "replay_observation": null
+    }
+  ]
+}
