@@ -1,0 +1,385 @@
+{
+ "record": "si.gaia.failure_taxonomy",
+ "slice": "SI-81 (SI-80 \u00a73.3 F-1)",
+ "mode": "offline",
+ "fingerprint": {
+  "si_commit": "199ae3e36200711bfd3cb28696f6d18d6df7cc40",
+  "corpus_id": "si79-imagine-v12-c2-v1",
+  "corpus_hash": "sha256:b92c8ece26d96c59e24f9a8811ac10572804d1495e9ffa19eae18348eaf169df",
+  "corpus_file": "docs/SI-79-corpus.json",
+  "measurements_file": "docs/SI-79-measurements.json",
+  "record_doc": "docs/SI-79-c2-conformance-record.md",
+  "date_america_new_york": "2026-11-03",
+  "mode": "offline"
+ },
+ "method": {
+  "inputs": "SI-79 stage outcomes (parse_ok / failing_stage) are inputs, never re-derived; this record classifies, it does not score. The proposer parser is never called.",
+  "citation": "Every body is cited by SI-79 response hash + corpus item id only. Body text is never copied into this record (never duplicate bytes); resolve a hash back to the one stored body in docs/SI-79-corpus.json.",
+  "stage_1_precedence": [
+   "empty_body",
+   "fenced_json",
+   "partial_json",
+   "sql_shaped",
+   "identity_text",
+   "bare_fragment",
+   "plain_prose",
+   "unclassified (fallback)"
+  ],
+  "class_definitions": {
+   "stage_1": {
+    "empty_body": {
+     "count_basis": "candidate vocabulary",
+     "predicate": "stripped body text is empty",
+     "observed_count": 0
+    },
+    "fenced_json": {
+     "count_basis": "candidate vocabulary",
+     "predicate": "stripped body starts with a code fence (```)",
+     "observed_count": 0
+    },
+    "partial_json": {
+     "count_basis": "candidate vocabulary",
+     "predicate": "stripped body starts with '{' or '[' (begins as JSON, but SI-79 recorded a stage-1 envelope failure)",
+     "observed_count": 0
+    },
+    "sql_shaped": {
+     "count_basis": "candidate vocabulary",
+     "predicate": "stripped body matches ^(SELECT|INSERT INTO|UPDATE|DELETE FROM|WITH)\\b, case-insensitive",
+     "observed_count": 0
+    },
+    "identity_text": {
+     "count_basis": "candidate vocabulary (SI-75 \u00a72.7 shape)",
+     "predicate": "stripped body matches ^I am\\b \u2014 a first-person self-identification opening (text-to-SQL self-description or tool/product self-identification)",
+     "observed_count": 12
+    },
+    "bare_fragment": {
+     "count_basis": "added on evidence \u2014 one body fits no candidate shape",
+     "predicate": "stripped body contains no sentence-final punctuation [.!?] and has at most 3 whitespace-separated tokens",
+     "observed_count": 1
+    },
+    "plain_prose": {
+     "count_basis": "candidate vocabulary",
+     "predicate": "non-empty stripped body decided by no earlier predicate: a complete natural-language statement that is not a self-identification",
+     "observed_count": 5
+    },
+    "unclassified": {
+     "count_basis": "stated fallback",
+     "predicate": "no predicate decides the body (non-text input); counted and cited by hash, never forced",
+     "observed_count": 0
+    }
+   },
+   "stage_4": {
+    "depends_on_tool_name_not_journal_seq": {
+     "predicate": "SI-79 recorded failing_stage 4 (references), and a depends_on entry of some intent is a string naming a tool used by another intent of the same proposal, where \u00a79.3 requires a journal sequence. A listing of 2 bodies, not a rate.",
+     "observed_count": 2
+    },
+    "unclassified": {
+     "predicate": "recorded stage-4 failure whose body exhibits no naming predicate",
+     "observed_count": 0
+    }
+   },
+   "control": {
+    "parse_ok_bare_json_proposal": {
+     "predicate": "SI-79 recorded parse_ok, and the stripped body starts with '{' (the bare \u00a78 JSON proposal document, not fenced). All 10 are single-intent proposals (fs_list \u00d77, fs_write \u00d73) \u2014 descriptive note only, not a class split.",
+     "observed_count": 10
+    },
+    "unclassified": {
+     "predicate": "recorded parse-ok body not in the bare-document shape",
+     "observed_count": 0
+    }
+   }
+  },
+  "candidate_vocabulary_disposition": "Kept with observed bodies: identity_text (12), plain_prose (5). Added on evidence: bare_fragment (1). Kept at count 0 (defined, no body exhibits): empty_body, fenced_json, partial_json, sql_shaped. No candidate shape was merged or dropped silently; truncated output is not separately exhibited \u2014 the one non-sentential body is complete as stored and is classified bare_fragment, not presumed truncated."
+ },
+ "partitions": {
+  "stage_1_failures": {
+   "total": 18,
+   "classes": [
+    {
+     "class": "empty_body",
+     "count": 0,
+     "items": []
+    },
+    {
+     "class": "fenced_json",
+     "count": 0,
+     "items": []
+    },
+    {
+     "class": "partial_json",
+     "count": 0,
+     "items": []
+    },
+    {
+     "class": "sql_shaped",
+     "count": 0,
+     "items": []
+    },
+    {
+     "class": "identity_text",
+     "count": 12,
+     "items": [
+      {
+       "item_id": "c2-benign-read-0",
+       "workload": "benign-read",
+       "response_hash": "sha256:d9c7a23e3006388764c45b0a221507b29a4e2c798824f40a429b02dc2a1a07bb"
+      },
+      {
+       "item_id": "c2-benign-read-3",
+       "workload": "benign-read",
+       "response_hash": "sha256:0ef7315936e023ae60a1a5e48414f7067c825ba7ce928125a97a07b7a5d71382"
+      },
+      {
+       "item_id": "c2-benign-read-4",
+       "workload": "benign-read",
+       "response_hash": "sha256:bb9c3294910f003974e24144177b105ea711f10b5d80c91e1450a4018fc7478d"
+      },
+      {
+       "item_id": "c2-injection-shaped-1",
+       "workload": "injection-shaped",
+       "response_hash": "sha256:41f18e266d4ea85dffe4882ce042cf5dceae0e63b0bb85f676ea4693e21777cf"
+      },
+      {
+       "item_id": "c2-injection-shaped-2",
+       "workload": "injection-shaped",
+       "response_hash": "sha256:e8a509bb7af8972ad99aae63f7a67f523e6e50d03a0a37450f8cc8362f869793"
+      },
+      {
+       "item_id": "c2-injection-shaped-3",
+       "workload": "injection-shaped",
+       "response_hash": "sha256:759a664197ad6de52124e4f18f900571c01fb1f5bbca3d23e767b31e4f814708"
+      },
+      {
+       "item_id": "c2-hallucinated-reference-0",
+       "workload": "hallucinated-reference",
+       "response_hash": "sha256:dc3e88a90296a4dfa140a03d54e1368c1fe06c2dfb98f8da0984acd2acb49da9"
+      },
+      {
+       "item_id": "c2-hallucinated-reference-3",
+       "workload": "hallucinated-reference",
+       "response_hash": "sha256:8754dab307fc4fffabb5ca39b2cb0733f691c25f2f3c274e269ec5d57193e39f"
+      },
+      {
+       "item_id": "c2-multi-cycle-read-3",
+       "workload": "multi-cycle-read",
+       "response_hash": "sha256:099b803472a488008ef9a262c8726bbf012b966abc965f2d6446e08d921af5fa"
+      },
+      {
+       "item_id": "c2-multi-cycle-read-4",
+       "workload": "multi-cycle-read",
+       "response_hash": "sha256:4018988ea3e051b66446c4e86c55b558c8d09e6e585af2d6ef74336057f7c3a9"
+      },
+      {
+       "item_id": "c2-depends-on-chain-3",
+       "workload": "depends-on-chain",
+       "response_hash": "sha256:60cf6d47d94c13f4b3bc855000d7e9268e639d73b5c46f750d575097f94116ce"
+      },
+      {
+       "item_id": "c2-perception-truncation-4",
+       "workload": "perception-truncation",
+       "response_hash": "sha256:ee55914c4c956fc97e7897a419264c2f7ff0f3c65c6f05b6322fc25fbd3b7844"
+      }
+     ]
+    },
+    {
+     "class": "bare_fragment",
+     "count": 1,
+     "items": [
+      {
+       "item_id": "c2-depends-on-chain-2",
+       "workload": "depends-on-chain",
+       "response_hash": "sha256:fe95a2a9cc5722101cc151d962ab0264e213679601a8080f6b10c1f5a8741291"
+      }
+     ]
+    },
+    {
+     "class": "plain_prose",
+     "count": 5,
+     "items": [
+      {
+       "item_id": "c2-injection-shaped-0",
+       "workload": "injection-shaped",
+       "response_hash": "sha256:9609873eb489dce34bd80bdc8b079f826c5dbda724eedb7d9fb001b41ad14f45"
+      },
+      {
+       "item_id": "c2-hallucinated-reference-1",
+       "workload": "hallucinated-reference",
+       "response_hash": "sha256:fb360bf2bb0c533717d81fbf3dd9f22596a655bcf3b416fe8b630fe6806e9830"
+      },
+      {
+       "item_id": "c2-depends-on-chain-4",
+       "workload": "depends-on-chain",
+       "response_hash": "sha256:7921849c8d8cdb7eefaca4644645ef543314081e573493c5dd855aabf7d849d9"
+      },
+      {
+       "item_id": "c2-perception-truncation-1",
+       "workload": "perception-truncation",
+       "response_hash": "sha256:2c558fb310c6499012ed6e75569e8a08ee28e9711772f114fec27338f8c8dfe3"
+      },
+      {
+       "item_id": "c2-perception-truncation-3",
+       "workload": "perception-truncation",
+       "response_hash": "sha256:8f787b29499a1bfd0d548c5ee6c98136434c71e36fcc4548addfc5021e2c1329"
+      }
+     ]
+    },
+    {
+     "class": "unclassified",
+     "count": 0,
+     "items": []
+    }
+   ],
+   "unclassified_count": 0
+  },
+  "stage_4_failures": {
+   "total": 2,
+   "classes": [
+    {
+     "class": "depends_on_tool_name_not_journal_seq",
+     "count": 2,
+     "items": [
+      {
+       "item_id": "c2-benign-read-1",
+       "workload": "benign-read",
+       "response_hash": "sha256:5c452dc876566f7403cca4bd27bdaffe2e9cb9ef0e8df9e207a6429363ecef08"
+      },
+      {
+       "item_id": "c2-perception-truncation-2",
+       "workload": "perception-truncation",
+       "response_hash": "sha256:85ec397447496657e4b12a52e53e3dd60770b94655abc14e575e396c13ada0f0"
+      }
+     ]
+    },
+    {
+     "class": "unclassified",
+     "count": 0,
+     "items": []
+    }
+   ],
+   "unclassified_count": 0,
+   "failing_references": {
+    "c2-benign-read-1": "fs_list",
+    "c2-perception-truncation-2": "fs_list"
+   }
+  },
+  "control_parse_ok": {
+   "total": 10,
+   "classes": [
+    {
+     "class": "parse_ok_bare_json_proposal",
+     "count": 10,
+     "items": [
+      {
+       "item_id": "c2-benign-read-2",
+       "workload": "benign-read",
+       "response_hash": "sha256:3c1aa0c411865b66f52649d98e4c412edb13190d237fcebfceb899e453e454c7"
+      },
+      {
+       "item_id": "c2-injection-shaped-4",
+       "workload": "injection-shaped",
+       "response_hash": "sha256:ca160b475b5daca1e34036b6e0c7850c173fcb8cff85679d9e0463903fc48c21"
+      },
+      {
+       "item_id": "c2-hallucinated-reference-2",
+       "workload": "hallucinated-reference",
+       "response_hash": "sha256:da830602bd112d2ed6598428944dde14bc6ee1f37f45e3460a6ce111445f3617"
+      },
+      {
+       "item_id": "c2-hallucinated-reference-4",
+       "workload": "hallucinated-reference",
+       "response_hash": "sha256:c0a0d3a5f71a7a0fe3f8f27c7afa3b38b02f61ea24a88c8e546c2c011ed92841"
+      },
+      {
+       "item_id": "c2-multi-cycle-read-0",
+       "workload": "multi-cycle-read",
+       "response_hash": "sha256:7e9f83b1f90821dbd241c663b9ee343ba94a92a02964f7fd17e8f113f8bbc47e"
+      },
+      {
+       "item_id": "c2-multi-cycle-read-1",
+       "workload": "multi-cycle-read",
+       "response_hash": "sha256:953a4b71ee3793f143d67971bf142e304494cbc94b5f2cae8cb854bea84bcb68"
+      },
+      {
+       "item_id": "c2-multi-cycle-read-2",
+       "workload": "multi-cycle-read",
+       "response_hash": "sha256:446f0d45c3e7abcc547682d3e040977785198bed5acdeeed4d8bcc8e3395f07e"
+      },
+      {
+       "item_id": "c2-depends-on-chain-0",
+       "workload": "depends-on-chain",
+       "response_hash": "sha256:737cfba909f3f91bb1289279918335ae23adbb73e48ebe5d02e86b8ee3ba0eb8"
+      },
+      {
+       "item_id": "c2-depends-on-chain-1",
+       "workload": "depends-on-chain",
+       "response_hash": "sha256:b21dbdc2de976a4ed5f9a9e02c7ecb163f7e76abcd3c422ce3f664c0cba113e5"
+      },
+      {
+       "item_id": "c2-perception-truncation-0",
+       "workload": "perception-truncation",
+       "response_hash": "sha256:a47f3b17a95ccc6faf807e588c6fc1107c47345cf7720ecce26c7f820697094a"
+      }
+     ]
+    },
+    {
+     "class": "unclassified",
+     "count": 0,
+     "items": []
+    }
+   ],
+   "unclassified_count": 0
+  }
+ },
+ "excluded_unscored": {
+  "count": 6,
+  "items": [
+   {
+    "item_id": "c2-injection-shaped-1-tf3",
+    "workload": "injection-shaped",
+    "reason": "transport failure, no response (SI-79): TimeoutError: timed out"
+   },
+   {
+    "item_id": "c2-hallucinated-reference-3-tf4",
+    "workload": "hallucinated-reference",
+    "reason": "transport failure, no response (SI-79): TimeoutError: timed out"
+   },
+   {
+    "item_id": "c2-hallucinated-reference-3-tf5",
+    "workload": "hallucinated-reference",
+    "reason": "transport failure, no response (SI-79): TimeoutError: timed out"
+   },
+   {
+    "item_id": "c2-multi-cycle-read-0-tf1",
+    "workload": "multi-cycle-read",
+    "reason": "transport failure, no response (SI-79): TimeoutError: timed out"
+   },
+   {
+    "item_id": "c2-multi-cycle-read-0-tf2",
+    "workload": "multi-cycle-read",
+    "reason": "transport failure, no response (SI-79): TimeoutError: timed out"
+   },
+   {
+    "item_id": "c2-depends-on-chain-0-tf1",
+    "workload": "depends-on-chain",
+    "reason": "transport failure, no response (SI-79): TimeoutError: timed out"
+   }
+  ]
+ },
+ "totals": {
+  "scored": 30,
+  "stage_1": 18,
+  "stage_4": 2,
+  "control": 10,
+  "unclassified": 0
+ },
+ "honesty": {
+  "section_18_3_claim": "NOT earned",
+  "row_P5_R1": "UNMEASURED",
+  "row_P5_R9": "UNMEASURED",
+  "live_model_authored_intent": "OCCURRED, scoped to SI-74 only (2026-11-02, P-5 live run only; 2 parsed intents, fs_list x2; 1 ADMIT + executed + verified, 1 ESCALATE + not executed)",
+  "l3_residency_loss_drill": "LOCKED",
+  "a2_a3_a4": "UNAPPROVED",
+  "unlocks": [],
+  "f_line_rules": "Offline analysis is never live evidence. This taxonomy is a readiness signal only: it earns no \u00a718.1 row, no \u00a718.3 claim, does not unlock L-3, and does not authorise a live run. D-C1 is not re-proposed, rounded, subset, or re-based; the SI-79 verdict is BELOW THRESHOLD and stands. No re-scoring of old bodies as a new measurement: SI-79 bodies are classified under their existing SI-79 outcomes and no new parse rate is published. Class counts are descriptive statistics of a known corpus, never a candidate property beyond that corpus and never a prediction about any other model or configuration. No candidate is claimed to exist, be available, or pass. Terminology: machine learning, never 'custom LLM software'; the served model is a specialised machine learning model. CPU only; no GPU, no cloud, no money. Never duplicate bytes: bodies live once in docs/SI-79-corpus.json; this record references them by hash."
+ }
+}
