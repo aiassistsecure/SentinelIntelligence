@@ -107,10 +107,15 @@ TRAINING_COLLECTIONS = (
 )
 
 #: SI-83 section 2.5: every event kind a row's ``kind`` may carry.
+#: ``save_every_decision`` is an SI-89 extension of this list:
+#: SI-83 section 6.4 point 3 states the SAVE_EVERY policy but
+#: section 2.5 names no kind for it, so SI-89 adds this kind
+#: here -- it was NOT listed in SI-83 section 2.5.
 EVENT_KINDS = (
     "run_started", "checkpoint_manifest", "eval_moment",
     "window_consumed", "prune_proposed", "prune_verdict",
     "rollback", "fork", "retention_decision", "watcher_gap",
+    "save_every_decision",
 )
 
 #: Kind of the section 7.4 genesis record (not a section 2.5 event).
@@ -535,6 +540,55 @@ class TrainingJournalWriter:
             "run_id": str(run_id), "step": step, "keep": keep,
             "gate_verdict": verdict, "operator": operator,
             "reason": reason, **extra})
+
+    def record_save_every_decision(self, run_id, *, save_every=None,
+                                   proposed_save_every=None,
+                                   full_fine_tune=None, total_steps=None,
+                                   layout=None, verdict=None,
+                                   gate_verdict=None, operator=None,
+                                   reason=None, figures=None, **extra):
+        """Journal a SAVE_EVERY policy decision (SI-89).
+
+        This kind is an SI-89 extension of the SI-83 section
+        2.5 kind list: section 6.4 point 3 states the policy
+        (SAVE_EVERY below 500 on a full fine-tune requires
+        its own gated proposal naming the disk arithmetic)
+        but section 2.5 names no kind for it. The row lands
+        in ``training_proposals`` carrying the proposed
+        interval, the full-fine-tune flag, the run's total
+        steps, the layout, the gate verdict, the operator,
+        the reason, and the arithmetic figures (labelled
+        ESTIMATE by the caller, si.training_save_policy)."""
+        if gate_verdict is None:
+            gate_verdict = verdict
+        if proposed_save_every is None:
+            proposed_save_every = save_every
+        if save_every is None:
+            save_every = proposed_save_every
+        fields = {
+            "run_id": str(run_id), "save_every": save_every,
+            "proposed_save_every": proposed_save_every,
+            "full_fine_tune": (bool(full_fine_tune)
+                               if full_fine_tune is not None
+                               else None),
+            "total_steps": total_steps, "layout": layout,
+            "gate_verdict": gate_verdict, "operator": operator,
+            "reason": reason, "figures": figures, **extra}
+        if isinstance(figures, dict):
+            # Flatten the headline arithmetic onto the row so
+            # an operator can decide from the row alone.
+            fields.setdefault("checkpoint_count",
+                              figures.get("checkpoint_count"))
+            full = figures.get("full_retention_gb") or {}
+            fields.setdefault("layout_a_total_gb",
+                              full.get("layout_a_total"))
+            fields.setdefault("layout_b_total_gb",
+                              full.get("layout_b_total"))
+            proposed = figures.get("proposed_retention_gb") or {}
+            fields.setdefault("proposed_retention_total_gb",
+                              proposed.get("total"))
+        return self._record(
+            "training_proposals", "save_every_decision", fields)
 
     def record_watcher_gap(self, run_id, *, step_from=None, step_to=None,
                            covered_steps=None, reason=None, **extra):
