@@ -241,7 +241,8 @@ class Executor:
     def execute_journaled(self, edit_id: str,
                           expected_effective_class: str | None = None,
                           claim_intent_seq: int | None = None,
-                          claim_seq: int | None = None) -> dict:
+                          claim_seq: int | None = None,
+                          resolution_seq: int | None = None) -> dict:
         """Execute the journaled intent ``edit_id``; journal and
         return its §4.4 execution record.
 
@@ -256,6 +257,18 @@ class Executor:
         claim/intent mismatch and the refusal is journaled — the
         claim is the executor's ticket, and a ticket for a
         different intent admits nothing.
+
+        SI-92 (SI-41 §5.4): an intent whose journaled verdict is
+        ESCALATE runs only under an operator resolution ticket —
+        ``resolution_seq``, the journal sequence of an
+        ``escalation_resolution`` entry resolving this intent
+        ``admit-after-review``, verified from the journal itself
+        by :meth:`_resolution_admits` (including that no genuine
+        execution outcome is already journaled for the intent:
+        the resolution buys exactly one run). The verdict on the
+        self-edit is never rewritten; the resolution is a later
+        journaled act standing beside it, and every other
+        discipline below applies to the journaled args unchanged.
         """
         started = time.perf_counter()
         rows = self.journal.backend.find(
@@ -306,6 +319,8 @@ class Executor:
                 "execution": _label(),
                 "detail": detail,
             }
+            if resolution_seq is not None:
+                record["resolution_seq"] = resolution_seq
             record_execution_outcome(self.journal, intent, edit_id, record)
             self.journal.set_edit_result(edit_id, "refused")
             return record
@@ -325,10 +340,21 @@ class Executor:
 
         # The journaled-args rule (RFC §9.2), step by step.
         if row.get("gate_verdict") != "ADMIT":
-            return refuse(
-                f"gate verdict on the journaled intent is "
-                f"{row.get('gate_verdict')!r}, not ADMIT: the executor "
-                "runs only gate-ADMITted intents")
+            # SI-92 (SI-41 §5.4): an ESCALATE verdict is answered
+            # only by the operator's journaled resolution, verified
+            # from the journal itself — never by a caller's say-so.
+            if row.get("gate_verdict") == "ESCALATE" \
+                    and resolution_seq is not None \
+                    and self._resolution_admits(
+                        edit_id, row.get("seq"), resolution_seq):
+                pass  # the resolution ticket is verified; proceed
+            else:
+                return refuse(
+                    f"gate verdict on the journaled intent is "
+                    f"{row.get('gate_verdict')!r}, not ADMIT: the "
+                    "executor runs only gate-ADMITted intents, or "
+                    "an ESCALATEd intent under a verified operator "
+                    "resolution (SI-41 §5.4)")
         if intent.kind != "tool" or spec is None:
             return refuse(
                 f"journaled intent is not a registered tool intent "
@@ -480,11 +506,53 @@ class Executor:
         if overflow is not None:
             record["overflow_result_hash"] = overflow[0]
             record["overflow_result_bytes"] = overflow[1]
+        if resolution_seq is not None:
+            # SI-92: the execution record names the operator
+            # resolution it ran under (SI-41 §5.4 provenance).
+            record["resolution_seq"] = resolution_seq
         record_execution_outcome(self.journal, intent, edit_id, record)
         self.journal.set_edit_result(
             edit_id, "executed" if status in ("completed", "timed-out")
             else "failed")
         return record
+
+    # -- the resolution ticket (SI-92, SI-41 §5.4) ---------------------------
+    def _resolution_admits(self, edit_id: str, intent_seq,
+                           resolution_seq: int) -> bool:
+        """Verify an operator resolution ticket from the journal
+        itself: an ``escalation_resolution`` entry at exactly
+        ``resolution_seq``, naming this intent (edit id and
+        intent sequence), resolving it ``admit-after-review`` —
+        and no genuine execution outcome already journaled for
+        the intent (the resolution buys exactly one run; a
+        prior refusal or execution spends it). The journaled
+        NON-execution outcome of the escalation itself (the
+        shadow / live record, which carries its ``verdict``)
+        is not a genuine outcome and does not spend it. Any
+        doubt is False — the caller refuses."""
+        match = False
+        for row in self.journal.backend.find(
+                "experiences",
+                filter={"kind": "escalation_resolution"}) or []:
+            record = row.get("record") or {}
+            if row.get("seq") == resolution_seq \
+                    and record.get("edit_id") == edit_id \
+                    and record.get("intent_seq") == intent_seq \
+                    and record.get("resolution") \
+                    == "admit-after-review":
+                match = True
+                break
+        if not match:
+            return False
+        for row in self.journal.backend.find(
+                "experiences",
+                filter={"kind": "tool_result",
+                        "self_edit_id": edit_id}) or []:
+            record = row.get("record") or {}
+            execution = record.get("execution") or {}
+            if "verdict" not in execution:
+                return False
+        return True
 
     # -- result bounding + blob overflow (RFC §9.3) --------------------------
     def _store_blob(self, data: bytes) -> str:

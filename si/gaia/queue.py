@@ -85,6 +85,24 @@ Fold rules (§5.2, §5.4, §11, §13.1), as implemented here:
   ``outcome-unknown`` (history is not rewritten); only an
   ``accept-unknown`` disposition concludes the intent for its
   dependents (the drainer's §7.3 reading, SI-53).
+- ``escalation_resolution`` (SI-92, SI-41 §5.4) records the
+  operator's resolution of an ``escalated`` intent — the
+  writer and the verifying act live in
+  :mod:`si.gaia.resolution`, on §13.4's pattern. The fold
+  annotates the intent (``resolution`` / ``resolution_seq`` /
+  ``resolution_operator`` / ``resolution_detail``); a
+  ``reject`` resolution changes no state (the intent stays
+  ``escalated``, terminal — the annotation is the record of
+  its death), while an ``admit-after-review`` resolution is
+  the one transition out of ``escalated``: the intent folds
+  to ``queued`` and becomes claimable, in journal sequence
+  order, so a prefix fold still shows it ``escalated`` as of
+  any point before the resolution. Its later genuine
+  execution outcome supersedes the escalation's journaled
+  non-execution outcome in the fold's outcome fields (the
+  non-execution record itself stays in the journal —
+  history is not rewritten); a second genuine outcome
+  faults exactly as before (§5.4).
 """
 from __future__ import annotations
 
@@ -111,6 +129,12 @@ ALL_STATES = (
 #: States after which an intent never runs and never changes
 #: (``outcome-unknown`` is terminal pending operator disposition,
 #: §13.4 — the fold itself never moves an intent out of it).
+#: ``escalated`` is terminal *for the queue* (§5.2): the single
+#: exception is not a state change within this set but the
+#: journaled operator resolution of SI-92 (SI-41 §5.4), which
+#: the fold applies in sequence order — an intent is only ever
+#: claimed after its state has folded out of ``escalated`` via
+#: that resolution, never while it stands escalated.
 TERMINAL_STATES = {
     "rejected",
     "escalated",
@@ -479,6 +503,17 @@ class QueueIntentState:
     disposition_seq: int | None = None
     disposition_operator: str | None = None
     disposition_detail: str | None = None
+    #: SI-92 (SI-41 §5.4): the operator resolution journaled
+    #: on an ``escalated`` intent, when one exists — its value
+    #: (``admit-after-review`` / ``reject``), its journal
+    #: sequence (the executor's admission ticket), and the
+    #: operator / detail it was recorded with. The gate
+    #: verdict on the intent stays ESCALATE; the resolution is
+    #: a separate act standing beside it.
+    resolution: str | None = None
+    resolution_seq: int | None = None
+    resolution_operator: str | None = None
+    resolution_detail: str | None = None
 
 
 @dataclass
@@ -629,6 +664,17 @@ def _record_fault(fold: QueueFold, state: QueueIntentState,
             slot["integrity_faults"].append(description)
 
 
+def _is_non_execution(execution) -> bool:
+    """True iff an execution dict is a journaled NON-execution
+    record — the B-1 shadow record or the live non-execution
+    record. Both carry the gate ``verdict`` they answer in the
+    record itself; a genuine executor record (an execution or
+    a refusal) never does, which is how the fold tells "the
+    intent was answered without running" from "it ran"."""
+    return isinstance(execution, dict) \
+        and execution.get("verdict") in ("ESCALATE", "REJECT")
+
+
 def _apply_outcome(fold: QueueFold, state: QueueIntentState,
                    seq, record: dict) -> None:
     """Fold one ``tool_result`` outcome entry onto its intent."""
@@ -649,6 +695,23 @@ def _apply_outcome(fold: QueueFold, state: QueueIntentState,
     queue_managed = state.batch_seq is not None \
         or state.claim_seq is not None
     if state.outcome_seq is not None:
+        if state.resolution == "admit-after-review" \
+                and _is_non_execution(state.execution) \
+                and not _is_non_execution(execution):
+            # SI-92 (SI-41 §5.4): the resolution's one genuine
+            # execution supersedes the escalation's journaled
+            # non-execution outcome in the fold's outcome
+            # fields. The non-execution record stays in the
+            # journal — history is not rewritten; only the
+            # fold's current-outcome pointer moves, exactly as
+            # the legacy branch below supersedes. Any FURTHER
+            # genuine outcome still faults (§5.4).
+            state.outcome_seq = seq
+            state.outcome_status = status
+            state.execution = execution
+            state.state = "refused-at-claim" \
+                if status == "refused" else "executed"
+            return
         if queue_managed:
             _record_fault(
                 fold, state,
@@ -835,6 +898,31 @@ def fold_queue(journal, task_seq=None) -> QueueFold:
             state.disposition_detail = record.get("detail")
             continue
 
+        if kind == "escalation_resolution":
+            state = _find_state(fold, record, row)
+            if state is None:
+                continue
+            # SI-92 (SI-41 §5.4): the resolution annotates the
+            # intent; the verdict is not rewritten. The first
+            # resolution in journal order is the operator's
+            # record (resolve_escalation refuses a second, so
+            # a later one can only be a tampered journal — the
+            # fold keeps the first, like compensation). A
+            # ``reject`` changes no state. An
+            # ``admit-after-review`` on an intent still folded
+            # ``escalated`` is the one transition out of that
+            # state: the intent becomes ``queued`` (claimable)
+            # from the resolution's sequence on.
+            if state.resolution is None:
+                state.resolution = record.get("resolution")
+                state.resolution_seq = seq
+                state.resolution_operator = record.get("operator")
+                state.resolution_detail = record.get("detail")
+                if state.resolution == "admit-after-review" \
+                        and state.state == "escalated":
+                    state.state = "queued"
+            continue
+
         if kind == "queue_skip":
             state = _find_state(fold, record, row)
             if state is None or state.state in TERMINAL_STATES:
@@ -915,6 +1003,9 @@ def queue_summary(fold: QueueFold, task_seq) -> dict:
         "dispositions": {
             state.intent_seq: state.disposition
             for state in intents if state.disposition is not None},
+        "resolutions": {
+            state.intent_seq: state.resolution
+            for state in intents if state.resolution is not None},
         "held": [state.intent_seq for state in intents
                  if state.state == "held"],
         "stop_in_force": bool(slot["stop_in_force"]),
@@ -956,5 +1047,7 @@ def queue_state_view(fold: QueueFold, task_seq) -> dict:
                 state.recovery_observations),
             "disposition": state.disposition,
             "disposition_seq": state.disposition_seq,
+            "resolution": state.resolution,
+            "resolution_seq": state.resolution_seq,
         } for state in intents],
     }
