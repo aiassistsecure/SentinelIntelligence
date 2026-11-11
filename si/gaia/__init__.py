@@ -62,7 +62,16 @@ adapter and the SSE queue-event convention. See
 docs/SI-51-q1-queue-core.md,
 docs/SI-52-q2-concurrency-deps.md and
 docs/SI-53-q3-leash-dispositions.md for exactly what is live
-and what is not. SI-54 (Q-4) adds :mod:`si.gaia.measure`,
+and what is not. SI-92 adds :mod:`si.gaia.resolution`: the
+operator resolution path for gate-ESCALATEd intents (SI-41
+§5.4 — the verdict the §5.2 state table always priced as
+"the operator's to admit or refuse", unbuilt until now): a
+journaled ``escalation_resolution`` act (admit-after-review
+or reject, admitter and basis recorded, double resolution
+refused), a fold transition from ``escalated`` to ``queued``
+on admission only, and exactly one claim-before-execute run
+of the journaled intent under the resolution ticket, which
+the executor verifies from the journal itself. SI-54 (Q-4) adds :mod:`si.gaia.measure`,
 the queue measurement harness, and
 docs/SI-54-q4-measurement.md: the §16 quantities are
 measured for the scripted miniature workloads (the

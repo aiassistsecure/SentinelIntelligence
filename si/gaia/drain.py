@@ -1117,6 +1117,14 @@ class Drainer:
             kwargs["claim_intent_seq"] = _intent_seq(state)
         if "claim_seq" in params or has_varkw:
             kwargs["claim_seq"] = claim_seq
+        if "resolution_seq" in params or has_varkw:
+            # SI-92 (SI-41 §5.4): an intent that stands queued
+            # by an operator resolution carries the resolution's
+            # journal sequence as the executor's second ticket;
+            # unresolved intents have none and pass none.
+            resolution_seq = _field(state, "resolution_seq")
+            if resolution_seq is not None:
+                kwargs["resolution_seq"] = resolution_seq
         # §11.2 live leash (Q-3): while this claim executes, the
         # executor's process machinery polls the fold for this
         # task's operator stop — an execute-class process in
