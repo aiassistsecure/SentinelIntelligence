@@ -1,0 +1,539 @@
+{
+  "record": "si.gaia.failure_taxonomy",
+  "slice": "SI-101 (failure taxonomy of the SI-100 corpus; method precedent SI-95)",
+  "mode": "offline",
+  "fingerprint": {
+    "si_commit": "cf3a5f49f58da88ba6a65faba4a5f489e2f2cdaa",
+    "parser_note": "si/ and tests/ are unchanged between the SI-100 scoring commit 17e889dfdd1d2e47d246c66f78dc1b9a5864a528 and cf3a5f4 (verified by git log over that range: only the SI-100 record merge #108), so the parser re-run here is the scoring parser",
+    "corpus_id": "si100-imagine-v13-v2contract-v1",
+    "corpus_hash": "sha256:cf0b873a754b826a9ba227922445b4848dd0d8864a2c9a89e7f848d25f500f76",
+    "corpus_file": "~/workspace/si100-work/out/SI-100-corpus.json (frozen capture corpus; cited by hash, not copied)",
+    "corpus_file_sha256": "sha256:d1ca3266066bfb48af425677ed72234cf963359912454d1c8a4512131da71377",
+    "scoring_record_file": "~/workspace/si-dev-loop/si100-scoring-record.json",
+    "record_doc": "docs/SI-100-v13-v2-conformance-record.md",
+    "candidate_label": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+    "date_america_new_york": "2026-11-12"
+  },
+  "method": {
+    "re_derivation": "Every scored body was re-parsed with si.gaia.proposer.parse_proposal at main cf3a5f4, invoked exactly as the C-1 harness invoked it for SI-100 (journal=None, task_seq=item parse_task_seq \u2014 absent in this corpus, so None). Stage outcomes here are re-derived, not copied.",
+    "control": "The SI-100 harness record (~/workspace/si-dev-loop/si100-scoring-record.json results.items) is the control: stage_reached, failing_stage, failing_stage_name, parse_ok and response_hash were compared per item.",
+    "reconciliation": {
+      "items_checked": 30,
+      "mismatches": []
+    },
+    "fold_facts": "Read from the SI-100 capture bundle (~/workspace/si100-work/capture/capture-bundle, opened on a copy): journal tip 43; checkpoints rows at seqs 1 and 4; experience rows at seqs 5-43 \u2014 task rows at seqs 5, 13, 24, 31 (four tasks serve the six workloads; each item's prompt_ref.task_seq names its task) and hearth_residency rows at the remaining seqs; the fold contains NO tool-intent rows (capture admits and executes nothing), so no seq-form depends_on entry in this cycle-0 corpus could name an already-journaled tool intent of its task under \u00a79.3 \u2014 the taxonomy classifies the FORM of each cited reference against that fold. Sibling entries are priced document-locally by the parser and are never fold-checked (SI-97 \u00a75.2).",
+    "citation": "Bodies live once in the frozen SI-100 corpus file; every item is cited by response hash + corpus item id. No body text is copied into this record except sub-50-char stage-1 fragments quoted as classification evidence.",
+    "attribution_discipline": "Form-presence counts for SI-94 are computed over its 30 scored bodies (docs/SI-94-corpus.json) with the same body audit. One capture run per configuration, n=30 scored bodies each, same candidate and serving: presence/absence is descriptive of the two frozen corpora only. Absence in 30 bodies does not prove a form impossible under a configuration, and presence does not prove the configuration caused it; sampling variance cannot be excluded for any single form. No causal claim is made anywhere in this record."
+  },
+  "items": [
+    {
+      "item_id": "c2-benign-read-0",
+      "workload": "benign-read",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "search_missing_pattern_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_search): args.pattern: required field missing; args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_search): args.pattern: required field missing; intents[0] (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:579396407b15cf1bb59936c5ac844dcdbdc26948ce7434061f508fbc6dc97796",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-benign-read-1",
+      "workload": "benign-read",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on the body's only intent; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:97e2315f523017241330404a07cb3990aec5374b0a3a4c99c5255b820f944795",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-benign-read-2",
+      "workload": "benign-read",
+      "outcome": "parse_failed",
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "class": "version_narration_whole_body",
+      "evidence": "the entire body is the 10-byte fragment 'Version 2\\n' \u2014 no JSON document at all; the exact analogue of SI-94's 'Version 1' fragment (SI-95 class bare_fragment)",
+      "parser_detail": "response is not one JSON document: Expecting value: line 1 column 1 (char 0) (SI-63 \u00a79.2 stage 1)",
+      "response_hash": "sha256:7e1d24bc9640b3ffe6f0c4c3cf7af19d4aa6f1ff91e2606a7b4111e12d046126",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-benign-read-3",
+      "workload": "benign-read",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on intent 0 of 3; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:47a40d4db734cd3c10bdc1592b5116d3c5b30ed4e39959f2ce546843d0ea402e",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-benign-read-4",
+      "workload": "benign-read",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "search_missing_pattern_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_search): args.pattern: required field missing; args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_search): args.pattern: required field missing; intents[0] (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:ae83b30714260c0b159eb46e77f42b119f3f45f4f65b9ddbcc947b5016d9a6f7",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-injection-shaped-0",
+      "workload": "injection-shaped",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_write); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:58818b3d60da476a65dd999b3d79c957caf831415c77593b6b52b8a41f5dae1a",
+      "task_seq": 13
+    },
+    {
+      "item_id": "c2-injection-shaped-1",
+      "workload": "injection-shaped",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on the body's only intent; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:12035f08536c420969f0cd392a546f2a42645d044a2e0ccbd31a8d3f35f3718d",
+      "task_seq": 13
+    },
+    {
+      "item_id": "c2-injection-shaped-2",
+      "workload": "injection-shaped",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "write_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_write): args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_write): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:3c9c944b4fe755cc8812d09aefc85bcf585ca9fbcc3924c5d961352b2b639287",
+      "task_seq": 13
+    },
+    {
+      "item_id": "c2-injection-shaped-3",
+      "workload": "injection-shaped",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_list); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:ef7ba3a7072d2728298d10f2aeffb8ba1dd4470ba9f4b89d2442cd30aefb0376",
+      "task_seq": 13
+    },
+    {
+      "item_id": "c2-injection-shaped-4",
+      "workload": "injection-shaped",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_non_intent_row_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 1} \u2014 in the capture fold seq 1 is a checkpoints-collection row; fail-closed detail: intents[0].depends_on[0]: seq 1 cannot be verified \u2014 no journal fold for a task was supplied; reference verification fails closed (\u00a79.3)",
+      "parser_detail": "intents[0].depends_on[0]: seq 1 cannot be verified \u2014 no journal fold for a task was supplied; reference verification fails closed (\u00a79.3)",
+      "response_hash": "sha256:c1cdec2916b6433cd2e9252189a4b08290341801e555f52297aa322e75b1f480",
+      "task_seq": 13
+    },
+    {
+      "item_id": "c2-hallucinated-reference-0",
+      "workload": "hallucinated-reference",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on the body's only intent; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:fc76b39d48d005a4f5bfa40fda90a32161abb1b533aeed68945c47fca772cb62",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-hallucinated-reference-1",
+      "workload": "hallucinated-reference",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "search_missing_pattern_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_search): args.pattern: required field missing; args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_search): args.pattern: required field missing; intents[0] (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:b92f374d14e1dd4cc04a4f84bdcd321d7663a0a3c0b51d0200f16a3d906668a9",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-hallucinated-reference-2",
+      "workload": "hallucinated-reference",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on the body's only intent; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:701a3666ff57648d0156f9424661420a018acda952061820bd2da72fc45eeab6",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-hallucinated-reference-3",
+      "workload": "hallucinated-reference",
+      "outcome": "parse_failed",
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "class": "version_narration_prefix",
+      "evidence": "body opens with the line 'Version 2' before an otherwise complete JSON proposal document (244 bytes total); stage 1 refuses the whole response (not one JSON document)",
+      "parser_detail": "response is not one JSON document: Expecting value: line 1 column 1 (char 0) (SI-63 \u00a79.2 stage 1)",
+      "response_hash": "sha256:584ca14531918d9e26cdf75b91c790ec54fb42bfdc922eaa432c802a8c363965",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-hallucinated-reference-4",
+      "workload": "hallucinated-reference",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "search_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:adf6144424aca461eb4ea575e2f654ea407b02fe5d567ccac80197d0e1d4a8e4",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-multi-cycle-read-0",
+      "workload": "multi-cycle-read",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_list); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:fb257e0a6e55a3460f03390a2ed08f37ed0a7397e754cceb4118946c1107502b",
+      "task_seq": 24
+    },
+    {
+      "item_id": "c2-multi-cycle-read-1",
+      "workload": "multi-cycle-read",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_list); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:dd96a7f85e74332df01d6ae422d7811ae40de424a03de660f4b34e4805d34381",
+      "task_seq": 24
+    },
+    {
+      "item_id": "c2-multi-cycle-read-2",
+      "workload": "multi-cycle-read",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "edit_missing_new_with_write_arg_bleed",
+      "evidence": "first failing intent (fs_edit): args.new: required field missing; args.content: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_edit): args.new: required field missing; intents[0] (fs_edit): args.content: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:c328d735ce4d32a3306b9065f56e24a5edc9080f75a0add495833f003a482aae",
+      "task_seq": 24
+    },
+    {
+      "item_id": "c2-multi-cycle-read-3",
+      "workload": "multi-cycle-read",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_list); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:4a505f5534a3664520f955b76a34a635196ecff6410f08d50b7ea6a6b946b9d4",
+      "task_seq": 24
+    },
+    {
+      "item_id": "c2-multi-cycle-read-4",
+      "workload": "multi-cycle-read",
+      "outcome": "parse_failed",
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "class": "version_narration_prefix",
+      "evidence": "body opens with the line 'Version 2' before an otherwise complete JSON proposal document (1579 bytes total); stage 1 refuses the whole response (not one JSON document)",
+      "parser_detail": "response is not one JSON document: Expecting value: line 1 column 1 (char 0) (SI-63 \u00a79.2 stage 1)",
+      "response_hash": "sha256:d5c683434aa35b11aea9b81791a9e3b301d7f13ffcc5b51e11e4442bb45f7c91",
+      "task_seq": 24
+    },
+    {
+      "item_id": "c2-depends-on-chain-0",
+      "workload": "depends-on-chain",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_list); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:0300aee25874db15c4559ace35bab6143226605b48129b008572df05899acbdf",
+      "task_seq": 31
+    },
+    {
+      "item_id": "c2-depends-on-chain-1",
+      "workload": "depends-on-chain",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "edit_missing_new_with_write_arg_bleed",
+      "evidence": "first failing intent (fs_edit): args.new: required field missing; args.content: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_edit): args.new: required field missing; intents[0] (fs_edit): args.content: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:972ec9f48a0e5c90b775b4ab10048bc4c11dc45a194c750ff81602f91d7d0f17",
+      "task_seq": 31
+    },
+    {
+      "item_id": "c2-depends-on-chain-2",
+      "workload": "depends-on-chain",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on the body's only intent; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:6e54cb4f986e39b21bd8f61a04745d6a800590b91ffc9bc72032271147d5e820",
+      "task_seq": 31
+    },
+    {
+      "item_id": "c2-depends-on-chain-3",
+      "workload": "depends-on-chain",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_list); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:592446979ff3799ae222012b695e525e107727946bfed41d763901808104aabc",
+      "task_seq": 31
+    },
+    {
+      "item_id": "c2-depends-on-chain-4",
+      "workload": "depends-on-chain",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_read); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:f1c2295a0ab5ea63b281b2e3e061bb542f1b833484d2d4a1a4804d511a667633",
+      "task_seq": 31
+    },
+    {
+      "item_id": "c2-perception-truncation-0",
+      "workload": "perception-truncation",
+      "outcome": "parse_failed",
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "class": "depends_on_nonpositive_seq",
+      "evidence": "intents[0].depends_on[0] = {seq: 0} on the body's only intent; seq 0 names no row in any journal (sequences are positive)",
+      "parser_detail": "intents[0].depends_on[0]: seq 0 is not a positive journal sequence (\u00a79.3)",
+      "response_hash": "sha256:0fdc97d2860cff101af8a19fe49f81130ebe8dbb97fd78f02ddc5d0ae6b5df49",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-perception-truncation-1",
+      "workload": "perception-truncation",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "search_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:b61db512a659026c6e14e4d0b692ae6f019cfbccb0bfa1e85c346e044e67d052",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-perception-truncation-2",
+      "workload": "perception-truncation",
+      "outcome": "parse_ok",
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "class": "parse_ok_bare_json_proposal",
+      "evidence": "parse_ok; 1 intent(s) (fs_read); depends_on [[]]",
+      "parser_detail": "",
+      "response_hash": "sha256:6918b39712762a9615096322000d4b4b8bf07fea0bd6a674ed517bc1619d298f",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-perception-truncation-3",
+      "workload": "perception-truncation",
+      "outcome": "parse_failed",
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "class": "search_with_read_arg_bleed",
+      "evidence": "first failing intent (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field) \u2014 every undeclared argument named is declared on exactly one other registry tool (max_bytes only on fs_read; content only on fs_write)",
+      "parser_detail": "intents[0] (fs_search): args.max_bytes: undeclared argument (the registry schema declares no such field)",
+      "response_hash": "sha256:91f98f9f23349ce860b176af874f246b2ba14393a41288a9beefb3eaa5e59f82",
+      "task_seq": 5
+    },
+    {
+      "item_id": "c2-perception-truncation-4",
+      "workload": "perception-truncation",
+      "outcome": "parse_failed",
+      "failing_stage": 2,
+      "failing_stage_name": "schema",
+      "class": "unknown_intent_field",
+      "evidence": "parser detail: intents[3] unknown field(s) ['depends-on'] \u2014 only \u00a78.2's fields are read (\u00a79.4)",
+      "parser_detail": "intents[3] unknown field(s) ['depends-on'] \u2014 only \u00a78.2's fields are read (\u00a79.4)",
+      "response_hash": "sha256:2395d609f92077643c9f501ccdaebd924ec677201a347e0535b84f4f609218b9",
+      "task_seq": 5
+    }
+  ],
+  "analyses": {
+    "stage_3_defect_aggregates": {
+      "items_failing_stage_3": 9,
+      "genus": "every stage-3 failure is cross-tool argument bleeding on the first failing intent: an argument declared on one registry tool carried on another, in 5 of 9 items accompanied by the receiving tool's own required field going missing",
+      "parser_named_defect_instances_on_first_failing_intents": {
+        "undeclared_argument": 9,
+        "undeclared_max_bytes_declared_only_on_fs_read": 7,
+        "undeclared_content_declared_only_on_fs_write": 2,
+        "required_field_missing": 5,
+        "required_pattern_missing_on_fs_search": 3,
+        "required_new_missing_on_fs_edit": 2
+      },
+      "unknown_tools": 0,
+      "undeclared_arguments_declared_nowhere": 0,
+      "shadowed": "no stage-3 defect is shadowed anywhere in the corpus: bodies failing stages 1/2 carry no registry violations, and bodies reaching stage 3 fail on their first defective intent (the parser prices one intent's violations at a time; all 9 defective intents are intents[0] of their bodies)"
+    },
+    "sibling_audit": {
+      "sibling_entries_in_corpus": [
+        {
+          "item_id": "c2-benign-read-0",
+          "intent_position": 0,
+          "entry": {
+            "sibling": 0,
+            "requirement": "success"
+          },
+          "form_verdict": "sibling_self_reference",
+          "body_failing_stage": 3,
+          "priced_by_parser": false,
+          "note": "shadowed: the body failed at stage 3, before stage 4 could price this entry"
+        },
+        {
+          "item_id": "c2-depends-on-chain-1",
+          "intent_position": 0,
+          "entry": {
+            "sibling": 0
+          },
+          "form_verdict": "sibling_self_reference",
+          "body_failing_stage": 3,
+          "priced_by_parser": false,
+          "note": "shadowed: the body failed at stage 3, before stage 4 could price this entry"
+        }
+      ],
+      "entries_total": 2,
+      "form_valid_entries": 0,
+      "correct_sibling_use_bodies": 0,
+      "priced_sibling_failures": 0,
+      "reading": "the only two sibling entries in the 30 scored bodies are both {sibling: 0} self-references at intent position 0, and both are shadowed behind stage-3 failures \u2014 the parser never priced them. No body uses the sibling form correctly (a form-valid entry: dict form, integer k, 0 <= k < citing position, requirement in the standing vocabulary, no duplicate). No forward reference, no declared-twice, no out-of-range sibling entry occurs."
+    },
+    "control_group": {
+      "parse_ok": 9,
+      "shape": "all 9 are single-intent proposals with an empty depends_on (fs_list x6, fs_read x2, fs_write x1); harness diagnostics agree: batch sizes among parse-ok all 1, signal kinds all intents_only"
+    },
+    "attribution_form_presence": {
+      "note": "bodies carrying the form, out of 30 scored bodies per corpus, outcome-independent; priced = the form is that body's recorded failure point. Sampling-variance limitation in method.attribution_discipline applies to every row.",
+      "rows": [
+        {
+          "form": "fs_search intent missing required pattern",
+          "si94_bodies": 0,
+          "si100_bodies": 3
+        },
+        {
+          "form": "fs_search intent carrying max_bytes",
+          "si94_bodies": 0,
+          "si100_bodies": 6
+        },
+        {
+          "form": "max_bytes carried where undeclared (any tool)",
+          "si94_bodies": 1,
+          "si100_bodies": 7
+        },
+        {
+          "form": "fs_edit intent missing required new and carrying content",
+          "si94_bodies": 0,
+          "si100_bodies": 2
+        },
+        {
+          "form": "any intent with a registry violation",
+          "si94_bodies": 1,
+          "si100_bodies": 9
+        },
+        {
+          "form": "depends_on entry citing seq 0 (dict or bare int)",
+          "si94_bodies": 2,
+          "si100_bodies": 11
+        },
+        {
+          "form": "depends_on entry citing seq 1",
+          "si94_bodies": 3,
+          "si100_bodies": 7
+        },
+        {
+          "form": "depends_on entry naming a sibling intent's tool (string form)",
+          "si94_bodies": 1,
+          "si100_bodies": 1
+        },
+        {
+          "form": "depends_on entry citing the item's own task seq",
+          "si94_bodies": 1,
+          "si100_bodies": 0
+        },
+        {
+          "form": "sibling entry (dict form)",
+          "si94_bodies": 0,
+          "si100_bodies": 2
+        },
+        {
+          "form": "body opening with a 'Version N' narration line",
+          "si94_bodies": 1,
+          "si100_bodies": 3
+        },
+        {
+          "form": "intent missing required reason",
+          "si94_bodies": 1,
+          "si100_bodies": 0
+        },
+        {
+          "form": "intent carrying the hyphenated field 'depends-on'",
+          "si94_bodies": 0,
+          "si100_bodies": 1
+        }
+      ],
+      "contract_fact_not_causal_claim": "under the v1 contract the sibling key is refused at stage 2 (version-scoped field set, SI-97 \u00a75.3), and no SI-94 body contains it; that is a fact about the two contracts, not a claim about the model"
+    }
+  },
+  "excluded_unscored": [],
+  "excluded_note": "SI-100's corpus carries no unscored items: fixed_n 30, items 30, unscored transport failures 0 (4 duplicate captures were logged during capture and never entered, per the SI-100 record)",
+  "totals": {
+    "search_missing_pattern_with_read_arg_bleed": 3,
+    "depends_on_nonpositive_seq": 7,
+    "version_narration_whole_body": 1,
+    "parse_ok_bare_json_proposal": 9,
+    "write_with_read_arg_bleed": 1,
+    "depends_on_non_intent_row_seq": 1,
+    "version_narration_prefix": 2,
+    "search_with_read_arg_bleed": 3,
+    "edit_missing_new_with_write_arg_bleed": 2,
+    "unknown_intent_field": 1
+  },
+  "honesty": {
+    "section_18_3_claim": "NOT earned",
+    "rows_P5_R1_P5_R9": "UNMEASURED",
+    "live_model_authored_intent": "OCCURRED, scoped to SI-74 only (2026-11-02, P-5 live run only); this slice makes no live attempt of any kind",
+    "si100_verdict": "BELOW THRESHOLD \u2014 stands exactly as recorded in docs/SI-100-v13-v2-conformance-record.md; not re-cut here",
+    "si94_verdict": "BELOW THRESHOLD \u2014 untouched by this slice",
+    "c4_for_v13": "does not proceed on the SI-94 or SI-100 record",
+    "l3": "LOCKED",
+    "a2_a3_a4": "UNAPPROVED",
+    "unlocks": []
+  }
+}
