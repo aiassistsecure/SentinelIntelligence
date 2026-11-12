@@ -126,6 +126,11 @@ from si.gaia.drain import Drainer, admit_tool_intent
 from si.gaia.executor import execute_tool_cycle
 from si.gaia.queue import fold_queue, record_queue_batch
 from si.gaia.policy import resolve_tool_policy
+from si.gaia.sibling_resolution import (
+    build_resolution_refusal_record,
+    journal_resolution_refusal,
+    resolve_sibling_dependencies,
+)
 from si.gate import Gate, Intent
 
 #: §10.4's five stop causes (journaled verbatim as the task_stop
@@ -326,7 +331,14 @@ def run_task(bundle_dir: str, proposer, instruction: str,
     journaled INDIVIDUALLY in proposal order via
     :func:`si.gaia.drain.admit_tool_intent` (per-member verdicts,
     no member's verdict references another's, §6.1); ADMITted
-    members are QUEUED, not executed. The drainer
+    members are QUEUED, not executed. Since SI-98, the walk
+    first resolves each member's intra-document ``sibling``
+    dependency entries (SI-97 §6) from its own per-walk
+    resolution map: the gate prices only the resolved form,
+    and a member whose sibling was never journaled by this
+    walk is refused at resolution (SI-97 §6.4) — journaled as
+    a ``proposal_resolution_refusal``, never gated, never
+    queued, and debited no cycle budget. The drainer
     (:class:`si.gaia.drain.Drainer`) then drains the task's queue
     serially — claim journaled before execution, §7.1 order,
     ordering keys enforced — and the round returns ONE batched
@@ -564,7 +576,18 @@ def run_task(bundle_dir: str, proposer, instruction: str,
                     proposer="mind" if is_mind else "scripted")
                 batch_seqs.append(batch_entry["seq"])
                 proposing_halt = None
-                for member in tool_members:
+                # SI-97 §6 resolution state for this batch's
+                # walk: positions are indices into the proposal
+                # batch as returned (document order); the map
+                # is built from this walk's own admission
+                # results only (§6.2's one-source rule).
+                tool_positions = [
+                    (pos, m) for pos, m in enumerate(batch)
+                    if m.kind == "tool"]
+                resolution_map: dict = {}
+                refused_positions: set = set()
+                visited_positions: set = set()
+                for position, member in tool_positions:
                     if cycles_used >= cycle_cap:
                         proposing_halt = (
                             STOP_BUDGET_EXHAUSTED,
@@ -579,6 +602,42 @@ def run_task(bundle_dir: str, proposer, instruction: str,
                     ctx.tool_result_bytes_used = bytes_used
                     ctx.tool_journal_tip = journal.tip()[0]
                     ctx.tool_task_intent_seqs = set(task_intent_seqs)
+                    # SI-97 §6.2: resolve sibling entries from
+                    # this walk's map before admission; a
+                    # member whose sibling was never journaled
+                    # by this walk is refused at resolution
+                    # (§6.4) — journaled, never gated, never
+                    # queued, no budget debited (it was never
+                    # evaluated) — and the walk continues at
+                    # the next position.
+                    resolution = resolve_sibling_dependencies(
+                        member, resolution_map=resolution_map,
+                        refused_positions=frozenset(
+                            refused_positions),
+                        visited_positions=frozenset(
+                            visited_positions))
+                    if not resolution["resolved"]:
+                        refused_positions.add(position)
+                        journal_resolution_refusal(
+                            journal,
+                            build_resolution_refusal_record(
+                                task_seq=task["seq"],
+                                position=position,
+                                failed=resolution["failed"],
+                                batch_seq=batch_entry["seq"]))
+                        steps.append({
+                            "edit_id": None, "verdict": None,
+                            "tool": member.tool,
+                            "effective_class": None,
+                            "execution_status":
+                                "refused at resolution — "
+                                "sibling_not_journaled (SI-97 "
+                                "§6.4); never gated, never "
+                                "queued, never executed",
+                        })
+                        continue
+                    visited_positions.add(position)
+                    member = resolution["intent"]
                     outcome = admit_tool_intent(
                         journal, gate, ctx, member,
                         batch_seq=batch_entry["seq"])
@@ -589,6 +648,7 @@ def run_task(bundle_dir: str, proposer, instruction: str,
                         limit=1)
                     if rows:
                         task_intent_seqs.add(rows[0]["seq"])
+                        resolution_map[position] = rows[0]["seq"]
                     execution = outcome["execution"] or {}
                     step = {
                         "edit_id": edit_id,

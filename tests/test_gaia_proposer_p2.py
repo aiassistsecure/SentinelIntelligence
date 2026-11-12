@@ -190,7 +190,9 @@ def test_stage1_envelope_failures(journal, raw):
 # -- stage 2: schema --------------------------------------------------------------
 
 @pytest.mark.parametrize("raw", [
-    json.dumps({"proposal": {"version": 2, "intents": [],
+    # SI-98: version 2 is a KNOWN version since SI-97 (§9.1
+    # version bump) — the unknown-version case is now 3.
+    json.dumps({"proposal": {"version": 3, "intents": [],
                              "task_signal": {"kind": "task_complete"}}}),
     json.dumps({"proposal": {"version": 1, "intents": [],
                              "task_signal": None}, "extra": 1}),
