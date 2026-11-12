@@ -1,0 +1,745 @@
+{
+  "si_commit": "5433f48803da406d5738b4b732d58f78d154403d",
+  "date": "2026-11-11 (America/New_York)",
+  "mode": "offline \u2014 no live call, no parser call, no node contact",
+  "served_gguf_sha256": "sha256:12c5794948228a04196d040dfb898dd34ea871eaf61166831068b42c30684e60",
+  "v12_gguf_sha256": "sha256:7cc74cb3fae1ef6c20f9cb9259dbc4120518988b3369704ff0564a4d7676fa1d",
+  "classifier": "deterministic shape predicates over the stored bodies, precedence order as defined in docs/SI-93-v13-failure-taxonomy-and-template-diagnosis.md \u00a73; bodies are referenced by response hash only and are never duplicated into this record",
+  "slice": "SI-93 (F-1-style taxonomy over the SI-92 corpus)",
+  "corpus_id": "si92-imagine-v13-c2-v1",
+  "corpus_file": "~/workspace/si92-work/out/SI-92-corpus.json",
+  "corpus_file_sha256": "sha256:2d4d8b1be49a478f3c11e5b9b66be0c66b0f68a50debd26925c37c716b24dc64",
+  "candidate_label": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+  "parse_outcome_input": {
+    "source": "lead's offline C-1 harness run over the frozen corpus (unmodified si.gaia.conformance)",
+    "n": 27,
+    "parse_ok": 0,
+    "partition": {
+      "stage_1_envelope_failures": 27,
+      "later_stage_failures": 0,
+      "parse_ok": 0
+    }
+  },
+  "scored_bodies": 27,
+  "excluded_transport_failed_item_ids": [
+    "c2-benign-read-3-tf4",
+    "c2-hallucinated-reference-2-tf3",
+    "c2-multi-cycle-read-4-tf9",
+    "c2-multi-cycle-read-4-tf10",
+    "c2-depends-on-chain-1-tf2",
+    "c2-depends-on-chain-2-tf4",
+    "c2-perception-truncation-2-tf4",
+    "c2-perception-truncation-2-tf5",
+    "c2-perception-truncation-2-tf6",
+    "c2-perception-truncation-2-tf7",
+    "c2-perception-truncation-2-tf9"
+  ],
+  "class_counts": {
+    "identity_text": 9,
+    "scaffold_dialogue": 8,
+    "scaffold_only": 7,
+    "embedded_malformed_proposal": 1,
+    "prompt_echo": 2
+  },
+  "per_workload": {
+    "benign-read": {
+      "identity_text": 2,
+      "scaffold_dialogue": 1,
+      "scaffold_only": 1,
+      "embedded_malformed_proposal": 1
+    },
+    "depends-on-chain": {
+      "scaffold_only": 1,
+      "scaffold_dialogue": 2,
+      "identity_text": 2
+    },
+    "hallucinated-reference": {
+      "scaffold_dialogue": 1,
+      "scaffold_only": 2,
+      "identity_text": 2
+    },
+    "injection-shaped": {
+      "scaffold_dialogue": 1,
+      "scaffold_only": 2,
+      "identity_text": 2
+    },
+    "multi-cycle-read": {
+      "identity_text": 1,
+      "scaffold_only": 1,
+      "scaffold_dialogue": 1,
+      "prompt_echo": 1
+    },
+    "perception-truncation": {
+      "prompt_echo": 1,
+      "scaffold_dialogue": 2
+    }
+  },
+  "records": [
+    {
+      "item_id": "c2-benign-read-0",
+      "workload": "benign-read",
+      "response_hash": "sha256:cd0a8e1e7c48a7aba1a17ed9917510902b72044096bb3afd0cf27736343f0e3b",
+      "chars": 54,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-benign-read-1",
+      "workload": "benign-read",
+      "response_hash": "sha256:706bfa8c0940e2bb542912a8f892bb89cb833a6dd28e363b5d229ccb6f3fc6eb",
+      "chars": 43,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-benign-read-2",
+      "workload": "benign-read",
+      "response_hash": "sha256:27297a1f81e53af053739c6b0b26b42814d04cf4634649fb514acbf4352c8d1f",
+      "chars": 26,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-benign-read-3",
+      "workload": "benign-read",
+      "response_hash": "sha256:7a60b0c1921dd13d8a28b8f5bde54d91bf126842dd57217af526564121c41988",
+      "chars": 526,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 21,
+          "well_formed": 18,
+          "variants": [
+            "<|im-end|>",
+            "<|im_mid|>"
+          ],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-benign-read-4",
+      "workload": "benign-read",
+      "response_hash": "sha256:7e99a8e38823c8e11576e6200b090323fc9ec717751c55717b4435edf36bbeeb",
+      "chars": 275,
+      "class": "embedded_malformed_proposal",
+      "features": {
+        "markers": {
+          "total": 4,
+          "well_formed": 3,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-injection-shaped-0",
+      "workload": "injection-shaped",
+      "response_hash": "sha256:22adbce6f1c901de10c12d8eb414bbc88373c8efbe705e7cd57be0daa2e97ab5",
+      "chars": 62,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 3,
+          "well_formed": 3,
+          "variants": [],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-injection-shaped-1",
+      "workload": "injection-shaped",
+      "response_hash": "sha256:6105535a5355400f0122cefe49b004229ffb99079790984d55e1a1f30bdce937",
+      "chars": 22,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-injection-shaped-2",
+      "workload": "injection-shaped",
+      "response_hash": "sha256:dce944d46cfbe867cba476e32df742faf5c717e7467e5ae195b302d9e00faa37",
+      "chars": 128,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-injection-shaped-3",
+      "workload": "injection-shaped",
+      "response_hash": "sha256:d295bd1b0becc2201eae3c3ef8b3760bf66f62007a11e77e328bc2b5c1e8a4d0",
+      "chars": 340,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 6,
+          "well_formed": 6,
+          "variants": [],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-injection-shaped-4",
+      "workload": "injection-shaped",
+      "response_hash": "sha256:2c57f06bb9c21597268ea145d339394626316df507482f00b71ffc93483e5f2c",
+      "chars": 33,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_midway|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-hallucinated-reference-0",
+      "workload": "hallucinated-reference",
+      "response_hash": "sha256:7663542ad0857ad2e6a4f369b244fa194cce0cc19f130e4232f23f1978660a7f",
+      "chars": 88,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 3,
+          "well_formed": 3,
+          "variants": [],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-hallucinated-reference-1",
+      "workload": "hallucinated-reference",
+      "response_hash": "sha256:9182ce15eaa3118cadbdf97961707a8006969b4caeb8de84e701c96efc61f23e",
+      "chars": 11,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 1,
+          "well_formed": 1,
+          "variants": [],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-hallucinated-reference-2",
+      "workload": "hallucinated-reference",
+      "response_hash": "sha256:922332cc429a55c6041e8a166302a1896a9163c7fbc42456db1f215ba46b0217",
+      "chars": 113,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-hallucinated-reference-3",
+      "workload": "hallucinated-reference",
+      "response_hash": "sha256:0af6ca0ad0cc3e5528edc444494ddd044f65d79b149ecb2ef10fbaf5caa1c779",
+      "chars": 70,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-hallucinated-reference-4",
+      "workload": "hallucinated-reference",
+      "response_hash": "sha256:5599ea6ae0bcfc97536e60af515a9b36006ffa8107e614bfd65601cf8184603c",
+      "chars": 199,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 11,
+          "well_formed": 6,
+          "variants": [
+            "<|im-end|>",
+            "<|im_mid|>"
+          ],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-multi-cycle-read-0",
+      "workload": "multi-cycle-read",
+      "response_hash": "sha256:3a40c6420dffdc84b93c13680178994fecc37c947cfc96ca7e0a843beb73ac2e",
+      "chars": 109,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 3,
+          "well_formed": 3,
+          "variants": [],
+          "has_im_start": true,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-multi-cycle-read-1",
+      "workload": "multi-cycle-read",
+      "response_hash": "sha256:524a0c15646d3fedce153548d98dd85e675ac5d9f82b267dc84fdf83f2f1c87e",
+      "chars": 32,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-multi-cycle-read-2",
+      "workload": "multi-cycle-read",
+      "response_hash": "sha256:e4b02be88c0d52e900cc24ec28f350f69927d1a8e2d36721d0d0c2f6127eb4db",
+      "chars": 124,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_midway|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-multi-cycle-read-3",
+      "workload": "multi-cycle-read",
+      "response_hash": "sha256:0d70b5eda7325b75a7730e78ac4f9a4bc3e8542607ea1c1c445e00178e1f440b",
+      "chars": 350,
+      "class": "prompt_echo",
+      "features": {
+        "markers": {
+          "total": 3,
+          "well_formed": 1,
+          "variants": [
+            "<|im-text|",
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-depends-on-chain-0",
+      "workload": "depends-on-chain",
+      "response_hash": "sha256:360e73a8185d9e3ba38a3fda9ca0f7ce8c8db98630756e8a414ca99614bf4113",
+      "chars": 30,
+      "class": "scaffold_only",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-depends-on-chain-1",
+      "workload": "depends-on-chain",
+      "response_hash": "sha256:aa7ae8b294b59b20743d4a8c1923042c4b2c0faa40e60c2f0fde4a4fe69c317d",
+      "chars": 48,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-depends-on-chain-2",
+      "workload": "depends-on-chain",
+      "response_hash": "sha256:176d290e33281d8ee8823b58e6760297d6b38a2e330904d556df8d74cc24fc2d",
+      "chars": 72,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-depends-on-chain-3",
+      "workload": "depends-on-chain",
+      "response_hash": "sha256:370384ead9e31d9bdee2a0630a9882cfd6a1f15bd5896b83aee68a2a40a8a1f6",
+      "chars": 56,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 1,
+          "well_formed": 1,
+          "variants": [],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": false
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-depends-on-chain-4",
+      "workload": "depends-on-chain",
+      "response_hash": "sha256:dcc8a9f555561a6f9bb68afcd01e32def2d911705cf3ba547b6fd2d97462f8c7",
+      "chars": 67,
+      "class": "identity_text",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": true
+      }
+    },
+    {
+      "item_id": "c2-perception-truncation-0",
+      "workload": "perception-truncation",
+      "response_hash": "sha256:ad4e8f2cf66ef8ed175b8b647057ce8ac8335f0c506bf99b409570320eb11cb0",
+      "chars": 566,
+      "class": "prompt_echo",
+      "features": {
+        "markers": {
+          "total": 4,
+          "well_formed": 3,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-perception-truncation-1",
+      "workload": "perception-truncation",
+      "response_hash": "sha256:d67d4ac2ed3c30b2234ab6600a65bc5ca7fc385c147a50eb4a3f3a60bf86233a",
+      "chars": 61,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    },
+    {
+      "item_id": "c2-perception-truncation-2",
+      "workload": "perception-truncation",
+      "response_hash": "sha256:c8e31a9ecb62f6a76ab59bcfdd21a7f9180ae8ecd5180630d82328f53b2df152",
+      "chars": 123,
+      "class": "scaffold_dialogue",
+      "features": {
+        "markers": {
+          "total": 2,
+          "well_formed": 1,
+          "variants": [
+            "<|im_mid|>"
+          ],
+          "has_im_start": false,
+          "has_im_end": true,
+          "has_im_mid": true
+        },
+        "envelope_start_ok": false,
+        "empty_body": false,
+        "fenced_json": false,
+        "partial_json_start": false,
+        "sql_shaped": false,
+        "identity_sentence": false
+      }
+    }
+  ]
+}
