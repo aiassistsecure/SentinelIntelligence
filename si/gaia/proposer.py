@@ -2145,9 +2145,14 @@ STANDING_INSTRUCTIONS = (
 #: §6.5's per-cycle output-contract instruction: the §8
 #: document shape, in brief — the parser (§9) is the contract's
 #: enforcement, this text is only its statement to the model.
+#: SI-99 (D-F1 §4.4, opened by lead decision 2026-11-12 for
+#: exactly this one change): the statement now teaches §8
+#: version 2 — the intra-document sibling depends_on form
+#: (SI-97, implemented by SI-98) beside the journal-seq form
+#: it already stated. Every other sentence is unchanged.
 OUTPUT_CONTRACT_INSTRUCTION = (
     "Respond with exactly one bare JSON document of the form "
-    '{"proposal": {"version": 1, "intents": [{"tool": '
+    '{"proposal": {"version": 2, "intents": [{"tool": '
     '"<catalogue tool name>", "args": {<args object>}, '
     '"reason": "<concrete reason>", "depends_on": [], '
     '"ordering_key": null}], "task_signal": null}}. '
@@ -2156,7 +2161,17 @@ OUTPUT_CONTRACT_INSTRUCTION = (
     'or {"kind": "cannot_proceed", "detail": "<why not>"}. '
     "depends_on entries name journal sequences of this task's "
     "prior intents, as bare integers or "
-    '{"seq": <int>, "requirement": "outcome"|"success"}.')
+    '{"seq": <int>, "requirement": "outcome"|"success"}. '
+    "Use the seq form when an intent depends on an intent "
+    "journaled in a prior cycle. "
+    'An entry {"sibling": <int>, "requirement": '
+    '"outcome"|"success"} instead names an earlier intent in '
+    "this same document, by its 0-based position in "
+    '"intents": use it when an intent depends on an earlier '
+    "step of this proposal. A sibling position must be "
+    "strictly less than the position of the intent naming "
+    "it, and the two forms may be mixed in one depends_on "
+    "list.")
 
 
 def _parse_polled_at(value):
