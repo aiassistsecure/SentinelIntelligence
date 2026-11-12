@@ -2145,14 +2145,18 @@ STANDING_INSTRUCTIONS = (
 #: §6.5's per-cycle output-contract instruction: the §8
 #: document shape, in brief — the parser (§9) is the contract's
 #: enforcement, this text is only its statement to the model.
-#: SI-99 (D-F1 §4.4, opened by lead decision 2026-11-12 for
-#: exactly this one change): the statement now teaches §8
-#: version 2 — the intra-document sibling depends_on form
-#: (SI-97, implemented by SI-98) beside the journal-seq form
-#: it already stated. Every other sentence is unchanged.
+#: SI-102 (lead decision 2026-11-12): the SI-99 teaching of
+#: the §8 version 2 sibling form is WITHDRAWN — SI-100
+#: measured 9/30 under the v2 teaching (vs SI-94's 20/30
+#: under this v1 statement) and SI-101's taxonomy found 0
+#: correct sibling uses; the statement below is again the
+#: pre-SI-99 v1 text, byte for byte. The §8 v2 sibling form
+#: itself remains parseable and resolvable (SI-97 spec,
+#: SI-98 implementation) for a future candidate; only the
+#: teaching is reverted, not the capability.
 OUTPUT_CONTRACT_INSTRUCTION = (
     "Respond with exactly one bare JSON document of the form "
-    '{"proposal": {"version": 2, "intents": [{"tool": '
+    '{"proposal": {"version": 1, "intents": [{"tool": '
     '"<catalogue tool name>", "args": {<args object>}, '
     '"reason": "<concrete reason>", "depends_on": [], '
     '"ordering_key": null}], "task_signal": null}}. '
@@ -2161,17 +2165,7 @@ OUTPUT_CONTRACT_INSTRUCTION = (
     'or {"kind": "cannot_proceed", "detail": "<why not>"}. '
     "depends_on entries name journal sequences of this task's "
     "prior intents, as bare integers or "
-    '{"seq": <int>, "requirement": "outcome"|"success"}. '
-    "Use the seq form when an intent depends on an intent "
-    "journaled in a prior cycle. "
-    'An entry {"sibling": <int>, "requirement": '
-    '"outcome"|"success"} instead names an earlier intent in '
-    "this same document, by its 0-based position in "
-    '"intents": use it when an intent depends on an earlier '
-    "step of this proposal. A sibling position must be "
-    "strictly less than the position of the intent naming "
-    "it, and the two forms may be mixed in one depends_on "
-    "list.")
+    '{"seq": <int>, "requirement": "outcome"|"success"}.')
 
 
 def _parse_polled_at(value):
