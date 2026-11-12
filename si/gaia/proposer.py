@@ -167,6 +167,22 @@ TRUNCATION_LABEL = (
     "the model would reason over a partial world and the "
     "journal must say the world was partial")
 
+#: SI-103 §4.1 / SI-104: the citable reference set's basis
+#: string, rendered verbatim — the set is this task's
+#: already-journaled tool intents only, priced by the same
+#: §9.3 rule the parser verifies ``depends_on`` against.
+CITABLE_REFERENCE_SET_BASIS = (
+    "this task's already-journaled tool intents only (§9.3)")
+
+#: SI-103 §4.1 point 3: the empty-set note, rendered as data
+#: inside the perception's data labelling when (and only when)
+#: the citable set is truly empty — a statement of a verifiable
+#: fact about the fold, not a new instruction; the
+#: output-contract instruction is untouched.
+CITABLE_EMPTY_NOTE = (
+    "no journal sequence can be named in depends_on this "
+    "cycle; depends_on must be []")
+
 #: §6.3's truncation order, as data so tests pin it: oldest tool
 #: results first, then older residency history (the latest
 #: observation never truncates), then the oldest prior cycles'
@@ -408,6 +424,12 @@ def assemble_perception(journal, task_seq, *, registry=None,
     6. queue state, in the fold's own vocabulary;
     7. budgets remaining, stated as numbers.
 
+    Derived (SI-103 §4.1 / SI-104, variant A1):
+    ``citable_reference_set`` — the seqs of item 3's rows,
+    stated as data between prior cycles and tool results.
+    It is derived from the fold only (see the construction
+    below); it is not a new source.
+
     Bounds (§6.3): when the canonical perception exceeds
     ``max_perception_bytes``, truncation follows
     :data:`TRUNCATION_ORDER` — oldest tool results first — and
@@ -562,10 +584,34 @@ def assemble_perception(journal, task_seq, *, registry=None,
         task_section["submitter"] = task_record.get("submitter")
         task_section["submitted_via"] = task_record.get("submitted_via")
 
+    # SI-103 §4.1 / SI-104 (variant A1): the citable reference
+    # set as data — a derived section computed fold-only from
+    # the already-computed prior-intent rows above: the
+    # ``intent_seq`` values of this task's tool-intent rows,
+    # and nothing else. These are exactly the seqs priced by
+    # ``_task_intent_seqs`` under the §9.3 rule. No new source
+    # is read, and no perceived content (tool results, file
+    # contents, search matches, or any other string in the
+    # perception) is consulted or copied in (§17): the set's
+    # only values are integers from the fold, the basis
+    # string, and the data-not-instructions label. Task rows,
+    # checkpoint rows, tool-result rows, residency rows, and
+    # any other task's rows are never members, by construction.
+    citable_seqs = sorted({
+        row.get("seq") for row in intent_rows
+        if row.get("seq") is not None})
+    citable_reference_set = {
+        "seqs": citable_seqs,
+        "empty": not citable_seqs,
+        "basis": CITABLE_REFERENCE_SET_BASIS,
+        "data_not_instructions": DATA_NOT_INSTRUCTIONS,
+    }
+
     sections = {
         "task": task_section,
         "catalogue": catalogue,
         "prior_cycles": prior_cycles,
+        "citable_reference_set": citable_reference_set,
         "tool_results": tool_results,
         "residency": residency,
         "queue_state": queue_state,
@@ -695,6 +741,39 @@ def _apply_bounds(sections, max_bytes):
             "order": "oldest prior cycles truncate last "
                      "(SI-63 §6.3 order, P-1 pinned step 3)",
         })
+
+    # Step 4 — the citable reference set (SI-103 §4.2, SI-104):
+    # the design's preference is to list the seqs in full —
+    # the set is one integer per intent, and truncating a
+    # prior cycle above keeps its seq, so the full set
+    # normally survives steps 1–3 intact. Only if the bound
+    # is STILL exceeded are seqs omitted, oldest first, and
+    # then the block itself carries the §6.3 truncation
+    # label stating it is partial and which seqs were
+    # omitted. A silent partial set is a defect; no seq is
+    # ever invented to fill an omitted member's place.
+    citable = sections.get("citable_reference_set")
+    if isinstance(citable, dict) and citable.get("seqs") \
+            and _perception_size(sections, truncations) > max_bytes:
+        omitted = []
+        while citable["seqs"] and \
+                _perception_size(sections, truncations) > max_bytes:
+            omitted.append(citable["seqs"].pop(0))
+        if omitted:
+            citable["omitted_seqs"] = sorted(omitted)
+            citable["partial"] = True
+            citable["truncated"] = True
+            citable["truncation_label"] = TRUNCATION_LABEL
+            citable["empty"] = not citable["seqs"]
+            truncations.append({
+                "section": "citable_reference_set",
+                "seq": omitted[0],
+                "label": TRUNCATION_LABEL,
+                "order": "citable reference set truncates only "
+                         "if the bound is still exceeded after "
+                         "prior cycles (SI-103 §4.2, SI-104)",
+                "omitted_seqs": sorted(omitted),
+            })
 
     if _perception_size(sections, truncations) > max_bytes:
         truncations.append({
@@ -2202,7 +2281,9 @@ def render_perception_text(perception: dict) -> str:
     canonical JSON under their §6.1 names — deterministic for a
     byte-stable perception (§6.4). Truncation labels ride
     verbatim: the model is told the world it sees is partial
-    where it is partial (§6.3)."""
+    where it is partial (§6.3). The citable reference set
+    (SI-103 §4.1 / SI-104) renders as its own block between
+    ``prior_cycles`` and ``tool_results``."""
     sections = perception.get("sections") or {}
     task = sections.get("task") or {}
     catalogue = sections.get("catalogue") or {}
@@ -2214,11 +2295,35 @@ def render_perception_text(perception: dict) -> str:
         f"work_root: {task.get('work_root')}",
         render_catalogue_text(catalogue),
     ]
-    for name in ("prior_cycles", "tool_results", "residency",
+    for name in ("prior_cycles", "citable_reference_set",
+                 "tool_results", "residency",
                  "queue_state", "budgets_remaining"):
+        section = sections.get(name)
+        if name == "citable_reference_set":
+            # SI-103 §4.1 / SI-104: the citable set renders as
+            # its own labelled block, immediately after
+            # prior_cycles and before tool_results; the other
+            # sections' order, names, and contents are
+            # unchanged. A perception assembled before SI-104
+            # carries no such section and renders as before.
+            if section is None:
+                continue
+            rendered = dict(section)
+            if section.get("empty") \
+                    and not section.get("partial") \
+                    and not section.get("omitted_seqs"):
+                # §4.1 point 3, empty-set form: the note is
+                # rendered data derived from the set's
+                # emptiness, inside the data labelling —
+                # not a new instruction.
+                rendered["note"] = CITABLE_EMPTY_NOTE
+            lines.append(
+                f"{name}: "
+                + canonical_json(rendered).decode("utf-8"))
+            continue
         lines.append(
             f"{name}: "
-            + canonical_json(sections.get(name)).decode("utf-8"))
+            + canonical_json(section).decode("utf-8"))
     truncations = perception.get("truncations") or []
     if truncations:
         lines.append(
