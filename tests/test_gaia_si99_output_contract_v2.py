@@ -1,48 +1,53 @@
-"""SI-99 (D-F1 §4.4, opened by lead decision 2026-11-12 for
-exactly one change): Gaia PROPOSE — the output-contract
-instruction now teaches §8 version 2.
+"""SI-102 (lead decision 2026-11-12): Gaia PROPOSE — the
+output-contract TEACHING reverts to the v1 statement; the
+§8 v2 sibling capability stays.
 
-The §4.4 class is the statement of the §8 document shape to
-the model (``OUTPUT_CONTRACT_INSTRUCTION``, appended to the
-§6.5 gateway request's user message); the parser (§9) is the
-contract's enforcement. SI-98 implemented the v2 sibling
-form; this slice changes only the statement, so the model is
-told the form it may now use:
+(This module began as SI-99's; it keeps its filename —
+the prfactory push path cannot carry a rename — and its
+docstring and tests now record the withdrawal.)
 
-- the taught template is version 2;
-- the journal-seq depends_on documentation is carried
-  verbatim from the v1 statement, with its use named (an
-  intent journaled in a prior cycle);
-- the sibling form is documented beside it: the entry
-  shape, the 0-based position in this same document, its
-  use (an earlier step of this proposal), the
-  strictly-earlier rule, and that the two forms may be
-  mixed in one depends_on list;
-- every other sentence of the statement is unchanged.
+SI-99 taught §8 version 2 in the output-contract
+instruction (``OUTPUT_CONTRACT_INSTRUCTION``, appended to
+the §6.5 gateway request's user message). SI-100 measured
+that configuration at 9/30 (vs SI-94's 20/30 under the v1
+statement, identical serving) and SI-101's failure
+taxonomy found 0 correct sibling uses in the measured
+corpus, with the teaching's concepts bleeding into
+failures elsewhere. The lead therefore withdrew the
+teaching: this slice restores the pre-SI-99 v1 statement
+byte for byte — version 1 template, the journal-seq
+depends_on sentence as the statement's close, no sibling
+paragraph.
+
+What does NOT change: the parser's known set is still
+{1, 2} (SI-97 §9.2) and the sibling form still parses and
+resolves exactly as SI-98 built. The v2 exercises below
+now prove the capability persists WITHOUT the teaching —
+kept ready for a future candidate, unused by the current
+one.
 
 Coverage:
 
-- the instruction constant: v2 template, seq documentation
-  verbatim, sibling documentation complete, untouched
-  sentences verbatim;
-- the assembled gateway request carries the amended
-  instruction as the tail of its user message, over a real
-  assembled perception, with the standing instructions
-  (the closed §4.3 class) as the system message;
-- replay, end to end through the current contract path: a
-  scripted reply written exactly as the amended contract
-  teaches — a v2 document whose later intents depend on an
-  earlier step via the sibling form, one of them mixing a
-  prior cycle's journal seq — parses and resolves through
-  the replay walk: resolved ``depends_on`` journaled,
+- the instruction constant: v1 template restored, seq
+  documentation verbatim as the closing sentence, the
+  sibling documentation absent, untouched sentences
+  verbatim;
+- the assembled gateway request carries the restored
+  instruction as the tail of its user message, over a
+  real assembled perception, with the standing
+  instructions (the closed §4.3 class) as the system
+  message;
+- replay, end to end: a scripted v2 reply using the
+  sibling form — beyond what the restored contract
+  teaches — still parses and resolves through the replay
+  walk: resolved ``depends_on`` journaled,
   ``authored_depends_on`` verbatim, chain verified;
-- a v1 document still parses under the amended statement
-  (the parser's known set is {1, 2}, SI-97 §9.2).
+- a v1 document still parses (the form the restored
+  statement teaches).
 
-Honesty discipline: every exercise here is the replay path
-with scripted responses and stub admission, labelled as
-such. No live model run, no conformance claim — the
-re-measurement is a separate slice (SI-100).
+Honesty discipline: every exercise here is the replay
+path with scripted responses and stub admission, labelled
+as such. No live model run, no conformance claim.
 """
 import json
 
@@ -63,7 +68,7 @@ MODEL = "test-model-1"
 FRESH_AT = "2026-10-31T11:59:30Z"
 
 #: The v1 statement's depends_on sentence, verbatim — the
-#: seq documentation SI-99 must carry unchanged in substance.
+#: seq documentation the restored statement closes with.
 SEQ_SENTENCE = (
     "depends_on entries name journal sequences of this "
     "task's prior intents, as bare integers or "
@@ -81,7 +86,7 @@ def journal(tmp_path):
 
 def _task(journal, instruction="inspect the work root"):
     return record_task_entry(
-        journal, instruction, "/tmp/si99-work",
+        journal, instruction, "/tmp/si102-work",
         budgets={"max_tool_cycles_per_task": 16,
                  "tool_max_task_result_bytes": 1048576})
 
@@ -143,32 +148,31 @@ def _stub_admit(journal):
 
 # -- the statement itself ----------------------------------------------------
 
-def test_instruction_teaches_the_v2_template():
-    assert '{"proposal": {"version": 2, "intents"' in \
+def test_instruction_teaches_the_v1_template():
+    assert '{"proposal": {"version": 1, "intents"' in \
         OUTPUT_CONTRACT_INSTRUCTION
-    assert '"version": 1' not in OUTPUT_CONTRACT_INSTRUCTION
+    assert '"version": 2' not in OUTPUT_CONTRACT_INSTRUCTION
 
 
 def test_instruction_keeps_the_seq_documentation():
-    # The v1 statement's seq sentence, verbatim, and its use
-    # named: an intent journaled in a prior cycle.
+    # The v1 statement's seq sentence, verbatim — and it is
+    # again the statement's closing sentence, exactly as
+    # before SI-99 appended its paragraph after it.
     assert SEQ_SENTENCE in OUTPUT_CONTRACT_INSTRUCTION
-    assert "journaled in a prior cycle" in \
-        OUTPUT_CONTRACT_INSTRUCTION
+    assert OUTPUT_CONTRACT_INSTRUCTION.endswith(SEQ_SENTENCE)
 
 
-def test_instruction_teaches_the_sibling_form():
+def test_instruction_does_not_teach_the_sibling_form():
+    # The SI-99 paragraph is withdrawn in full: no sibling
+    # entry shape, no 0-based-position rule, no mixing note.
     text = OUTPUT_CONTRACT_INSTRUCTION
-    assert '{"sibling": <int>, "requirement": ' \
-        '"outcome"|"success"}' in text
-    assert "earlier intent in this same document" in text
-    assert "0-based position" in text
-    assert "earlier step of this proposal" in text
-    # The strictly-earlier rule (SI-97 §4.3).
+    assert '"sibling"' not in text
+    assert "earlier intent in this same document" not in text
+    assert "0-based position" not in text
+    assert "earlier step of this proposal" not in text
     assert "strictly less than the position of the intent " \
-        "naming it" in text
-    # Mixing the two forms in one list is allowed (§9.3).
-    assert "mixed in one depends_on list" in text
+        "naming it" not in text
+    assert "mixed in one depends_on list" not in text
 
 
 def test_instruction_untouched_sentences_verbatim():
@@ -184,7 +188,7 @@ def test_instruction_untouched_sentences_verbatim():
 
 # -- the assembled request carries it ----------------------------------------
 
-def test_gateway_request_carries_the_amended_contract(journal):
+def test_gateway_request_carries_the_restored_contract(journal):
     task = _ready(journal)
     request = build_gateway_request(
         _perception(journal, task), model=MODEL)
@@ -196,18 +200,21 @@ def test_gateway_request_carries_the_amended_contract(journal):
         STANDING_INSTRUCTIONS
     user = request["messages"][1]["content"]
     assert user.endswith(OUTPUT_CONTRACT_INSTRUCTION)
-    assert '"version": 2' in user
-    assert '{"sibling": <int>' in user
+    assert '"version": 1' in user
+    assert '"sibling"' not in user
     assert SEQ_SENTENCE in user
 
 
-# -- replay through the current contract path --------------------------------
+# -- the v2 capability persists without the teaching -------------------------
 
-def test_replay_reply_as_taught_parses_and_resolves(journal):
+def test_replay_v2_sibling_reply_still_parses_and_resolves(journal):
     task = _ready(journal)
     # The request a proposer is actually sent carries the
-    # amended contract (above); the scripted reply below is
-    # written exactly as that contract teaches.
+    # RESTORED v1 contract (above) — it no longer teaches
+    # the sibling form. The scripted v2 reply below is a
+    # future candidate's form: it must still parse and
+    # resolve exactly as SI-98 built (capability kept,
+    # teaching withdrawn).
     request = build_gateway_request(
         _perception(journal, task), model=MODEL)
     assert request["messages"][1]["content"].endswith(
