@@ -304,9 +304,22 @@ class Intent:
     ordering_key: str | None = None
     depends_on: list = field(default_factory=list)
     barrier: bool = False
+    # SI-98 (SI-97 §8.1): provenance only — the proposer's
+    # authored ``depends_on`` entries verbatim, set by the admit
+    # walk's resolution step (si.gaia.sibling_resolution) when
+    # the authored list carried an intra-document ``sibling``
+    # entry, so the journal record keeps the authored form
+    # beside the effective resolved ``depends_on`` above. The
+    # gate never prices it: evaluation reads ``depends_on``
+    # only, and this field changes no check, no verdict, no
+    # normalisation. Empty for every intent that declared no
+    # sibling entry — and ``to_dict`` emits the key only when
+    # non-empty, so a record that predates the amendment (or
+    # never used the form) is byte-for-byte unchanged.
+    authored_depends_on: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "kind": self.kind,
             "reason": self.reason,
             "target_modules": list(self.target_modules),
@@ -328,6 +341,10 @@ class Intent:
             "depends_on": list(self.depends_on),
             "barrier": bool(self.barrier),
         }
+        if self.authored_depends_on:
+            out["authored_depends_on"] = list(
+                self.authored_depends_on)
+        return out
 
 
 @dataclass

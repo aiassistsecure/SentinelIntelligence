@@ -64,6 +64,20 @@ task entry, the registry, this task's journaled intents /
 outcomes, residency observations, queue state, and budgets —
 never from other tasks, raw weights, or policy internals.
 
+SI-98 (the SI-97 amendment, D-96-1) extends this module:
+the parser also knows §8 document version 2, whose
+``depends_on`` entries may name an earlier sibling intent in
+the same document (``{"sibling": k, ...}``), priced
+document-locally at stage 4; and the admit walks resolve
+sibling entries to journal seqs at journal time
+(:func:`si.gaia.sibling_resolution.resolve_sibling_dependencies`),
+refusing a member whose sibling was never journaled by its
+walk. The gate, the queue fold, and the drainer are
+unchanged — the gate prices only the resolved form. SI-98's
+evidence is replay only (SI-97 §12.3): no live
+re-measurement is authorised by the amendment, and none is
+claimed here.
+
 CPU only, stdlib only. Terminology: machine learning
 infrastructure throughout.
 """
@@ -77,6 +91,12 @@ from si.bundle import canonical_json, sha256_hex
 from si.gaia.policy import resolve_proposer_policy
 from si.gaia.queue import fold_queue, queue_summary
 from si.gaia.registry import SEAM_CROSSING_TOOLS
+from si.gaia.sibling_resolution import (
+    RESOLUTION_REFUSAL_KIND,
+    build_resolution_refusal_record,
+    journal_resolution_refusal,
+    resolve_sibling_dependencies,
+)
 
 #: Proposer identity journaled on every would-be attempt record
 #: (SI-63 §14.2: slice / module version).
@@ -1082,6 +1102,15 @@ RESPONSE_RECORD_KIND = "gaia_proposal_response"
 #: version bump, not by tolerance (§9.2 stage 2).
 PROPOSAL_VERSION = 1
 
+#: SI-98 (SI-97 §9.1): the §8 document version is now 2 — the
+#: version whose ``depends_on`` entries may also name an
+#: earlier sibling intent in the same document. The known set
+#: is {1, 2}: a v1 document parses identically to before the
+#: amendment, and a v2 document under a v1 parser fails stage
+#: 2 on the version mismatch (SI-97 §9.2).
+PROPOSAL_VERSION_V2 = 2
+PROPOSAL_VERSIONS = (PROPOSAL_VERSION, PROPOSAL_VERSION_V2)
+
 #: §8's field sets, pinned as code (§8.1/§8.2). Unknown fields
 #: at any of these levels fail stage 2 — the parser reads only
 #: these fields (§9.4: structural ignoring begins with a closed
@@ -1092,6 +1121,12 @@ PROPOSAL_INTENT_FIELDS = frozenset(
     {"tool", "args", "reason", "depends_on", "ordering_key"})
 PROPOSAL_SIGNAL_FIELDS = frozenset({"kind", "detail"})
 PROPOSAL_DEPENDS_ON_FIELDS = frozenset({"seq", "requirement"})
+#: The v2 ``depends_on`` entry field set (SI-97 §5.3): the
+#: field set is version-scoped — under version 1 a ``sibling``
+#: key fails stage 2 as an unknown field; under version 2 the
+#: set is {seq, sibling, requirement}.
+PROPOSAL_DEPENDS_ON_FIELDS_V2 = frozenset(
+    {"seq", "sibling", "requirement"})
 
 #: §8.7 / §8.8's signal kinds — the only two that exist.
 SIGNAL_TASK_COMPLETE = "task_complete"
@@ -1249,6 +1284,21 @@ def parse_proposal(raw, *, journal=None, task_seq=None,
     non-intent row, or a nonexistent seq fails the batch, with
     the failure detail naming which case it was.
 
+    Under document version 2 (SI-97, SI-98), stage 4 also
+    prices the intra-document form: an entry
+    ``{"sibling": k, "requirement": r}`` names the intent at
+    0-based position k of this document's ``intents`` array.
+    Sibling entries are priced document-locally — dict form
+    only, integer non-bool k, k a strictly earlier position,
+    no duplicate k per intent, requirement in the standing
+    vocabulary — with the distinct detail classes SI-97 §5.1
+    pins, and they are never fold-checked: their target has no
+    seq at parse time. A bare int never means a sibling, in
+    either version. The parser resolves nothing: constructed
+    intents carry sibling entries in normalised authored form
+    (SI-97 §8.2); resolution to journal seqs is the admit
+    walk's act (SI-97 §6, si.gaia.sibling_resolution).
+
     Structural ignoring (§9.4) is by construction: only §8's
     fields are read, and no value the model can write is copied
     into a verdict, a consequence class, or a policy field —
@@ -1360,9 +1410,13 @@ def parse_proposal(raw, *, journal=None, task_seq=None,
         return fail(2, problems)
     version = proposal["version"]
     if isinstance(version, bool) or not isinstance(version, int) \
-            or version != PROPOSAL_VERSION:
-        return fail(2, [f"proposal version {version!r} is not the "
-                        f"known version {PROPOSAL_VERSION} (§8.1)"])
+            or version not in PROPOSAL_VERSIONS:
+        return fail(2, [f"proposal version {version!r} is not a "
+                        f"known version {sorted(PROPOSAL_VERSIONS)} "
+                        "(§8.1)"])
+    dep_fields = (PROPOSAL_DEPENDS_ON_FIELDS_V2
+                  if version == PROPOSAL_VERSION_V2
+                  else PROPOSAL_DEPENDS_ON_FIELDS)
     raw_intents = proposal["intents"]
     if not isinstance(raw_intents, list):
         return fail(2, [f"proposal 'intents' must be a list, got "
@@ -1411,8 +1465,7 @@ def parse_proposal(raw, *, journal=None, task_seq=None,
                             "list (§8.2)"])
         for j, dep in enumerate(deps):
             if isinstance(dep, dict):
-                unknown_d = sorted(
-                    set(dep) - PROPOSAL_DEPENDS_ON_FIELDS)
+                unknown_d = sorted(set(dep) - dep_fields)
                 if unknown_d:
                     return fail(2, [
                         f"intents[{i}].depends_on[{j}] unknown "
@@ -1447,9 +1500,11 @@ def parse_proposal(raw, *, journal=None, task_seq=None,
     journal_seqs = _journal_seqs(journal)
     tip = journal.tip()[0] if journal is not None else 0
     normalised = []  # per-intent normalised depends_on
+    n_intents = len(raw_intents)
     for i, item in enumerate(raw_intents):
         deps_out = []
         seen = set()
+        seen_siblings = set()
         for j, dep in enumerate(item.get("depends_on") or []):
             if isinstance(dep, bool):
                 return fail(4, [f"intents[{i}].depends_on[{j}]: "
@@ -1460,6 +1515,68 @@ def parse_proposal(raw, *, journal=None, task_seq=None,
             elif isinstance(dep, dict):
                 seq = dep.get("seq")
                 requirement = dep.get("requirement", "outcome")
+                if "sibling" in dep:
+                    # SI-97 §5.1: the intra-document form,
+                    # priced document-locally in the table's
+                    # order, with its distinct detail classes.
+                    # Reachable only under version 2 — stage 2
+                    # refused the key under version 1 (§5.3).
+                    # A sibling entry is never fold-checked
+                    # (§5.2): its target has no seq yet.
+                    k = dep.get("sibling")
+                    if isinstance(k, bool) \
+                            or not isinstance(k, int):
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_not_an_index — sibling "
+                            f"{k!r} is not an integer position "
+                            "(§9.3)"])
+                    if k < 0:
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_negative_index — sibling "
+                            f"{k} is negative (§9.3)"])
+                    if requirement not in ("outcome", "success"):
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_requirement_invalid — "
+                            f"requirement {requirement!r} is not "
+                            "'outcome' or 'success' (§9.3)"])
+                    if "seq" in dep:
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            "entry_names_both_seq_and_sibling — "
+                            "the entry names both a journal seq "
+                            "and a sibling; exactly one "
+                            "designator is a form (§9.3)"])
+                    if k == i:
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_self_reference — sibling "
+                            f"{k} is the citing intent itself "
+                            "(§9.3)"])
+                    if i < k < n_intents:
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_forward_reference — "
+                            f"sibling {k} is a later intent in "
+                            "this document (§9.3)"])
+                    if k >= n_intents:
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_out_of_range — sibling "
+                            f"{k} names no member of this "
+                            f"document's {n_intents} intents "
+                            "(§9.3)"])
+                    if k in seen_siblings:
+                        return fail(4, [
+                            f"intents[{i}].depends_on[{j}]: "
+                            f"sibling_declared_twice — sibling "
+                            f"{k} is declared twice (§9.3)"])
+                    seen_siblings.add(k)
+                    deps_out.append({"sibling": k,
+                                     "requirement": requirement})
+                    continue
                 if isinstance(seq, bool) or not isinstance(seq, int):
                     return fail(4, [
                         f"intents[{i}].depends_on[{j}]: seq "
@@ -1644,6 +1761,16 @@ def parse_proposal(raw, *, journal=None, task_seq=None,
 
 
 # ---------------------------------------------------------------------------
+# 6b. Resolution at journal time (SI-97 §6, SI-98)
+# ---------------------------------------------------------------------------
+# The walk machinery — the resolution map step, the §8.3
+# refusal record, its journaling — lives in
+# si.gaia.sibling_resolution, shared by this module's replay
+# walk and the live task walk in si.gaia.task; it is imported
+# at the top of this module and re-exported here.
+
+
+# ---------------------------------------------------------------------------
 # 7. Attempt / response journaling (§14) against the replay transport
 # ---------------------------------------------------------------------------
 
@@ -1674,7 +1801,9 @@ def journal_attempt_record(journal, attempt_record: dict) -> int:
 
 def build_response_record(*, attempt_seq, parse_result: dict,
                           intent_seqs=(), transport_label=None,
-                          http_status=None) -> dict:
+                          http_status=None,
+                          resolution_refused=(),
+                          sibling_resolved=0) -> dict:
     """The §14.3 proposal response record for one parsed replay
     response (pure builder — journals nothing).
 
@@ -1684,7 +1813,14 @@ def build_response_record(*, attempt_seq, parse_result: dict,
     digest, parse outcome (stage reached or failing stage), on
     success the batch summary + the admitted intents' seqs, on
     signal the kind + detail verbatim, on failure the labelled
-    failure kind + bounded excerpt (§9.5/§14.4)."""
+    failure kind + bounded excerpt (§9.5/§14.4).
+
+    SI-97 §8.4 extensions, on success: the walk reports the
+    positions it refused at resolution (``resolution_refused``,
+    in document order) and how many members carried at least
+    one sibling entry resolved at journal time
+    (``sibling_resolved``, counted in ``batch.chaining``
+    beside ``model_authored`` / ``runner_filled``)."""
     ok = parse_result.get("outcome") == "ok"
     record = {
         "kind": RESPONSE_RECORD_KIND,
@@ -1727,6 +1863,15 @@ def build_response_record(*, attempt_seq, parse_result: dict,
             "→ response → intents (§14.3); empty when the "
             "caller admitted nothing (admission is the gate's "
             "business, §12, not the parser's)")
+        batch["resolution_refused"] = list(resolution_refused)
+        chaining = batch.setdefault("chaining", {})
+        chaining["sibling_resolved"] = int(sibling_resolved)
+        chaining["sibling_label"] = (
+            "sibling_resolved counts members carrying at "
+            "least one sibling entry resolved at journal time "
+            "(SI-97 §8.4); a member with both authored forms "
+            "counts in both model_authored and "
+            "sibling_resolved")
         record["batch"] = batch
         signal = parse_result.get("task_signal")
         if signal is not None:
@@ -1772,6 +1917,18 @@ def walk_attempt_chain(journal, response_seq) -> dict:
         found = journal.backend.find(
             "self_edits", filter={"seq": seq}, limit=1)
         intent_rows[seq] = found[0] if found else None
+    # SI-97 §8.4: the chain walk also surfaces the batch's
+    # resolution refusals (linked to this cycle by attempt
+    # seq), so a reviewer reconstructs the batch's whole
+    # story — admissions and refusals alike — from the
+    # journal alone.
+    refusal_rows = []
+    for row in _rows(journal, "experiences",
+                     kind=RESOLUTION_REFUSAL_KIND):
+        rec = row.get("record") or {}
+        if rec.get("attempt_seq") == attempt_seq:
+            refusal_rows.append({"seq": row.get("seq"),
+                                 "record": rec})
     return {
         "response_seq": response_seq,
         "found": True,
@@ -1786,6 +1943,10 @@ def walk_attempt_chain(journal, response_seq) -> dict:
                             for seq, row in intent_rows.items()},
         "all_intents_found": all(
             row is not None for row in intent_rows.values()),
+        "resolution_refusals": refusal_rows,
+        "resolution_refused_positions": [
+            (r["record"] or {}).get("position")
+            for r in refusal_rows],
         "label": REPLAY_ONLY_LABEL,
     }
 
@@ -1803,6 +1964,16 @@ def run_replay_proposal(journal, raw, *, task_seq, cycle=0,
     fakes no verdict), then journals the §14.3 response record
     carrying the admitted seqs. Parse failures admit nothing:
     ``admit`` is never called for a failed response (§9.5).
+
+    The admit walk applies SI-97 §6 resolution in document
+    order: a per-walk resolution map built from the walk's
+    own admission results rewrites each member's sibling
+    entries to journal seqs before admission; a member whose
+    sibling was never journaled by this walk is refused at
+    resolution (one §8.3 refusal record journaled, the member
+    never admitted) and the walk continues at the next
+    position. The response record carries the refused
+    positions and the sibling-resolved count (§8.4).
 
     For a §8.7 completion signal, ``admit`` (when supplied) is
     called once with the translated memory Intent; for §8.8
@@ -1837,19 +2008,52 @@ def run_replay_proposal(journal, raw, *, task_seq, cycle=0,
 
     from si.gate import Intent as _Intent
     intent_seqs = []
-    if parse_result["outcome"] == "ok" and admit is not None:
+    resolution_map: dict = {}
+    refused_positions: list = []
+    visited_positions: set = set()
+    sibling_resolved = 0
+    if parse_result["outcome"] == "ok":
         targets = list(parse_result["intents"])
         translation = parse_result.get("signal_translation")
         if isinstance(translation, _Intent):
             targets = [translation]
-        for intent in targets:
-            seq = admit(intent)
+        for position, intent in enumerate(targets):
+            resolution = resolve_sibling_dependencies(
+                intent, resolution_map=resolution_map,
+                refused_positions=frozenset(refused_positions),
+                visited_positions=frozenset(visited_positions))
+            if not resolution["resolved"]:
+                # §6.4 / §6.5: refused at resolution — this
+                # holds even when the caller admits nothing at
+                # all (admit is None): a sibling entry whose
+                # position no admission journaled cannot
+                # resolve, and the refusal is the record of
+                # that. Members without sibling entries are
+                # untouched by the walk, exactly as before.
+                refused_positions.append(position)
+                journal_resolution_refusal(
+                    journal, build_resolution_refusal_record(
+                        task_seq=task_seq, position=position,
+                        failed=resolution["failed"],
+                        attempt_seq=attempt_seq,
+                        replay_only=True,
+                        replay_label=REPLAY_ONLY_LABEL))
+                continue
+            if admit is None:
+                continue
+            visited_positions.add(position)
+            seq = admit(resolution["intent"])
             if seq is not None:
                 intent_seqs.append(seq)
+                resolution_map[position] = seq
+                if resolution["had_sibling"]:
+                    sibling_resolved += 1
 
     response = build_response_record(
         attempt_seq=attempt_seq, parse_result=parse_result,
-        intent_seqs=intent_seqs)
+        intent_seqs=intent_seqs,
+        resolution_refused=refused_positions,
+        sibling_resolved=sibling_resolved)
     response_seq = journal_response_record(journal, response)
     return {
         "record": OUTCOME_RECORD,
