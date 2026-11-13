@@ -339,3 +339,113 @@ touched.
 > move on §18.3. A successor slice that completes the
 > fork Flow 2 leg earns its own scope in its own record;
 > nothing here pre-claims it.
+
+---
+
+## P-2 completion — the spend, the priced outcome, the close (SI-115 plan; lead-run, 2026-11-13)
+
+*Appended by the lead. P-2 is the completion act SI-115 §4
+prescribed and D-115-2 scoped: spend se_0012's journaled
+resolution across the SI-116 bridge (PR #124, merged;
+main 2130f5b), let the fork price it, journal the outcome
+home, and run the negative controls SI-114 could not.
+The operator of record is the lead (Muse), per §4.3.*
+
+### Preconditions, re-verified at the sitting
+
+`si-seam-service` active on 127.0.0.1:11437 (reinstalled
+by the lead after its second /etc evaporation of the day
+— a VM recycle at ~16:58 EST; the watchdog script now
+covers the seam as well as the node). `gaia-node` active;
+residency: imagine-v13 **resident**, ctx pool 4096,
+parallel 1; inference child pid **2172** (recorded as the
+pid that must not change if the fork refuses). Seam
+journal baseline: tip seq 70, chain verified; se_0012
+folded `queued` by the seq-69 admit-after-review
+resolution — re-verified by the lead immediately before
+the spend.
+
+### The acts
+
+1. **Spend** (17:32 EST): `si gaia-escalation … spend 64`,
+   operator "Muse (lead)", basis recorded on the row as
+   the P-2 completion under D-115-2. The bridge
+   fold-verified the queued-by-admit state, built the
+   fork's as-built payload (`journal_seq` = 64, the
+   intent's seq, never the resolution's; verdict admit;
+   no class field), and POSTed it to the fork's work
+   route. Fork answer: **HTTP 202, `work_id`
+   work-000001** — the first work submission in the
+   fork's history. The `gaia_work` row journaled at
+   **seq 71** (re-anchor checkpoint 72), tying intent
+   seq 64 + resolution seq 69 + work-000001.
+   `deduped: false` — a genuine first spend.
+2. **Outcome** (seconds later): the fork's ticker claimed
+   work-000001, priced it against the live spine, and
+   refused it. `poll-outcome 64` carried the terminal
+   result home through the S-5 leg and journaled it at
+   **seq 73** (re-anchor checkpoint 74). The fork's own
+   record of its reasoning, verbatim from
+   `GET /gaia/v1/work/work-000001`:
+
+   > outcome "refused", refusal "stale_state" — "stale
+   > state: imagine-v13's latest spine event is resident
+   > at seq 597, not the lost event at seq 565 the intent
+   > answers; refusing to restart against state that has
+   > moved on"; provenance `si_journal_seqs: [64]`.
+
+   The refusal is the designed one (SI-115's priced
+   fact): the loss se_0012 answered at spine 565
+   self-healed at the 15:07Z reload, and the fork does
+   not restart a healthy resident on a healed loss.
+3. **Fold, terminal:** `show 64` reads se_0012
+   **refused-at-claim**, its gate verdict still
+   `ESCALATE` — never rewritten; the resolution, the
+   spend, and the outcome stand as separate journaled
+   acts beside it. Journal post-state: **tip seq 74,
+   sha256:61b2d35c…, chain verified True** (lead-checked
+   against the live journal after the poll).
+4. **Negative controls (§4.3 step 7, completed):**
+   (a) second resolution — refused live in SI-114,
+   journaled nothing. (b) second spend of seq 64 —
+   `deduped: true`, returning the journaled gaia_work
+   row (work-000001, seq 71) with **no new submission**;
+   second poll — `deduped: true`, same outcome seq 73,
+   **no second outcome row**. Exactly-one holds at every
+   leg: one resolution, one submission, one priced
+   outcome, one journaling.
+5. **Node post-state:** inference child pid **2172,
+   unchanged** — a refusal actuates nothing, and nothing
+   restarted. imagine-v13 resident throughout. Fork
+   home: `work.jsonl` (2 rows: submission + terminal)
+   and `outcomes.jsonl` (1 row) now exist — both born
+   this sitting; before today neither file had ever
+   been created.
+
+### What did not happen, stated plainly
+
+No child restart occurred, and none was possible for
+this intent: its answered state no longer exists. The
+other resting escalations (se_0007, se_0008–se_0011)
+were left exactly as found — escalated, unresolved;
+they are equally stale and are a later operator
+housekeeping pass, not this exercise's business.
+
+> **§18.3 remains NOT earned — and the ESC-LIVE-1
+> exercise is COMPLETE at its scope.** Per §4.4 the
+> exercise earns exactly what its record shows, now
+> including the spend leg: **one live escalation on the
+> live node, driven from a real fork-generated proposal
+> through a journaled operator resolution, spent across
+> the merged bridge as the fork's first-ever work
+> submission, priced by the fork to a terminal outcome
+> (a designed `stale_state` refusal), the outcome
+> returned and journaled, exactly-once proven at every
+> leg by live negative controls, chain-verified
+> throughout.** What §18.3's full reading still waits
+> on is an intent carried to an execution *with its
+> real-world effect observed* — the restart-and-return
+> of a resident against a loss that is still live. That
+> is P-3, a fresh-loss sitting, and the honesty table
+> moves only on that record. Nothing here pre-claims
+> it. — Lead ruling, 2026-11-13.
