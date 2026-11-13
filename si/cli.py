@@ -15,6 +15,7 @@
     si task <path> --instruction "..." [--root DIR] [--cycles N] [--script FILE] [--operator NAME]
     si gaia-serve <path> [--host H] [--port P]
     si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--follow-resilient] [--max-events N] [--max-attempts N] [--backoff-base S] [--backoff-cap S] [--max-duration S] [--json] [--verify BUNDLE]
+    si gaia-escalation <path> list|show|resolve [...]  (SI-113: CLI approval trigger for escalated intents)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -688,6 +689,20 @@ def _print_gaia_event(event: dict, as_json: bool) -> None:
               f"{event['collection']}")
 
 
+def cmd_gaia_escalation(args) -> int:
+    """`si gaia-escalation` (SI-113, ESC-LIVE-1; SI-111
+    §4.2): the CLI approval trigger for escalated tool
+    intents — list/read the pending escalations folded from
+    a bundle's journal, and record an operator resolution
+    through the existing `resolve_escalation` act. The
+    trigger is transport, never decision: every verification
+    stays inside the act, a refused act journals nothing,
+    and no resolution is ever automatic. The implementation
+    lives in si.gaia.escalation_cli; this is its wiring."""
+    from si.gaia.escalation_cli import execute
+    return execute(args)
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -959,6 +974,75 @@ def build_parser() -> argparse.ArgumentParser:
                           "bundle's journal (exit 1 on any "
                           "mismatch)")
     pge.set_defaults(func=cmd_gaia_events)
+
+    pesc = sub.add_parser("gaia-escalation", help="SI-113/"
+                                                  "ESC-LIVE-1: the CLI "
+                                                  "approval trigger for "
+                                                  "escalated tool "
+                                                  "intents — list/read "
+                                                  "pending escalations "
+                                                  "folded from a "
+                                                  "bundle's journal, "
+                                                  "and record an "
+                                                  "operator resolution "
+                                                  "through the existing "
+                                                  "resolve_escalation "
+                                                  "act (SI-111 §4.2). "
+                                                  "Transport, never "
+                                                  "decision: no "
+                                                  "verification lives "
+                                                  "in the trigger, a "
+                                                  "refused act journals "
+                                                  "nothing, and no "
+                                                  "resolution is ever "
+                                                  "automatic.")
+    pesc.add_argument("path", help="bundle directory")
+    esc_sub = pesc.add_subparsers(dest="esc_cmd", required=True)
+    pesc_list = esc_sub.add_parser(
+        "list", help="list pending escalations (folded "
+                     "escalated, unresolved)")
+    pesc_list.add_argument("--task", type=int, default=None,
+                           help="scope the fold to one task seq")
+    pesc_list.add_argument("--json", action="store_true",
+                           help="print the pending list as JSON")
+    pesc_show = esc_sub.add_parser(
+        "show", help="read one folded intent by journal seq")
+    pesc_show.add_argument("intent_seq", type=int,
+                           help="the intent's journal sequence")
+    pesc_show.add_argument("--task", type=int, default=None,
+                           help="scope the fold to one task seq")
+    pesc_show.add_argument("--json", action="store_true",
+                           help="print the folded view as JSON")
+    pesc_resolve = esc_sub.add_parser(
+        "resolve", help="record the operator's resolution of "
+                        "one escalated intent (the journaled "
+                        "act is resolve_escalation's; a refused "
+                        "act journals nothing)")
+    pesc_resolve.add_argument("intent_seq", type=int,
+                              help="the intent's journal sequence")
+    pesc_resolve.add_argument(
+        "--resolution", required=True,
+        help="the operator's resolution "
+             "(admit-after-review | reject — verified by "
+             "resolve_escalation, not by this parser)")
+    pesc_resolve.add_argument(
+        "--operator", required=True,
+        help="operator name recorded on the resolution "
+             "(required by the act; an anonymous resolution "
+             "is refused)")
+    pesc_resolve.add_argument("--basis", default=None,
+                              help="basis recorded on the "
+                                   "resolution (default: the "
+                                   "act's pinned review basis)")
+    pesc_resolve.add_argument("--detail", default=None,
+                              help="free-text detail recorded on "
+                                   "the resolution")
+    pesc_resolve.add_argument("--task", type=int, default=None,
+                              help="scope the fold to one task seq")
+    pesc_resolve.add_argument("--json", action="store_true",
+                              help="print the journaled entry as "
+                                   "JSON")
+    pesc.set_defaults(func=cmd_gaia_escalation)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "
