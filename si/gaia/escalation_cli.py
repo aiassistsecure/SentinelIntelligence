@@ -36,6 +36,32 @@ gaia-escalation``)::
     si gaia-escalation <bundle> resolve <intent_seq> \
         --resolution admit-after-review --operator NAME \
         [--basis TEXT] [--detail TEXT] [--task SEQ]
+    si gaia-escalation <bundle> spend <intent_seq> \
+        --operator NAME [--basis TEXT] \
+        [--work-url URL] [--task SEQ] [--json]
+    si gaia-escalation <bundle> poll-outcome <intent_seq> \
+        [--work-url URL] [--json]
+    si gaia-escalation <bundle> reconcile-outcome <intent_seq> \
+        --outcomes PATH [--cursor N] [--json]
+
+**SI-116 (P-1) extends this family** — the design choice,
+recorded: the spend and its outcome leg live on the same
+operator surface as the resolution they spend, rather than
+a new command, because the escalation lifecycle is one
+operator story (list → resolve → spend → poll) and D-115-1
+keeps every step an explicit, named operator act. ``spend``
+calls :func:`si.gaia.seam_spend.spend_resolved_escalation`
+and nothing else — the fold verification (queued *by* an
+admit-after-review resolution) and the fork-shaped payload
+live in that act, exactly as the resolution's verification
+lives in ``resolve_escalation``; this trigger adds no
+verification of its own, and a verification refusal
+journals nothing (a fork/transport failure is the act's own
+business: journaled as evidence inside it). ``poll-outcome``
+and ``reconcile-outcome`` are the S-5 outcome leg scoped to
+the one spent intent (SI-115's missing (d)-leg caller):
+reads and journaled-outcome writes through S-5's existing
+machinery, invoked explicitly, never on a timer.
 
 Honest scope: the trigger operates on a bundle's journal
 directly (the live node's seam journal is the bundle served
@@ -189,6 +215,47 @@ def resolve(bundle_dir: str, intent_seq: int, resolution: str,
 
 
 # ---------------------------------------------------------------------------
+# The spend and its outcome leg (SI-116 / P-1)
+# ---------------------------------------------------------------------------
+
+def spend(bundle_dir: str, intent_seq: int, operator: str,
+          basis: str = "", work_url: str | None = None,
+          task_seq=None) -> dict:
+    """Spend one admit-after-review resolution: call
+    :func:`si.gaia.seam_spend.spend_resolved_escalation` —
+    the verifying act, unmodified — and return its result.
+    The trigger supplies the operator's name and the fork
+    work URL (the CLI's default is the live node's route,
+    SI-115 §4); every verification stays inside the act."""
+    from si.gaia.seam_spend import spend_resolved_escalation
+    return spend_resolved_escalation(
+        bundle_dir, intent_seq, operator=operator, basis=basis,
+        work_url=work_url, task_seq=task_seq)
+
+
+def poll_outcome(bundle_dir: str, intent_seq: int,
+                 work_url: str | None = None) -> dict:
+    """Poll the fork for one spent intent's outcome (S-5
+    §11.2, intent-scoped): a thin call into
+    :mod:`si.gaia.seam_spend`'s poll helper, which journals
+    a terminal status through S-5's own outcome writer."""
+    from si.gaia.seam_spend import poll_spent_outcome
+    return poll_spent_outcome(bundle_dir, intent_seq,
+                              work_url=work_url)
+
+
+def reconcile_outcome(bundle_dir: str, intent_seq: int,
+                      outcomes_path: str, cursor: int = 0) -> dict:
+    """Reconcile one spent intent against the fork's
+    outcomes.jsonl (S-5 §11.3, intent-scoped): a thin call
+    into :mod:`si.gaia.seam_spend`'s reconcile helper. The
+    cursor is the operator's to persist between calls."""
+    from si.gaia.seam_spend import reconcile_spent_outcome
+    return reconcile_spent_outcome(
+        bundle_dir, intent_seq, outcomes_path, cursor=cursor)
+
+
+# ---------------------------------------------------------------------------
 # CLI front-ends (module main + the si.cli wiring share `execute`)
 # ---------------------------------------------------------------------------
 
@@ -251,6 +318,59 @@ def execute(args) -> int:
                       f"operator: {entry['operator']}")
                 print(f"  basis: {entry['basis']}")
             return 0
+        if args.esc_cmd == "spend":
+            from si.gaia.seam_spend import DEFAULT_FORK_WORK_URL
+            result = spend(
+                args.path, args.intent_seq,
+                operator=args.operator, basis=args.basis or "",
+                work_url=args.work_url or DEFAULT_FORK_WORK_URL,
+                task_seq=args.task)
+            if args.json:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                print(f"spend: {result['status']}")
+                for key in ("intent_seq", "edit_id",
+                            "resolution_seq", "fork_work_id",
+                            "gaia_work_seq", "http_status",
+                            "deduped", "failure"):
+                    if result.get(key) is not None:
+                        print(f"  {key}: {result[key]}")
+                for problem in result.get("problems") or []:
+                    print(f"  problem: {problem}")
+            return 0 if result["status"] == "submitted" else 1
+        if args.esc_cmd == "poll-outcome":
+            from si.gaia.seam_spend import DEFAULT_FORK_WORK_URL
+            result = poll_outcome(
+                args.path, args.intent_seq,
+                work_url=args.work_url or DEFAULT_FORK_WORK_URL)
+            if args.json:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                print(f"poll-outcome: {result['status']}")
+                for key in ("intent_seq", "work_id", "outcome",
+                            "outcome_seq", "state", "failure"):
+                    if result.get(key) is not None:
+                        print(f"  {key}: {result[key]}")
+                for problem in result.get("problems") or []:
+                    print(f"  problem: {problem}")
+            return 0 if result["status"] in (
+                "journaled", "awaiting") else 1
+        if args.esc_cmd == "reconcile-outcome":
+            result = reconcile_outcome(
+                args.path, args.intent_seq, args.outcomes,
+                cursor=args.cursor or 0)
+            if args.json:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                print(f"reconcile-outcome: {result['status']}")
+                for key in ("intent_seq", "work_id", "cursor",
+                            "count", "torn"):
+                    if result.get(key) is not None:
+                        print(f"  {key}: {result[key]}")
+                for problem in result.get("problems") or []:
+                    print(f"  problem: {problem}")
+            return 0 if result["status"] in (
+                "reconciled",) else 1
     except ValueError as e:
         print(f"si: error: {e}", file=sys.stderr)
         return 1
@@ -322,6 +442,73 @@ def build_parser() -> argparse.ArgumentParser:
     p_resolve.add_argument("--json", action="store_true",
                            help="print the journaled entry as "
                                 "JSON")
+
+    p_spend = sub.add_parser(
+        "spend", help="spend one admit-after-review resolution "
+                      "across the seam (SI-116/P-1: the act is "
+                      "spend_resolved_escalation's; a refused "
+                      "verification journals nothing, a fork / "
+                      "transport failure is journaled as "
+                      "evidence inside the act)")
+    p_spend.add_argument("path", help="bundle directory")
+    p_spend.add_argument("intent_seq", type=int,
+                         help="the resolved intent's journal "
+                              "sequence")
+    p_spend.add_argument(
+        "--operator", required=True,
+        help="operator name recorded on the spend's "
+             "gaia_work row (required by the act; an "
+             "anonymous spend is refused)")
+    p_spend.add_argument("--basis", default=None,
+                         help="basis recorded on the spend "
+                              "(default: the act's pinned "
+                              "explicit-spend basis)")
+    p_spend.add_argument("--work-url", default=None,
+                         help="the fork's work route URL "
+                              "(default: the live node's "
+                              "http://127.0.0.1:11435/gaia/v1/work, "
+                              "SI-115 §4)")
+    p_spend.add_argument("--task", type=int, default=None,
+                         help="scope the fold to one task seq")
+    p_spend.add_argument("--json", action="store_true",
+                         help="print the spend result as JSON")
+
+    p_poll = sub.add_parser(
+        "poll-outcome", help="poll the fork once for one spent "
+                             "intent's outcome (S-5 §11.2, "
+                             "intent-scoped; a terminal status "
+                             "is journaled through S-5's "
+                             "outcome writer, once per work id)")
+    p_poll.add_argument("path", help="bundle directory")
+    p_poll.add_argument("intent_seq", type=int,
+                        help="the spent intent's journal "
+                             "sequence")
+    p_poll.add_argument("--work-url", default=None,
+                        help="the fork's work route URL "
+                             "(default: the live node's "
+                             "http://127.0.0.1:11435/gaia/v1/work)")
+    p_poll.add_argument("--json", action="store_true",
+                        help="print the poll result as JSON")
+
+    p_reconcile = sub.add_parser(
+        "reconcile-outcome", help="reconcile one spent intent "
+                                  "against the fork's "
+                                  "outcomes.jsonl (S-5 §11.3, "
+                                  "intent-scoped, read-only tail)")
+    p_reconcile.add_argument("path", help="bundle directory")
+    p_reconcile.add_argument("intent_seq", type=int,
+                             help="the spent intent's journal "
+                                  "sequence")
+    p_reconcile.add_argument("--outcomes", required=True,
+                             help="path to the fork's "
+                                  "outcomes.jsonl (read-only)")
+    p_reconcile.add_argument("--cursor", type=int, default=None,
+                             help="byte offset to tail from "
+                                  "(default: 0; persist the "
+                                  "returned cursor between calls)")
+    p_reconcile.add_argument("--json", action="store_true",
+                             help="print the reconcile result "
+                                  "as JSON")
     return parser
 
 

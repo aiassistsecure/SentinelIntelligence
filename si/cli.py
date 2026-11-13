@@ -15,7 +15,7 @@
     si task <path> --instruction "..." [--root DIR] [--cycles N] [--script FILE] [--operator NAME]
     si gaia-serve <path> [--host H] [--port P]
     si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--follow-resilient] [--max-events N] [--max-attempts N] [--backoff-base S] [--backoff-cap S] [--max-duration S] [--json] [--verify BUNDLE]
-    si gaia-escalation <path> list|show|resolve [...]  (SI-113: CLI approval trigger for escalated intents)
+    si gaia-escalation <path> list|show|resolve|spend|poll-outcome|reconcile-outcome [...]  (SI-113: CLI approval trigger for escalated intents; SI-116: resolution spend + outcome leg)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -1042,6 +1042,68 @@ def build_parser() -> argparse.ArgumentParser:
     pesc_resolve.add_argument("--json", action="store_true",
                               help="print the journaled entry as "
                                    "JSON")
+    pesc_spend = esc_sub.add_parser(
+        "spend", help="spend one admit-after-review resolution "
+                    "across the seam (SI-116/P-1: the act is "
+                    "spend_resolved_escalation's; a refused "
+                    "verification journals nothing, a fork / "
+                    "transport failure is journaled as evidence "
+                    "inside the act)")
+    pesc_spend.add_argument("intent_seq", type=int,
+                            help="the resolved intent's journal "
+                                 "sequence")
+    pesc_spend.add_argument(
+        "--operator", required=True,
+        help="operator name recorded on the spend's gaia_work "
+             "row (required by the act; an anonymous spend is "
+             "refused)")
+    pesc_spend.add_argument("--basis", default=None,
+                            help="basis recorded on the spend "
+                                 "(default: the act's pinned "
+                                 "explicit-spend basis)")
+    pesc_spend.add_argument("--work-url", default=None,
+                            help="the fork's work route URL "
+                                 "(default: the live node's "
+                                 "http://127.0.0.1:11435/gaia/v1/work, "
+                                 "SI-115 §4)")
+    pesc_spend.add_argument("--task", type=int, default=None,
+                            help="scope the fold to one task seq")
+    pesc_spend.add_argument("--json", action="store_true",
+                            help="print the spend result as JSON")
+    pesc_poll = esc_sub.add_parser(
+        "poll-outcome", help="poll the fork once for one spent "
+                           "intent's outcome (S-5 §11.2, "
+                           "intent-scoped; a terminal status is "
+                           "journaled through S-5's outcome "
+                           "writer, once per work id)")
+    pesc_poll.add_argument("intent_seq", type=int,
+                           help="the spent intent's journal "
+                                "sequence")
+    pesc_poll.add_argument("--work-url", default=None,
+                           help="the fork's work route URL "
+                                "(default: the live node's "
+                                "http://127.0.0.1:11435/gaia/v1/work)")
+    pesc_poll.add_argument("--json", action="store_true",
+                           help="print the poll result as JSON")
+    pesc_reconcile = esc_sub.add_parser(
+        "reconcile-outcome", help="reconcile one spent intent "
+                                "against the fork's "
+                                "outcomes.jsonl (S-5 §11.3, "
+                                "intent-scoped, read-only tail)")
+    pesc_reconcile.add_argument("intent_seq", type=int,
+                                help="the spent intent's journal "
+                                     "sequence")
+    pesc_reconcile.add_argument("--outcomes", required=True,
+                                help="path to the fork's "
+                                     "outcomes.jsonl (read-only)")
+    pesc_reconcile.add_argument("--cursor", type=int, default=None,
+                                help="byte offset to tail from "
+                                     "(default: 0; persist the "
+                                     "returned cursor between "
+                                     "calls)")
+    pesc_reconcile.add_argument("--json", action="store_true",
+                                help="print the reconcile result "
+                                     "as JSON")
     pesc.set_defaults(func=cmd_gaia_escalation)
 
     pam = sub.add_parser("amend-constitution",
