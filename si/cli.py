@@ -17,6 +17,7 @@
     si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--follow-resilient] [--max-events N] [--max-attempts N] [--backoff-base S] [--backoff-cap S] [--max-duration S] [--json] [--verify BUNDLE]
     si gaia-escalation <path> list|show|resolve|spend|poll-outcome|reconcile-outcome [...]  (SI-113: CLI approval trigger for escalated intents; SI-116: resolution spend + outcome leg)
     si gaia-diff <path> <seq_a> <seq_b> [--task SEQ] [--json]  (SI-118: DIFFVIEW-1 checkpoint diff view — read-only diff of journaled state between two journal prefixes)
+    si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -717,6 +718,20 @@ def cmd_gaia_diff(args) -> int:
     return execute(args)
 
 
+def cmd_gaia_lint(args) -> int:
+    """`si gaia-lint` (SI-119, RDL-1; SI-111 §2): an
+    offline grade of a candidate corpus against the
+    recorded failure classes — per-row verdicts plus the
+    corpus eligibility report, under the §2.4 hard label:
+    RDL-1 grades data, never live conformance. It calls
+    no trainer, touches no live NEDB, and modifies
+    neither the parser, the gate, the registry, nor the
+    contract text. The implementation lives in
+    si.gaia.ref_lint; this is its wiring."""
+    from si.gaia.ref_lint import execute
+    return execute(args)
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -1158,6 +1173,49 @@ def build_parser() -> argparse.ArgumentParser:
     pgdiff.add_argument("--json", action="store_true",
                         help="print the diff as JSON")
     pgdiff.set_defaults(func=cmd_gaia_diff)
+
+    pglint = sub.add_parser("gaia-lint", help="SI-119/"
+                                              "RDL-1: an "
+                                              "offline "
+                                              "reference-"
+                                              "discipline "
+                                              "grade of a "
+                                              "candidate "
+                                              "corpus "
+                                              "against the "
+                                              "recorded "
+                                              "failure "
+                                              "classes "
+                                              "(SI-111 "
+                                              "§2.2) — "
+                                              "per-row "
+                                              "verdicts "
+                                              "plus the "
+                                              "corpus "
+                                              "eligibility "
+                                              "report. "
+                                              "RDL-1 grades "
+                                              "data, never "
+                                              "live "
+                                              "conformance; "
+                                              "it calls no "
+                                              "trainer and "
+                                              "touches no "
+                                              "live NEDB.")
+    pglint.add_argument("corpus",
+                        help="candidate corpus file (C-2 "
+                             "shape: prompt/target pairs or "
+                             "target documents alone)")
+    pglint.add_argument("--reference-set", default=None,
+                        help="optional citable reference "
+                             "set file (the A1 "
+                             "citable_reference_set shape, "
+                             "SI-104); without it, seq-form "
+                             "citability is ungraded")
+    pglint.add_argument("--json", action="store_true",
+                        help="print the eligibility report "
+                             "as JSON")
+    pglint.set_defaults(func=cmd_gaia_lint)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "
