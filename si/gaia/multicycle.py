@@ -24,6 +24,15 @@ SI-106 §9 capture disciplines, as code. It implements:
   recomputable (:func:`freeze_multicycle`,
   :func:`verify_freeze`).
 
+SI-112 wiring (SI-111 §3.3; D-111-2): constructed with a
+candidate registration, the driver runs the pre-flight
+template lock (:mod:`si.gaia.preflight`) before its first
+task — a refusal spends nothing and journals nothing — and
+the §9.2 guard poll re-verifies the served template hash on
+every poll, halting with no attempt spent if a mid-capture
+restart changes it (§3.3(c)). With no registration the
+driver behaves exactly as SI-109 left it.
+
 Provenance and scope, stated plainly: SI-107 ran this design
 live from workspace scripts under the lead's direct dispatch.
 This module does **not** retroactively make SI-107 a repo-code
@@ -66,6 +75,7 @@ from si.gaia.conformance_capture import ResidencyGuardHalt
 from si.gaia.context import ToolContext
 from si.gaia.drain import admit_tool_intent
 from si.gaia.proposer import assemble_perception, parse_proposal
+from si.gaia.preflight import PreflightRefused, check_preflight
 from si.gaia.queue import record_queue_batch
 from si.gaia.sibling_resolution import (
     build_resolution_refusal_record,
@@ -78,6 +88,7 @@ from si.journal import COLLECTIONS, open_journal
 
 __all__ = [
     "ResidencyGuardHalt",
+    "PreflightRefused",
     "SmokeGateError",
     "MultiCycleDriver",
     "journal_cycle",
@@ -684,7 +695,9 @@ class MultiCycleDriver:
                  K: int = 2,
                  max_attempts_per_workload_cycle: int = 10,
                  operator: str = "si-109-driver",
-                 on_progress=None, state: dict | None = None):
+                 on_progress=None, state: dict | None = None,
+                 candidate_registration=None,
+                 served_template_probe=None):
         if K < 1:
             raise ValueError("K must be >= 1 (SI-106 §4.1)")
         if max_attempts_per_workload_cycle < 1:
@@ -704,6 +717,18 @@ class MultiCycleDriver:
         self._max_attempts = int(max_attempts_per_workload_cycle)
         self.operator = operator
         self.on_progress = on_progress
+        # Pre-flight template lock (SI-112; SI-111 §3.3,
+        # D-111-2): when a candidate registration is supplied,
+        # run() pre-flights before the first task and every
+        # guard poll re-verifies the served hash through
+        # ``served_template_probe`` (a zero-arg callable
+        # returning the currently served template's sha256,
+        # or None when it cannot be resolved). The driver
+        # still contacts no model by itself: the probe is the
+        # caller's serving-side evidence, exactly as the
+        # residency guard is.
+        self.candidate_registration = candidate_registration
+        self.served_template_probe = served_template_probe
         if state is not None:
             self.state = copy.deepcopy(state)
         else:
@@ -711,6 +736,9 @@ class MultiCycleDriver:
                 "documents": [], "entries": [], "attempts": {},
                 "runs": {}, "closed": False, "halted": None,
             }
+        if candidate_registration is not None \
+                and "preflight" not in self.state:
+            self.state["preflight"] = None
         self._seen_hashes = {
             _hash_text(d["body"]): d["doc_id"]
             for d in self.state["documents"]}
@@ -759,7 +787,80 @@ class MultiCycleDriver:
                 f"residency guard halt — run {run_key!r} cycle "
                 f"{cycle}: residency state is {state!r}, not "
                 "'Resident'; no attempt spent")
+        # Template re-verification (SI-112; SI-111 §3.3(c)):
+        # the guard poll also carries the served template
+        # hash as a checked field. A mid-capture restart that
+        # changes it — or a probe that stops resolving —
+        # halts here, no attempt spent, under the guard's own
+        # discipline.
+        if self.candidate_registration is not None \
+                and self.served_template_probe is not None:
+            record = self.state.get("preflight") or {}
+            try:
+                now_hash = self.served_template_probe()
+            except Exception as exc:
+                self.state["halted"] = {
+                    "run": run_key, "cycle": cycle,
+                    "reason": "served template probe failed",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+                self._persist()
+                raise ResidencyGuardHalt(
+                    f"template guard halt — run {run_key!r} "
+                    f"cycle {cycle}: served template probe "
+                    f"failed ({type(exc).__name__}: {exc}); "
+                    f"no attempt spent") from exc
+            matches = now_hash is not None and now_hash == \
+                record.get("registered_template_sha256")
+            record.setdefault("rechecks", []).append({
+                "run": run_key, "cycle": cycle,
+                "served_template_sha256": now_hash,
+                "decision": "match" if matches else "MISMATCH"})
+            self.state["preflight"] = record
+            if not matches:
+                self.state["halted"] = {
+                    "run": run_key, "cycle": cycle,
+                    "reason": "served template changed "
+                              "mid-capture",
+                    "served_template_sha256": now_hash,
+                    "registered_template_sha256":
+                        record.get("registered_template_sha256"),
+                }
+                self._persist()
+                raise ResidencyGuardHalt(
+                    f"template guard halt — run {run_key!r} "
+                    f"cycle {cycle}: served template hash is "
+                    f"{now_hash!r}, not the registered "
+                    f"{record.get('registered_template_sha256')!r}; "
+                    f"no attempt spent (SI-111 §3.3(c))")
+            self._persist()
         return state, seq
+
+    def _preflight(self) -> None:
+        """The capture pre-flight (SI-112; SI-111 §3.3(b)).
+        Runs before the first task is journaled: the served
+        hash comes from the caller's probe, the comparison
+        and decision are recorded in the driver state, and a
+        refusal raises :class:`PreflightRefused` with the
+        state already persisted — no task, no attempt. A
+        resumed state already carrying a PASS record is not
+        re-ruled (its guard polls still re-verify)."""
+        if self.candidate_registration is None:
+            return
+        existing = self.state.get("preflight")
+        if existing and existing.get("decision") == "PASS":
+            return
+        served_hash = None
+        if self.served_template_probe is not None:
+            served_hash = self.served_template_probe()
+        record = check_preflight(
+            self.candidate_registration,
+            served_template_sha256=served_hash,
+            served_source_label="template-probe")
+        self.state["preflight"] = record
+        self._persist()
+        if record["decision"] != "PASS":
+            raise PreflightRefused(record)
 
     def run(self, tasks: list) -> dict:
         """Run the capture plan: ``tasks`` is a list of
@@ -771,6 +872,7 @@ class MultiCycleDriver:
         budget exhaustion — is recorded per run in the state."""
         from si.gaia.conformance_capture import extract_content
         journal = self.journal
+        self._preflight()
         for spec in tasks:
             label = spec["workload"]
             run_idx = spec["run"]
@@ -966,6 +1068,8 @@ def run_fixture_smoke_gate(bundle_dir: str, work_root: str, *,
                            policy: dict | None = None,
                            instruction: str =
                            "list the work root, then read a file",
+                           candidate_registration=None,
+                           served_template_probe=None,
                            ) -> dict:
     """The §9.4 smoke gate, in fixture scope only.
 
@@ -1017,11 +1121,17 @@ def run_fixture_smoke_gate(bundle_dir: str, work_root: str, *,
             cycle_cap=budgets["max_tool_cycles_per_task"],
             proposal_source=source,
             residency_guard=residency_guard, K=1,
-            operator="si-109-smoke-gate")
+            operator="si-109-smoke-gate",
+            candidate_registration=candidate_registration,
+            served_template_probe=served_template_probe)
         try:
             state = driver.run([{
                 "workload": "smoke-dummy", "run": 0,
                 "instruction": instruction}])
+        except PreflightRefused as exc:
+            raise SmokeGateError(
+                f"smoke gate pre-flight check failed: {exc}"
+            ) from exc
         except ResidencyGuardHalt as exc:
             raise SmokeGateError(
                 f"smoke gate residency check failed: {exc}"
@@ -1059,6 +1169,8 @@ def run_fixture_smoke_gate(bundle_dir: str, work_root: str, *,
             "no_execution_proof": proof,
             "documents": len(docs),
         }
+        if state.get("preflight") is not None:
+            summary["preflight"] = state["preflight"]
         if failed:
             raise SmokeGateError(
                 f"smoke gate failed check(s): {failed}; "

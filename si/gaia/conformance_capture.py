@@ -71,6 +71,8 @@ from si.gaia.conformance import build_conformance_record, \
     validate_corpus
 from si.gaia.hearth import HttpTransport
 from si.gaia.policy import resolve_tool_policy
+from si.gaia.preflight import PreflightRefused, check_preflight, \
+    resolve_served_template
 from si.gaia.propose_measure import REPLAY_WORKLOADS_V2
 from si.gaia.proposer import GATEWAY_CHAT_PATH, assemble_perception, \
     build_gateway_request
@@ -211,7 +213,11 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
                    timeout_s: float = CAPTURE_TIMEOUT_S,
                    transport=None, log=print,
                    on_progress=None,
-                   resume_corpus=None, resume_log=None) -> tuple:
+                   resume_corpus=None, resume_log=None,
+                   candidate_registration=None,
+                   served_gguf_path=None,
+                   spawn_template_file=None,
+                   served_template_sha256=None) -> tuple:
     """Run the pre-registered capture plan. Returns
     ``(corpus, capture_log)``. The plan, fixed before capture
     (see the SI-79 evidence file): per workload, attempts
@@ -251,11 +257,56 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
     entry, no attempt spent, because the request never
     reached a serving model. An attempt that polled Resident
     and then fails in the POST keeps the original behaviour
-    exactly: recorded transport-failed, unscored, and spent."""
+    exactly: recorded transport-failed, unscored, and spent.
+
+    Pre-flight template lock (SI-112; SI-111 §3.3, D-111-2):
+    when ``candidate_registration`` is supplied, the served
+    template is resolved and hashed BEFORE the first attempt
+    (from ``spawn_template_file`` — the serving stack's
+    ``--chat-template-file`` target — else ``served_gguf_path``'s
+    embedded template, else ``served_template_sha256``) and
+    compared to the registered hash. A refusal raises
+    :class:`PreflightRefused` before any fixture is built or
+    attempt spent; the check record (both hashes, the
+    comparison, the decision) rides in the capture log under
+    ``"preflight"`` and in every progress payload. At every
+    residency-guard poll the served hash is re-resolved when
+    a live source (spawn file or served GGUF) is in play —
+    a mid-capture change halts the capture under the
+    residency guard's own discipline (§3.3(c)). With no
+    registration, behaviour is the historical path exactly,
+    so recorded corpora stay resumable; the operator CLI
+    refuses a fresh capture without one (D-111-2)."""
     transport = transport or HttpTransport()
     served_model_id = discover_served_model_id(
         inference_base, transport=transport)
     log(f"served model discovered: {served_model_id}")
+    # Pre-flight template lock (SI-112; SI-111 §3.3(b)): run
+    # BEFORE anything is built or spent. A refusal raises
+    # PreflightRefused carrying the check record, so the
+    # refusal is the run's recorded outcome.
+    preflight_record = None
+    if candidate_registration is not None:
+        preflight_record = check_preflight(
+            candidate_registration,
+            spawn_template_file=spawn_template_file,
+            served_gguf_path=served_gguf_path,
+            served_template_sha256=served_template_sha256)
+        log(f"pre-flight template lock: "
+            f"{preflight_record['decision']} — "
+            f"{preflight_record['reason']}")
+        if preflight_record["decision"] != "PASS":
+            raise PreflightRefused(preflight_record)
+    elif resume_log is not None \
+            and (resume_log.get("preflight") or {}).get(
+                "decision") == "PASS":
+        # A resumed capture carries its original capture's
+        # PASS record forward; it is not re-ruled here.
+        preflight_record = dict(resume_log["preflight"])
+        preflight_record["carried_from_resume"] = True
+    template_lock_live = preflight_record is not None and (
+        spawn_template_file is not None
+        or served_gguf_path is not None)
     resuming = resume_corpus is not None
     if resuming:
         seeded_label = resume_corpus.get("candidate_label")
@@ -321,12 +372,13 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
 
     def _progress():
         if on_progress is not None:
-            on_progress(
-                _make_corpus(),
-                {"served_model_id": served_model_id,
-                 "inference_base": inference_base,
-                 "bundle_dir": paths["bundle_dir"],
-                 "entries": capture_log})
+            payload = {"served_model_id": served_model_id,
+                       "inference_base": inference_base,
+                       "bundle_dir": paths["bundle_dir"],
+                       "entries": capture_log}
+            if preflight_record is not None:
+                payload["preflight"] = preflight_record
+            on_progress(_make_corpus(), payload)
 
     for label, instruction, _injection, _script, options \
             in REPLAY_WORKLOADS_V2:
@@ -388,6 +440,41 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
                         f"never reached a serving model")
                     log(halt_msg)
                     raise ResidencyGuardHalt(halt_msg)
+                # Template re-verification (SI-112; SI-111
+                # §3.3(c)): the guard poll also re-resolves
+                # the served template hash when a live source
+                # is in play. A mid-capture restart that
+                # changes it halts here — no attempt spent,
+                # under the guard's own discipline.
+                if template_lock_live:
+                    now_hash, _src, _detail = \
+                        resolve_served_template(
+                            spawn_template_file=
+                            spawn_template_file,
+                            served_gguf_path=served_gguf_path)
+                    matches = now_hash is not None and \
+                        now_hash == preflight_record[
+                            "registered_template_sha256"]
+                    preflight_record["rechecks"].append({
+                        "workload": label,
+                        "at_america_new_york":
+                            _now_ny().isoformat(),
+                        "served_template_sha256": now_hash,
+                        "decision": "match" if matches
+                        else "MISMATCH"})
+                    if not matches:
+                        halt_msg = (
+                            f"template guard halt — workload "
+                            f"{label!r}: served template hash "
+                            f"is now {now_hash!r}, not the "
+                            f"registered "
+                            f"{preflight_record['registered_template_sha256']!r}; "
+                            f"no attempt spent, because the "
+                            f"capture would continue against a "
+                            f"template the candidate was not "
+                            f"registered with (SI-111 §3.3(c))")
+                        log(halt_msg)
+                        raise ResidencyGuardHalt(halt_msg)
                 attempt += 1
                 item_id = f"c2-{label}-{accepted}"
                 entry = {"item_id": item_id, "workload": label,
@@ -506,10 +593,13 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
         finally:
             journal.close()
     corpus = _make_corpus()
-    return corpus, {"served_model_id": served_model_id,
-                    "inference_base": inference_base,
-                    "bundle_dir": paths["bundle_dir"],
-                    "entries": capture_log}
+    capture_result = {"served_model_id": served_model_id,
+                      "inference_base": inference_base,
+                      "bundle_dir": paths["bundle_dir"],
+                      "entries": capture_log}
+    if preflight_record is not None:
+        capture_result["preflight"] = preflight_record
+    return corpus, capture_result
 
 
 def dc1_coverage_missing(corpus: dict) -> list:
@@ -622,6 +712,24 @@ def main(argv=None) -> int:
                              "gaia log (SI-67 discovery)")
     parser.add_argument("--residency-base", default=None)
     parser.add_argument("--capture-only", action="store_true")
+    parser.add_argument("--registration", default=None,
+                        help="candidate registration record "
+                             "(JSON, from si.gaia.preflight "
+                             "register). REQUIRED for a fresh "
+                             "capture (D-111-2); a resume may "
+                             "instead carry the original "
+                             "capture's PASS pre-flight record "
+                             "in its persisted capture log")
+    parser.add_argument("--served-gguf", default=None,
+                        help="path of the served GGUF, probed "
+                             "at pre-flight for its embedded "
+                             "chat template")
+    parser.add_argument("--spawn-template-file", default=None,
+                        help="the serving stack's "
+                             "--chat-template-file target, "
+                             "hashed at pre-flight (wins over "
+                             "the served GGUF's embedded "
+                             "template, as it does in serving)")
     parser.add_argument("--score-only", action="store_true",
                         help="score an existing corpus file in "
                              "--out without capturing")
@@ -661,12 +769,43 @@ def main(argv=None) -> int:
                   f"(fixed_n={resume_corpus.get('fixed_n')}) "
                   f"and {capture_log_path}")
 
+        # Pre-flight template lock (SI-112; D-111-2): a
+        # fresh capture without a candidate registration is
+        # refused here, before any capture starts — the
+        # registration is a hard eligibility precondition,
+        # not a warning. A resume is bound by its original
+        # capture's PASS pre-flight record instead.
+        registration = None
+        if args.registration:
+            with open(args.registration,
+                      encoding="utf-8") as fh:
+                registration = json.load(fh)
+        elif resume_log is not None:
+            prior = (resume_log.get("preflight") or {})
+            if prior.get("decision") != "PASS":
+                print("capture refused — the resume carries "
+                      "no PASS pre-flight record and no "
+                      "--registration was supplied (D-111-2: "
+                      "template-hash registration is a hard "
+                      "eligibility precondition)")
+                return 2
+        else:
+            print("capture refused — a fresh capture requires "
+                  "--registration (D-111-2: template-hash "
+                  "registration is a hard eligibility "
+                  "precondition for any graded or diagnostic "
+                  "capture)")
+            return 2
+
         corpus, capture_log = capture_corpus(
             args.capture_dir or os.path.join(args.out, "capture"),
             inference_base=inference_base,
             residency_base=residency_base,
             on_progress=_persist,
-            resume_corpus=resume_corpus, resume_log=resume_log)
+            resume_corpus=resume_corpus, resume_log=resume_log,
+            candidate_registration=registration,
+            served_gguf_path=args.served_gguf,
+            spawn_template_file=args.spawn_template_file)
         with open(corpus_path, "w", encoding="utf-8") as fh:
             json.dump(corpus, fh, indent=2)
         with open(os.path.join(args.out, "capture-log.json"),
