@@ -16,6 +16,7 @@
     si gaia-serve <path> [--host H] [--port P]
     si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--follow-resilient] [--max-events N] [--max-attempts N] [--backoff-base S] [--backoff-cap S] [--max-duration S] [--json] [--verify BUNDLE]
     si gaia-escalation <path> list|show|resolve|spend|poll-outcome|reconcile-outcome [...]  (SI-113: CLI approval trigger for escalated intents; SI-116: resolution spend + outcome leg)
+    si gaia-diff <path> <seq_a> <seq_b> [--task SEQ] [--json]  (SI-118: DIFFVIEW-1 checkpoint diff view — read-only diff of journaled state between two journal prefixes)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -703,6 +704,19 @@ def cmd_gaia_escalation(args) -> int:
     return execute(args)
 
 
+def cmd_gaia_diff(args) -> int:
+    """`si gaia-diff` (SI-118, DIFFVIEW-1; SI-111 §5): a
+    read-only diff of journaled state between two journal
+    seqs — both prefixes folded from the bundle's journal
+    (chain verified first), the delta rendered with every
+    row cited by its journal seq. The view has no mutation
+    surface: it journals nothing, resolves nothing, claims
+    nothing, executes nothing. The implementation lives in
+    si.gaia.diffview; this is its wiring."""
+    from si.gaia.diffview import execute
+    return execute(args)
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -1105,6 +1119,45 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="print the reconcile result "
                                      "as JSON")
     pesc.set_defaults(func=cmd_gaia_escalation)
+
+    pgdiff = sub.add_parser("gaia-diff", help="SI-118/"
+                                              "DIFFVIEW-1: a "
+                                              "read-only diff "
+                                              "of journaled "
+                                              "state between "
+                                              "two journal "
+                                              "seqs — both "
+                                              "prefixes folded "
+                                              "from the "
+                                              "bundle's journal "
+                                              "(chain verified "
+                                              "first), every "
+                                              "row cited by "
+                                              "its journal seq "
+                                              "(SI-111 §5). "
+                                              "The view has no "
+                                              "mutation "
+                                              "surface: it "
+                                              "journals, "
+                                              "resolves, "
+                                              "claims, and "
+                                              "executes "
+                                              "nothing.")
+    pgdiff.add_argument("path", help="bundle directory")
+    pgdiff.add_argument("seq_a", type=int,
+                        help="the earlier checkpoint: the "
+                             "diff covers (seq_a, seq_b]")
+    pgdiff.add_argument("seq_b", type=int,
+                        help="the later checkpoint (a "
+                             "zero-width window, seq_b == "
+                             "seq_a, renders the explicit "
+                             "no-change result)")
+    pgdiff.add_argument("--task", type=int, default=None,
+                        help="scope the folded transitions "
+                             "to one task seq")
+    pgdiff.add_argument("--json", action="store_true",
+                        help="print the diff as JSON")
+    pgdiff.set_defaults(func=cmd_gaia_diff)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "
