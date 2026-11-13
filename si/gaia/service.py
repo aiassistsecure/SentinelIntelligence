@@ -192,6 +192,12 @@ from si.gaia.seam_outcome import (
     reconcile_seam_outcomes,
 )
 from si.gaia.seam_reconcile import S5_RECONCILIATION_LABEL
+from si.gaia.seam_spend import (
+    SPEND_LABEL,
+    poll_spent_outcome as _poll_spent_outcome,
+    reconcile_spent_outcome as _reconcile_spent_outcome,
+    spend_resolved_escalation,
+)
 from si.gaia.seam_submit import (
     WORK_SUBMISSION_LABEL,
     submit_pending_seam_work,
@@ -709,6 +715,51 @@ def reconcile_outcomes(bundle_dir: str, outcomes_path: str,
     """
     return reconcile_seam_outcomes(bundle_dir, outcomes_path,
                                    **kwargs)
+
+
+def submit_resolved_work(bundle_dir: str, intent_seq: int,
+                         **kwargs) -> dict:
+    """SI-116 (P-1): spend one admit-after-review resolution.
+
+    A thin wrapper over
+    :func:`si.gaia.seam_spend.spend_resolved_escalation`:
+    the explicit operator spend act (D-115-1) that submits a
+    folded ``queued`` intent — standing queued by an
+    admit-after-review resolution — to the fork's
+    ``/gaia/v1/work`` in ``parse_intent``'s as-built shape
+    and journals the ``gaia_work`` record tying intent seq +
+    resolution seq + fork work id. Keyword args are the seam
+    module's (``operator`` / ``basis`` / ``work_url`` /
+    ``transport`` / ``timeout_s``). No new HTTP route is
+    added — the spend is an outbound, operator-invoked act,
+    and its results carry SPEND_LABEL's honesty labels (a
+    spend ACK is not an execution outcome; live interop
+    UNMEASURED).
+    """
+    return spend_resolved_escalation(bundle_dir, intent_seq,
+                                     **kwargs)
+
+
+def poll_spent_outcome(bundle_dir: str, intent_seq: int,
+                       **kwargs) -> dict:
+    """SI-116 (P-1): poll one spent intent's outcome (S-5
+    §11.2, intent-scoped). A thin wrapper over
+    :mod:`si.gaia.seam_spend`'s poll helper, which journals
+    a terminal fork status through S-5's own outcome writer,
+    once per work id."""
+    return _poll_spent_outcome(bundle_dir, intent_seq,
+                               **kwargs)
+
+
+def reconcile_spent_outcome(bundle_dir: str, intent_seq: int,
+                            outcomes_path: str, **kwargs) -> dict:
+    """SI-116 (P-1): reconcile one spent intent against the
+    fork outcomes file (S-5 §11.3, intent-scoped). A thin
+    wrapper over :mod:`si.gaia.seam_spend`'s reconcile
+    helper; the shared cursor is the caller's to persist.
+    """
+    return _reconcile_spent_outcome(bundle_dir, intent_seq,
+                                    outcomes_path, **kwargs)
 
 
 def forward_events(bundle_dir: str, **kwargs) -> dict:
