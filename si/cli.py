@@ -18,6 +18,8 @@
     si gaia-escalation <path> list|show|resolve|spend|poll-outcome|reconcile-outcome [...]  (SI-113: CLI approval trigger for escalated intents; SI-116: resolution spend + outcome leg)
     si gaia-diff <path> <seq_a> <seq_b> [--task SEQ] [--json]  (SI-118: DIFFVIEW-1 checkpoint diff view — read-only diff of journaled state between two journal prefixes)
     si gaia-mcp <path>  (SI-121: MCP-1 Gaia MCP server — stdio JSON-RPC, stdlib only; two read-only tools plus gaia_submit_intent in escalate-only shadow form: verdict journaled, never executed)
+    si gaia-export <path> [--from SEQ] [--to SEQ] [--out FILE]  (SI-122: EXPORT-1 verifiable run export — one self-contained file carrying a journal window plus the chain data to re-verify it offline; strictly read-only on the bundle)
+    si gaia-verify-export <file>  (SI-122: EXPORT-1 offline verifier — recomputes the journal hash chain over an export file alone, no bundle opened; exit non-zero on any mismatch)
     si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
@@ -734,6 +736,34 @@ def cmd_gaia_mcp(args) -> int:
     return execute(args)
 
 
+def cmd_gaia_export(args) -> int:
+    """`si gaia-export` (SI-122, EXPORT-1): export a
+    window of the bundle's journal as ONE self-contained
+    file — the entries in order, the chain data needed to
+    re-verify them offline, the manifest's constitution
+    record and head, and export metadata (source tip seq +
+    tip hash). Strictly read-only on the bundle: the
+    journal is opened the _open_read way (chain verified
+    first, fail closed) and nothing is written to it. The
+    implementation lives in si.gaia.run_export; this is
+    its wiring."""
+    from si.gaia.run_export import execute_export
+    return execute_export(args)
+
+
+def cmd_gaia_verify_export(args) -> int:
+    """`si gaia-verify-export` (SI-122, EXPORT-1): the
+    offline verifier — recompute the journal's hash chain
+    over an export file's entries and check the export's
+    internal consistency, WITHOUT opening the live bundle.
+    Prints a clear verdict; exit non-zero on ANY mismatch
+    (tampered entry, reordered entries, truncated chain,
+    tip hash mismatch). The implementation lives in
+    si.gaia.run_export; this is its wiring."""
+    from si.gaia.run_export import execute_verify
+    return execute_verify(args)
+
+
 def cmd_gaia_lint(args) -> int:
     """`si gaia-lint` (SI-119, RDL-1; SI-111 §2): an
     offline grade of a candidate corpus against the
@@ -1222,6 +1252,72 @@ def build_parser() -> argparse.ArgumentParser:
     pgmcp.add_argument("path", help="bundle directory (the "
                                     "default bundle served)")
     pgmcp.set_defaults(func=cmd_gaia_mcp)
+
+    pgexp = sub.add_parser("gaia-export", help="SI-122/"
+                                               "EXPORT-1: "
+                                               "export a "
+                                               "window of "
+                                               "the bundle's "
+                                               "journal as "
+                                               "ONE self-"
+                                               "contained "
+                                               "file — the "
+                                               "entries in "
+                                               "order, the "
+                                               "chain data "
+                                               "to re-verify "
+                                               "them offline, "
+                                               "the manifest's "
+                                               "constitution "
+                                               "record and "
+                                               "head, and "
+                                               "export "
+                                               "metadata "
+                                               "(source tip "
+                                               "seq + tip "
+                                               "hash). "
+                                               "Strictly "
+                                               "read-only "
+                                               "on the "
+                                               "bundle "
+                                               "(chain "
+                                               "verified "
+                                               "first, fail "
+                                               "closed).")
+    pgexp.add_argument("path", help="bundle directory")
+    pgexp.add_argument("--from", dest="from_seq", type=int,
+                       default=0,
+                       help="export entries with seq > "
+                            "from_seq (default 0: the whole "
+                            "journal)")
+    pgexp.add_argument("--to", dest="to_seq", type=int,
+                       default=None,
+                       help="export entries with seq <= "
+                            "to_seq (default: the journal "
+                            "tip)")
+    pgexp.add_argument("--out", default=None,
+                       help="write the export to FILE "
+                            "(default: stdout)")
+    pgexp.set_defaults(func=cmd_gaia_export)
+
+    pgvexp = sub.add_parser("gaia-verify-export",
+                            help="SI-122/EXPORT-1: the "
+                                 "offline verifier — "
+                                 "recompute the journal "
+                                 "hash chain over an "
+                                 "export file's entries "
+                                 "and check its internal "
+                                 "consistency, WITHOUT "
+                                 "opening the live bundle. "
+                                 "Prints a clear verdict; "
+                                 "exit non-zero on ANY "
+                                 "mismatch (tampered "
+                                 "entry, reordered "
+                                 "entries, truncated "
+                                 "chain, tip hash "
+                                 "mismatch).")
+    pgvexp.add_argument("file", help="the export file")
+    pgvexp.set_defaults(func=cmd_gaia_verify_export)
 
     pglint = sub.add_parser("gaia-lint", help="SI-119/"
                                               "RDL-1: an "
