@@ -17,6 +17,7 @@
     si gaia-events [--url U] [--after SEQ] [--collection C] [--event E] [--kind K] [--task SEQ] [--follow] [--follow-resilient] [--max-events N] [--max-attempts N] [--backoff-base S] [--backoff-cap S] [--max-duration S] [--json] [--verify BUNDLE]
     si gaia-escalation <path> list|show|resolve|spend|poll-outcome|reconcile-outcome [...]  (SI-113: CLI approval trigger for escalated intents; SI-116: resolution spend + outcome leg)
     si gaia-diff <path> <seq_a> <seq_b> [--task SEQ] [--json]  (SI-118: DIFFVIEW-1 checkpoint diff view — read-only diff of journaled state between two journal prefixes)
+    si gaia-mcp <path>  (SI-121: MCP-1 Gaia MCP server — stdio JSON-RPC, stdlib only; two read-only tools plus gaia_submit_intent in escalate-only shadow form: verdict journaled, never executed)
     si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
@@ -718,6 +719,21 @@ def cmd_gaia_diff(args) -> int:
     return execute(args)
 
 
+def cmd_gaia_mcp(args) -> int:
+    """`si gaia-mcp` (SI-121, MCP-1): the Gaia MCP server —
+    a minimal MCP JSON-RPC 2.0 server over stdio (stdlib
+    only) run in the foreground over one bundle. It exposes
+    gaia_journal_query and gaia_escalations_list (read-only;
+    they journal nothing) and gaia_submit_intent in
+    ESCALATE-ONLY shadow form: the real gate verdict is
+    journaled through the existing B-1 shadow act and
+    nothing is executed — execution is NOT wired through
+    MCP in v1. The implementation lives in
+    si.gaia.mcp_server; this is its wiring."""
+    from si.gaia.mcp_server import execute
+    return execute(args)
+
+
 def cmd_gaia_lint(args) -> int:
     """`si gaia-lint` (SI-119, RDL-1; SI-111 §2): an
     offline grade of a candidate corpus against the
@@ -1173,6 +1189,39 @@ def build_parser() -> argparse.ArgumentParser:
     pgdiff.add_argument("--json", action="store_true",
                         help="print the diff as JSON")
     pgdiff.set_defaults(func=cmd_gaia_diff)
+
+    pgmcp = sub.add_parser("gaia-mcp", help="SI-121/MCP-1: "
+                                            "the Gaia MCP "
+                                            "server — a "
+                                            "minimal MCP "
+                                            "JSON-RPC 2.0 "
+                                            "server over "
+                                            "stdio (stdlib "
+                                            "only) run in "
+                                            "the foreground "
+                                            "over one bundle. "
+                                            "Exposes "
+                                            "gaia_journal_query "
+                                            "and "
+                                            "gaia_escalations_list "
+                                            "(read-only; "
+                                            "journal nothing) "
+                                            "and "
+                                            "gaia_submit_intent "
+                                            "in ESCALATE-ONLY "
+                                            "shadow form: "
+                                            "the real gate "
+                                            "verdict is "
+                                            "journaled, "
+                                            "nothing is "
+                                            "executed — "
+                                            "execution is "
+                                            "NOT wired "
+                                            "through MCP "
+                                            "in v1.")
+    pgmcp.add_argument("path", help="bundle directory (the "
+                                    "default bundle served)")
+    pgmcp.set_defaults(func=cmd_gaia_mcp)
 
     pglint = sub.add_parser("gaia-lint", help="SI-119/"
                                               "RDL-1: an "
