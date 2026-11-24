@@ -85,6 +85,7 @@ import sys
 import time
 
 from si.bundle import canonical_json, sha256_hex
+from si.gaia import sandbox as _sandbox
 from si.gaia.policy import resolve_tool_policy
 from si.gaia.registry import (
     LIVE_TOOLS_B3,
@@ -217,13 +218,40 @@ class Executor:
     """
 
     def __init__(self, bundle_dir, manifest, journal, policy: dict,
-                 work_root: str):
+                 work_root: str, exec_mode=None, sandbox_profile=None,
+                 docker_probe=None, sandbox_runner=None):
         self.bundle_dir = os.path.abspath(bundle_dir) if bundle_dir else None
         self.manifest = manifest if isinstance(manifest, dict) else {}
         self.journal = journal
         self.policy = dict(policy or {})
         self.tool_policy = resolve_tool_policy(self.policy)
         self.work_root = os.path.realpath(work_root)
+        # SI-125 SANDBOX-1: process-tool execution mode. Resolution
+        # order: constructor arg > GAIA_EXEC_MODE env > policy
+        # "exec_mode" > resolve_exec_mode's default (sandbox when
+        # Docker answers the probe, host otherwise — the documented
+        # compatibility default). An invalid explicit value is a
+        # ValueError here, at construction — fail fast, honest.
+        # All kwargs are optional so every existing call site
+        # (loop, drain, measure, resolution) is unchanged.
+        self._docker_probe = docker_probe or _sandbox.docker_available
+        explicit = exec_mode
+        if explicit is None:
+            explicit = os.environ.get("GAIA_EXEC_MODE") or None
+        if explicit is None:
+            candidate = self.policy.get("exec_mode")
+            explicit = candidate if isinstance(candidate, str) \
+                and candidate else None
+        self.exec_mode = _sandbox.resolve_exec_mode(
+            explicit,
+            bool(self._docker_probe()) if explicit is None else False)
+        self.sandbox_profile = sandbox_profile or _sandbox.SandboxProfile()
+        self._sandbox_runner = sandbox_runner
+        #: Set by _run_process (and its sandbox branch): the run
+        #: context execute_journaled copies into the §4.4 record
+        #: ({"exec_mode": ...} plus "sandbox_profile" in sandbox
+        #: mode) — the kill_cause pattern, one level up.
+        self._last_run_context = None
         self._gate = Gate(self.policy)
         #: SI-53/Q-3 (§11.2): an optional callable installed by
         #: the queue drainer for the duration of one claimed
@@ -271,6 +299,7 @@ class Executor:
         discipline below applies to the journaled args unchanged.
         """
         started = time.perf_counter()
+        self._last_run_context = None  # SI-125: per-execution reset
         rows = self.journal.backend.find(
             "self_edits", filter={"edit_id": edit_id}, limit=1)
         if not rows:
@@ -503,6 +532,17 @@ class Executor:
                 # cause is the operator — the record says so,
                 # distinctly from an ordinary timeout.
                 record["kill_cause"] = "operator-stop"
+        if self._last_run_context:
+            # SI-125: every process-tool record states the mode it
+            # actually ran in (host or sandbox + the profile) —
+            # including the sandbox-refusal failure, whose handler
+            # raised after setting the context. The compatibility
+            # fallback (unset mode, no Docker -> host) is therefore
+            # journal-visible on every record, never silent.
+            record["exec_mode"] = self._last_run_context.get("exec_mode")
+            if "sandbox_profile" in self._last_run_context:
+                record["sandbox_profile"] = \
+                    self._last_run_context["sandbox_profile"]
         if overflow is not None:
             record["overflow_result_hash"] = overflow[0]
             record["overflow_result_bytes"] = overflow[1]
@@ -984,6 +1024,78 @@ class Executor:
         cap = int(self.tool_policy.get("tool_timeout_seconds") or 0)
         return min(timeout, cap)
 
+    # -- SI-125: sandbox translation + run --------------------------------
+    def _translate_for_container(self, argv, cwd: str):
+        """Translate a host argv/cwd into the container's inner
+        argv/cwd. The work root mounts at /workspace; the inner
+        cwd is /workspace plus the host cwd's path relative to
+        the work root (containment is already enforced by the
+        executor's scoping — an escaping relpath here is a bug,
+        refused honestly rather than mapped). The interpreter
+        ``sys.executable`` becomes the image's ``python3``, and
+        any remaining host path argument under the work root is
+        remapped to its /workspace path (code_exec's file form,
+        test_run's target); ``/bin/sh -c`` and all other args pass
+        through untouched — the image provides the shell.
+        """
+        rel = os.path.relpath(cwd, self.work_root)
+        if rel == ".." or rel.startswith(".." + os.sep):
+            raise ToolExecutionError(
+                f"cwd {cwd} escapes the work root {self.work_root}: "
+                "cannot map it into the sandbox workspace")
+        inner_cwd = _sandbox.CONTAINER_WORKSPACE if rel == "." else \
+            _sandbox.CONTAINER_WORKSPACE + "/" + rel.replace(os.sep, "/")
+        inner = [str(a) for a in argv]
+        if inner and inner[0] == sys.executable:
+            inner[0] = "python3"
+            for i in range(1, len(inner)):
+                arg = inner[i]
+                if os.path.isabs(arg) and _is_within(arg, self.work_root):
+                    inner[i] = _sandbox.CONTAINER_WORKSPACE + "/" + \
+                        os.path.relpath(arg, self.work_root).replace(
+                            os.sep, "/")
+        return inner, inner_cwd
+
+    def _run_process_sandbox(self, argv, cwd: str, timeout: int):
+        """The sandbox arm of :meth:`_run_process`: same 6-tuple,
+        same per-stream caps and decoding — the only difference
+        is where the process runs. Fail-closed: the probe is
+        re-checked at execution time, and an unavailable Docker
+        refuses the execution (the command never runs on the
+        host as a silent fallback)."""
+        cap = int(self.tool_policy.get("tool_max_result_bytes") or 0)
+        self._last_run_context = {
+            "exec_mode": "sandbox",
+            "sandbox_profile": self.sandbox_profile.summary(
+                self.work_root)}
+        if not self._docker_probe():
+            raise ToolExecutionError(
+                "sandbox execution refused: GAIA_EXEC_MODE=sandbox "
+                "but docker is unavailable; refusing to run on "
+                "host (fail closed)")
+        inner_argv, inner_cwd = self._translate_for_container(argv, cwd)
+        runner = self._sandbox_runner
+        if runner is None:
+            runner = self._sandbox_runner = _sandbox.DockerRunner(
+                self.sandbox_profile, self.work_root)
+        exit_code, out_b, err_b, timed_out, leash_killed = runner.run(
+            inner_argv, inner_cwd, timeout, self._child_env(),
+            leash_check=self.leash_check)
+        self._last_process_leash_killed = leash_killed
+        if timed_out:
+            exit_code = TIMEOUT_EXIT_CODE
+        stream_truncated = False
+
+        def decode(data: bytes) -> str:
+            nonlocal stream_truncated
+            if cap > 0 and len(data) > cap:
+                stream_truncated = True
+                data = data[:cap]
+            return data.decode("utf-8", errors="replace")
+
+        return exit_code, decode(out_b or b""), decode(err_b or b""), \
+            timed_out, stream_truncated, leash_killed
+
     def _run_process(self, argv, cwd: str, timeout: int):
         """Run ``argv`` in ``cwd`` under the B-3 process discipline.
 
@@ -996,7 +1108,15 @@ class Executor:
         children die with it) and the partial output is returned
         with ``timed_out`` and the :data:`TIMEOUT_EXIT_CODE`
         sentinel — no exit code exists for a killed process.
+
+        SI-125: in sandbox mode the run is delegated to
+        :meth:`_run_process_sandbox` (Docker, fail-closed); in
+        host mode the behaviour below is exactly the pre-SI-125
+        discipline.
         """
+        if self.exec_mode == "sandbox":
+            return self._run_process_sandbox(argv, cwd, timeout)
+        self._last_run_context = {"exec_mode": "host"}
         cap = int(self.tool_policy.get("tool_max_result_bytes") or 0)
         proc = subprocess.Popen(
             argv, cwd=cwd, env=self._child_env(),
