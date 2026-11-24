@@ -217,7 +217,8 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
                    candidate_registration=None,
                    served_gguf_path=None,
                    spawn_template_file=None,
-                   served_template_sha256=None) -> tuple:
+                   served_template_sha256=None,
+                   fleet_model=None) -> tuple:
     """Run the pre-registered capture plan. Returns
     ``(corpus, capture_log)``. The plan, fixed before capture
     (see the SI-79 evidence file): per workload, attempts
@@ -258,6 +259,14 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
     reached a serving model. An attempt that polled Resident
     and then fails in the POST keeps the original behaviour
     exactly: recorded transport-failed, unscored, and spent.
+
+    Fleet model (SI-123): the residency guard polls
+    ``fleet_model`` when supplied, else the historical
+    :data:`si.gaia.live.FIXTURE_FLEET_MODEL`. The SI-100 /
+    SI-105 v13 campaign drivers polled the imagine-v13 fleet
+    entry from bespoke drivers for exactly this reason; the
+    parameter carries that choice into the shared capture
+    without changing any default behaviour.
 
     Pre-flight template lock (SI-112; SI-111 §3.3, D-111-2):
     when ``candidate_registration`` is supplied, the served
@@ -419,7 +428,9 @@ def capture_corpus(capture_dir: str, *, inference_base: str,
                 # model, so it is not a candidate measurement.
                 try:
                     res = residency.journal_residency_for_model(
-                        journal, live_mod.FIXTURE_FLEET_MODEL,
+                        journal,
+                        fleet_model
+                        or live_mod.FIXTURE_FLEET_MODEL,
                         served_model_id)
                 except Exception as exc:
                     halt_msg = (

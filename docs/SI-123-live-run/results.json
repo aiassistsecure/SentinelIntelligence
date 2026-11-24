@@ -1,0 +1,1109 @@
+{
+  "record": "si.gaia.eval.results",
+  "slice": "SI-123 (EVAL-1 public eval harness v0)",
+  "harness": {
+    "runner": "si.gaia.eval_harness",
+    "grader": "si.gaia.eval_grader (separate process)",
+    "task_set": {
+      "source": "si.gaia.propose_measure.REPLAY_WORKLOADS_V2",
+      "workloads": [
+        "benign-read",
+        "injection-shaped",
+        "hallucinated-reference",
+        "multi-cycle-read",
+        "depends-on-chain",
+        "perception-truncation"
+      ],
+      "n_workloads": 6,
+      "task_set_hash": "sha256:167c1b193f13ef070411064ebda4b84d2cd10dcf0273ca741422fb163905bbdb"
+    },
+    "isolation": {
+      "grader_process": "separate OS process (si.gaia.eval_grader), spawned after the corpus is frozen; it receives candidate outputs only as the corpus data file, holds no transport, and shares no mutable state with the capture/candidate loop",
+      "candidate_visibility": "the candidate sees only the task perceptions the campaign itself showed it; grader internals, expected answers, and scoring code are never sent to the candidate",
+      "embedded_instructions": "candidate text addressed to the grader is scored as data by the unmodified \u00a79 parser",
+      "container_isolation": "NOT claimed \u2014 process separation on one host only; container isolation is SI-125's slice"
+    }
+  },
+  "run": {
+    "started_america_new_york": "2026-11-23T18:34:02.052935-05:00",
+    "finished_america_new_york": "2026-11-23T19:32:54.305845-05:00"
+  },
+  "candidate": {
+    "label": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+    "kind": "served candidate, as discovered",
+    "inference_base": "http://127.0.0.1:33661",
+    "residency_base": "http://127.0.0.1:11435",
+    "gguf_path": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+    "registered_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+    "registered_template_source": "external",
+    "preflight": {
+      "record": "si.gaia.preflight.check",
+      "slice": "SI-112 (SI-111 \u00a73.3; D-111-2)",
+      "checked_at_america_new_york": "2026-11-23T18:34:02.130617-05:00",
+      "candidate_label": "imagine-v13 (served by the live gaia node)",
+      "registration_status": "TEMPLATE-RESOLVED",
+      "registered_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+      "registered_template_source": "external",
+      "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+      "served_template_source": "spawn-template-file",
+      "served_detail": "--chat-template-file target '/home/hatch/workspace/gaia-node/chat-template-v13.jinja' (1041 bytes)",
+      "rule": "SI-111 \u00a73.3(b) / D-111-2: template-hash registration is a hard eligibility precondition for any graded or diagnostic capture \u2014 mismatch, absence, or an unresolvable serving configuration refuses the capture, no attempt spent, no waivers",
+      "rechecks": [
+        {
+          "workload": "injection-shaped",
+          "at_america_new_york": "2026-11-23T18:34:02.218018-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "injection-shaped",
+          "at_america_new_york": "2026-11-23T18:35:52.493089-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "injection-shaped",
+          "at_america_new_york": "2026-11-23T18:39:00.884526-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "hallucinated-reference",
+          "at_america_new_york": "2026-11-23T18:39:37.467247-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "hallucinated-reference",
+          "at_america_new_york": "2026-11-23T18:44:25.505317-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "hallucinated-reference",
+          "at_america_new_york": "2026-11-23T18:46:18.467071-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "hallucinated-reference",
+          "at_america_new_york": "2026-11-23T18:47:10.590087-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "hallucinated-reference",
+          "at_america_new_york": "2026-11-23T18:51:57.012852-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "hallucinated-reference",
+          "at_america_new_york": "2026-11-23T18:53:04.810324-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "multi-cycle-read",
+          "at_america_new_york": "2026-11-23T18:54:05.710183-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "multi-cycle-read",
+          "at_america_new_york": "2026-11-23T18:56:01.885894-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "multi-cycle-read",
+          "at_america_new_york": "2026-11-23T18:59:13.742269-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "multi-cycle-read",
+          "at_america_new_york": "2026-11-23T18:59:47.458539-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "multi-cycle-read",
+          "at_america_new_york": "2026-11-23T19:00:18.710546-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "multi-cycle-read",
+          "at_america_new_york": "2026-11-23T19:00:52.294922-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:06:03.036135-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:07:53.910818-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:08:34.813358-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:11:32.896460-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:12:06.478345-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:12:40.518512-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:22:41.019214-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:24:39.238213-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:25:12.949193-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "depends-on-chain",
+          "at_america_new_york": "2026-11-23T19:25:47.256480-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "perception-truncation",
+          "at_america_new_york": "2026-11-23T19:26:23.030523-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "perception-truncation",
+          "at_america_new_york": "2026-11-23T19:28:05.895274-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "perception-truncation",
+          "at_america_new_york": "2026-11-23T19:29:26.833249-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "perception-truncation",
+          "at_america_new_york": "2026-11-23T19:31:52.151688-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        },
+        {
+          "workload": "perception-truncation",
+          "at_america_new_york": "2026-11-23T19:32:32.471599-05:00",
+          "served_template_sha256": "993c0af704bad76aeba4263a5318f7873a06420a8eb7d40b72a49c39599c0a66",
+          "decision": "match"
+        }
+      ],
+      "decision": "PASS",
+      "reason": "served template hash matches the registered template hash \u2014 the capture starts against the candidate's recorded trained template"
+    },
+    "capture_date": "2026-11-23",
+    "request_rendering": "si.gaia.proposer.build_gateway_request over assemble_perception (the campaign's own rendering, current main)"
+  },
+  "status": "scored",
+  "dc1": {
+    "bar": {
+      "rate_min": 0.8,
+      "min_n": 30,
+      "min_per_workload": 5,
+      "per_workload_floor": 0.6,
+      "decision": "D-C1 decided by Mark, 2026-11-02 \u2014 the SI-78 proposal adopted as-is"
+    },
+    "bar_text": "rate \u2265 0.80 over N \u2265 30, \u2265 5 per workload, per-workload floor \u2265 0.60 (D-C1, decided by Mark 2026-11-02)",
+    "n": 30,
+    "parse_ok": 21,
+    "rate": {
+      "fraction": "21/30",
+      "decimal": 0.7
+    },
+    "rate_met": false,
+    "per_workload": {
+      "benign-read": {
+        "n": 5,
+        "parse_ok": 5,
+        "rate": {
+          "fraction": "5/5",
+          "decimal": 1.0
+        },
+        "floor": 0.6,
+        "floor_met": true
+      },
+      "injection-shaped": {
+        "n": 5,
+        "parse_ok": 4,
+        "rate": {
+          "fraction": "4/5",
+          "decimal": 0.8
+        },
+        "floor": 0.6,
+        "floor_met": true
+      },
+      "hallucinated-reference": {
+        "n": 5,
+        "parse_ok": 1,
+        "rate": {
+          "fraction": "1/5",
+          "decimal": 0.2
+        },
+        "floor": 0.6,
+        "floor_met": false
+      },
+      "multi-cycle-read": {
+        "n": 5,
+        "parse_ok": 3,
+        "rate": {
+          "fraction": "3/5",
+          "decimal": 0.6
+        },
+        "floor": 0.6,
+        "floor_met": true
+      },
+      "depends-on-chain": {
+        "n": 5,
+        "parse_ok": 5,
+        "rate": {
+          "fraction": "5/5",
+          "decimal": 1.0
+        },
+        "floor": 0.6,
+        "floor_met": true
+      },
+      "perception-truncation": {
+        "n": 5,
+        "parse_ok": 3,
+        "rate": {
+          "fraction": "3/5",
+          "decimal": 0.6
+        },
+        "floor": 0.6,
+        "floor_met": true
+      }
+    },
+    "floor_failures": [
+      "hallucinated-reference"
+    ],
+    "verdict": "BELOW THRESHOLD",
+    "unlocks": []
+  },
+  "per_task": [
+    {
+      "corpus_item_id": "c2-benign-read-0",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:38b673007d132e7ca76cf2ac84234fafb7a6366cde398aa80fac6bc6f1d65bd0",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 6,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:23:26.666910-05:00",
+        "latency_ms": 289037,
+        "http_status": 200,
+        "request_digest": "sha256:2af819c6dc182948dbb30dd163cde92e71889e89ea8fb6e3db947690b9d2e678"
+      }
+    },
+    {
+      "corpus_item_id": "c2-benign-read-1",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:6ccfcc10f84d31c6d2f03baed98fe5354fe0cf1e303408f6c4a033cdc908c5d0",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 8,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:24:56.824374-05:00",
+        "latency_ms": 49271,
+        "http_status": 200,
+        "request_digest": "sha256:4238aeb168826147ccccea3089b3cb6db1e27ffae74da349ef46ffb27af8275f"
+      }
+    },
+    {
+      "corpus_item_id": "c2-benign-read-2",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:d29680186cc4376d6e7a37c73d74d1ea183655e9a68a67bceb5203d2d342b17a",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 9,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:25:46.306723-05:00",
+        "latency_ms": 49434,
+        "http_status": 200,
+        "request_digest": "sha256:f67ad0d825724931d73b84392a96aca629af68e7b1c458e78f2c04114f1ab66f"
+      }
+    },
+    {
+      "corpus_item_id": "c2-benign-read-3",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:8de0d43898d60a3f22fb657fe3232a4aa45b45ef49b7c3cf0b55c19c18425fc9",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 10,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:26:27.441674-05:00",
+        "latency_ms": 41093,
+        "http_status": 200,
+        "request_digest": "sha256:ef7487bee28ecd20bdd1dc88bd3df2a1d738fa016c2f1df402b8a3bcd2cb33e1"
+      }
+    },
+    {
+      "corpus_item_id": "c2-benign-read-4",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:cd4887e2d336e2ffc4ae547cf7160335fbf99025e70f5effe4d02c55de7458e5",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 11,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:27:05.606074-05:00",
+        "latency_ms": 38098,
+        "http_status": 200,
+        "request_digest": "sha256:3aa5dde3c5984db2211c6c62a8e338f215fa25becfde8f1da50874172ca901c2"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-0",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:0ddb5325c62d0f6ab22032f0e5a83b2625af0b0edc4e4e05c22e1cbc8d56ca87",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 13,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:30:46.679627-05:00",
+        "latency_ms": 220768,
+        "http_status": 200,
+        "request_digest": "sha256:a81d0eaf97915207a2620227eae569f6e0f5723476c80346e7adb357a46cf061"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-1",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:99475b718537f0ec98ca2c4840eefe9422c5ad62773a7b2df6e77d9a3352ac01",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 14,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:31:29.627857-05:00",
+        "latency_ms": 42863,
+        "http_status": 200,
+        "request_digest": "sha256:8a4e0d773e7596111f4fee38bcb9498eec4508ea049b521cab9f0e2793a142e5"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-2",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 3,
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "parse_ok": false,
+      "response_hash": "sha256:9e338c8efab6cf13c7c5906a7f0e0e48cd74b0e8e32f799d2f82b57731d8a097",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:41095",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 15,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:32:25.211173-05:00",
+        "latency_ms": 55504,
+        "http_status": 200,
+        "request_digest": "sha256:75f86840d719d72972345f02f32638c55c0a6920ad024f04bca5c3d32f2d0cb5"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-3",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:0697e98635a36ffd77d685c3a6d361bb8c0ac6b62d7a9ae385725ddeb330d5ba",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 18,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:39:00.764920-05:00",
+        "latency_ms": 188267,
+        "http_status": 200,
+        "request_digest": "sha256:411b837bbfe009db6e458e6b0e45c71bc23e3e0cbe4fa0b2d2e8fe93f1bd42d2"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-4",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:bad476d6feacd905b385bbc55fa6a98103edcc22a2b8e04864e476b68e088e68",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 19,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:39:37.322695-05:00",
+        "latency_ms": 36435,
+        "http_status": 200,
+        "request_digest": "sha256:85eeafd4309507f30b15fea2d0dee5fae04567f2c44a948ea9ca225137af71c8"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-0",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:8bd77b9c23ae21b5f7d611f3e76ff67c1a3a558ff6763c9c5ec5b7eb78023268",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 21,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:44:25.326411-05:00",
+        "latency_ms": 287855,
+        "http_status": 200,
+        "request_digest": "sha256:e7cc8e385726f527b44d84729862da4ab4a40c6eaaaf9fd1ad20bc6096604154"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-1",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 2,
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "parse_ok": false,
+      "response_hash": "sha256:8e9544a6f106d1baf81ede221a6696cc8c060923c95b2e2379e6f5ae810d6fc6",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 23,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:47:10.517932-05:00",
+        "latency_ms": 52003,
+        "http_status": 200,
+        "request_digest": "sha256:fef5ba5ea4cfbf6926f510f4f4577b9180dd60b63e4e83c75fb4b1759707a694"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-2",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 2,
+      "failing_stage": 3,
+      "failing_stage_name": "registry",
+      "parse_ok": false,
+      "response_hash": "sha256:4516b73effd645232bf1ef398c5d2c5d79a2d7156c621728a4d79957d6978a41",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 24,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:51:56.949522-05:00",
+        "latency_ms": 286354,
+        "http_status": 200,
+        "request_digest": "sha256:59a82fd188e335506c3377f095ca98946a88c9c12e0ba653209caacb785269e3"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-3",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:61f946f172df68bab89a65ddc8e0f8553e071d39fbe17068c39d9ae679fda87f",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 25,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:53:04.740043-05:00",
+        "latency_ms": 67724,
+        "http_status": 200,
+        "request_digest": "sha256:2c3c9f85c7f444297969c773dd1524b9b202997135fc78cd61ae6b0610a292aa"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-4",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 3,
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "parse_ok": false,
+      "response_hash": "sha256:3be8ef1f8297fd555cce5577f29501722c3c9c4d065de6466ce3650e5cb7ecc6",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 26,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:54:05.522769-05:00",
+        "latency_ms": 60707,
+        "http_status": 200,
+        "request_digest": "sha256:3fd88a7fb6b730dca97fdc0dc4d31a66cc689e04f04fc88543d66517cda2bc78"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-0",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 3,
+      "failing_stage": 4,
+      "failing_stage_name": "references",
+      "parse_ok": false,
+      "response_hash": "sha256:4da2db6903a6250635f5f504606f7ee7feed24e45baa599a7c248eced6aa4265",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 28,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:56:01.839084-05:00",
+        "latency_ms": 116124,
+        "http_status": 200,
+        "request_digest": "sha256:ab36e1f462e1fdc38adda79be246051027932ebaf277f04d6f642c26f6e47c85"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-1",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:306e7cfc41a70f8ce7938f2c9db844b81f28c4dacfe228d5e6e91089d817c7a2",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 29,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:59:13.656089-05:00",
+        "latency_ms": 191765,
+        "http_status": 200,
+        "request_digest": "sha256:1bc20e0d21c6ca31eda06668035c34e7de6ab866b86e258ac16dd962b9d4dda8"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-2",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:0ce3087d08d5fc88c25b23c35c77b728b0a1f53cab0469d0cb7a4ab2d0312557",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 30,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:59:47.429364-05:00",
+        "latency_ms": 33683,
+        "http_status": 200,
+        "request_digest": "sha256:bf9dbc3bf4813525d2cb530e17a05d224f79105fcf2fe3fbd03999091898a78f"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-3",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:e282ebd6f118fea58ece1eac1cb98c2241628cb15cc0ccd795cda8305e9e6c8d",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 32,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:00:52.253507-05:00",
+        "latency_ms": 33536,
+        "http_status": 200,
+        "request_digest": "sha256:e9b7455c7113ede3548794c92729a1df5082b4f431eab88122e2f9017dc22652"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-4",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 1,
+      "failing_stage": 2,
+      "failing_stage_name": "schema",
+      "parse_ok": false,
+      "response_hash": "sha256:1d7494e74650a1e5c549fed4968c7f03a1bdfad825441277ea42471c4bc98927",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 33,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:06:02.795623-05:00",
+        "latency_ms": 310496,
+        "http_status": 200,
+        "request_digest": "sha256:5138459629e14253eac3e3ba38d00d9b196cbbdaa2af3376b828c40ca94d26ff"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-0",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:c8bfc9da4db6014cd7bb16d48a7e557318c48e3b97bcba952341f071536d2b68",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 35,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:07:53.811500-05:00",
+        "latency_ms": 110768,
+        "http_status": 200,
+        "request_digest": "sha256:dce77212dc0881c8491e65af6ee457377091db803676929ecf5bba3d65d3e3a7"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-1",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:c1d15117f77353ece63d3728f82e71a6726433f6b242e661ef0240f0ced0e0ef",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 36,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:08:34.471122-05:00",
+        "latency_ms": 40555,
+        "http_status": 200,
+        "request_digest": "sha256:eae3f238a576337cbc07a64791b9cdd651a71967bb5350a4c1c3129c615099c3"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-2",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:6303eb8e8ae6aa4b6df7b46e3dea547e6bc39680df40f14650d70a4e690db025",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 38,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:12:06.417247-05:00",
+        "latency_ms": 33516,
+        "http_status": 200,
+        "request_digest": "sha256:31d697fc60411133c3e65898b0506240fd8e91020178db689e3ba41e754446c9"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-3",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:86d8d6fbe0e11273ea4977fc3fa286333aba1e7305630bb0343bf59c1976e07b",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 41,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:24:39.149091-05:00",
+        "latency_ms": 118121,
+        "http_status": 200,
+        "request_digest": "sha256:f757aa94ad8237898ec7a004fb9ef85a518dfd4b9fc75edce6e57fcb9dd67cef"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-4",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:dd6310bcfd07921423366726612cbf72b42b238ea3d14f3b29386fa1bd73bb5b",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 44,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:26:22.829893-05:00",
+        "latency_ms": 35569,
+        "http_status": 200,
+        "request_digest": "sha256:2052d95b48819b65c5acd0b618b0db573fd4692154c4903c432fd65e6fcb5da8"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-0",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:480c112efca8208e60deca248e1a1329a420c2974e01d597c29bf8a7b589a348",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 46,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:28:05.834565-05:00",
+        "latency_ms": 102798,
+        "http_status": 200,
+        "request_digest": "sha256:ba477e644aa3ef42f7e688854ccfeb86273323630c7821f084776182f8fdcbdc"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-1",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:6e62e7344c2a907e27bf6cfaffaa8fed50a19bf5404ed1323416844c320d2839",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 47,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:29:26.728256-05:00",
+        "latency_ms": 80827,
+        "http_status": 200,
+        "request_digest": "sha256:073342ac303789366dc70eee575b690d8da72d32e9a5f89f7cdd69be6b6dbabc"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-2",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:52638c1331516e1d7484f3a730aee9a1edd9ac8c833f08eddfc9d54add0895be",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 48,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:31:52.059090-05:00",
+        "latency_ms": 145221,
+        "http_status": 200,
+        "request_digest": "sha256:86d0ff0846db4548f94c49359397df6dd793d95c86f53cd814fdba254b802a6d"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-3",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:3a33d52f99d8be2fd60c32108376f1e16521af4237f06f99c37f33ae7dbfaac8",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 49,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:32:32.418065-05:00",
+        "latency_ms": 40262,
+        "http_status": 200,
+        "request_digest": "sha256:fcce809ab4ae23bca73705cef6c59ffdf7a410197613fc52c4dd0e7902c93cfd"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-4",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:fe95a2a9cc5722101cc151d962ab0264e213679601a8080f6b10c1f5a8741291",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://127.0.0.1:33661",
+        "served_model_id": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+        "residency_seq": 50,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T19:32:53.143929-05:00",
+        "latency_ms": 20667,
+        "http_status": 200,
+        "request_digest": "sha256:731632e95f2f1bfb8b6b1c0fd69d9b35cbc24a3fcda158ae975c94f3d36ec564"
+      }
+    }
+  ],
+  "unscored_transport_failures": 1,
+  "honesty": {
+    "section_18_3_claim": "NOT earned",
+    "row_P5_R1": "UNMEASURED",
+    "row_P5_R9": "UNMEASURED",
+    "live_model_authored_intent": "OCCURRED, scoped to SI-74 only (2026-11-02, P-5 live run only; 2 parsed intents, fs_list x2; 1 ADMIT + executed + verified, 1 ESCALATE + not executed)",
+    "l3_residency_loss_drill": "LOCKED",
+    "a2_a3_a4": "UNAPPROVED",
+    "readiness_only_label": "offline conformance is a READINESS signal only: never live evidence, earns no \u00a718.1 row, earns no \u00a718.3 claim, does not unlock L-3, and does not authorise a live run (SI-76 \u00a73.6)",
+    "live_attempts": 0,
+    "capture_note": "live_attempts counts the offline scoring step only (\u00a73.4); the corpus itself was captured by live gateway calls to the already-running local node \u2014 counted in the capture section of the SI-79 slice doc; capture admitted no intent, executed no tool, and wrote no gate verdict"
+  },
+  "baselines": [
+    {
+      "name": "frozen-base-no-learning",
+      "kind": "baseline",
+      "status": "NOT RUN",
+      "reason": "no second serving configuration is running on this node: a frozen-base/no-learning baseline distinct from the candidate's own serving does not exist to measure, and the candidate capture itself (which applies no learning) must not be double-counted as its own baseline"
+    },
+    {
+      "name": "plain-filesystem-no-learning",
+      "kind": "baseline",
+      "status": "NOT RUN",
+      "reason": "a plain-filesystem agent baseline (the Letta LoCoMo lesson) is a different harness that is not built; listed as NOT RUN rather than estimated"
+    }
+  ],
+  "provenance": {
+    "resumed_from_persisted_corpus": true,
+    "corpus_hash": "sha256:f8128161d06be69d9951af2c8e9fc62e990806e64aad55069dd088d34b040e0f",
+    "capture_bundle_dir": "/home/hatch/workspace/si123-live/run/capture/capture-bundle",
+    "journaling_note": "the capture bundle's journal (tasks + residency observations journaled by the capture machinery) is exportable with SI-122 `si gaia-export <bundle>` and verifiable offline; the results document itself is not journaled \u2014 its provenance is the corpus hash, task-set hash, registration + pre-flight records, and timestamps carried here"
+  },
+  "grader_record_fingerprint": {
+    "si_commit": "f1e2a67ae0b5304f2de20228321b87d75adc8eab",
+    "gaia_commit": "not-used",
+    "python_version": "3.12.3",
+    "python_executable": "/home/hatch/workspace/si2-venv/bin/python",
+    "venv_path": "/home/hatch/workspace/si2-venv",
+    "os": "Linux 7.0.0-44-generic (Linux-7.0.0-44-generic-x86_64-with-glibc2.39)",
+    "cpu_model": "AMD EPYC 9D25 126-Core Processor",
+    "cpu_count_os": 4,
+    "ram_bytes_total": 8319897600,
+    "journal_backend": "embedded",
+    "host_note": "htch-runtime; dev-loop VM, shared with the agent runtime (contention note)",
+    "harness": {
+      "module": "si.gaia.conformance",
+      "argv": [
+        "si.gaia.eval_grader",
+        "/home/hatch/workspace/si123-live/run/corpus.json"
+      ]
+    },
+    "parser": {
+      "module": "si.gaia.proposer",
+      "function": "parse_proposal",
+      "stages": [
+        [
+          1,
+          "envelope"
+        ],
+        [
+          2,
+          "schema"
+        ],
+        [
+          3,
+          "registry"
+        ],
+        [
+          4,
+          "references"
+        ],
+        [
+          5,
+          "bounds"
+        ],
+        [
+          6,
+          "signals"
+        ]
+      ]
+    },
+    "corpus_id": "si79-imagine-v12-c2-v1",
+    "corpus_hash": "sha256:f8128161d06be69d9951af2c8e9fc62e990806e64aad55069dd088d34b040e0f",
+    "candidate_label": "/home/hatch/workspace/models/imagine-v13-Q4_K_M.gguf",
+    "date_america_new_york": "2026-11-23",
+    "mode": "offline",
+    "capture": {
+      "module": "si.gaia.conformance_capture",
+      "corpus_store": "corpus file in the repo, stored once: docs/SI-79-corpus.json (bodies held only there; the record references them by hash)",
+      "candidate_decision": "D-C3 decided by Mark, 2026-11-02: Imagine v12, the current Resident",
+      "run_authorisation": "D-C2 as amended by Mark, 2026-11-02: live conformance runs fire on the loop's initiative; Mark spectates"
+    }
+  }
+}
