@@ -18,6 +18,12 @@ Surface (localhost by default; see the honesty labels below):
 
     GET  /              -> service description + honesty labels
     GET  /health        -> bundle id, head, service labels
+    GET  /.well-known/agent-card.json
+                        -> (SI-129) the A2A Agent Card, built per
+                           request from the live tool registry;
+                           DISCOVERY ONLY — no A2A JSON-RPC task
+                           endpoints exist and none are claimed
+                           (see si.gaia.agent_card)
     POST /tasks         -> submit one task; 200 returns the task
                            result + provenance trail; 400 returns
                            the validation problems and NOTHING
@@ -847,6 +853,11 @@ class ServiceState:
             "head": self.startup_head,
             "endpoints": {
                 "GET /health": "bundle id, current head, labels",
+                "GET /.well-known/agent-card.json": (
+                    "the A2A Agent Card (SI-129): discovery only "
+                    "— skills derived 1:1 from the live tool "
+                    "registry; no A2A JSON-RPC task endpoints "
+                    "exist, and the card claims none"),
                 "POST /tasks": (
                     'submit one task: {"submitter": ..., '
                     '"instruction": ..., "script": [<intent '
@@ -1059,7 +1070,17 @@ def make_service_server(bundle_dir: str, host: str = "127.0.0.1",
 
         def do_GET(self) -> None:  # noqa: N802 - stdlib name
             path = urlparse(self.path).path
-            if path in ("/health", "/health/"):
+            if path == "/.well-known/agent-card.json":
+                # SI-129: the A2A Agent Card, built per request
+                # from the live registry so it can never go stale
+                # against the code serving it. The advertised
+                # url is this request's own Host. Discovery only:
+                # the card claims no A2A task endpoints.
+                from si.gaia.agent_card import build_agent_card
+                host = self.headers.get("Host") or "127.0.0.1:8000"
+                self._send_json(
+                    200, build_agent_card(base_url=f"http://{host}/"))
+            elif path in ("/health", "/health/"):
                 self._send_json(200, state.health())
             elif path == "/":
                 self._send_json(200, state.description())
