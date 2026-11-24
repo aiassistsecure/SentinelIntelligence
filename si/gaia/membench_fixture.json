@@ -1,0 +1,534 @@
+{
+  "slice": "SI-130 (MEMBENCH-1 memory benchmark slice v0)",
+  "description": "Self-authored synthetic fixture: 4 fictional personas x 4 conversation sessions (16 sessions), 40 questions. NOT LoCoMo; see docs/SI-130-memory-benchmark.md.",
+  "personas": [
+    "Priya Nair",
+    "Marcus Bell",
+    "Tomoko Abe",
+    "Diego Fuentes"
+  ],
+  "sessions": [
+    {
+      "id": "priya-s1",
+      "persona": "Priya Nair",
+      "session_index": 1,
+      "text": "Priya: Hi! I'm Priya Nair. I live in Austin, Texas, and I work as a pediatric nurse at the children's hospital downtown.\nAssistant: Welcome, Priya. How long have you been nursing?\nPriya: Six years now. I love working with kids, even on the hard days.\nAssistant: Do you have any pets at home?\nPriya: Yes — I have a golden retriever named Biscuit. He's three years old and sheds absolutely everywhere.\nAssistant: Anyone else in the household?\nPriya: Just me and Biscuit. My sister Ananya lives across town, and she's getting married in June, so I'm helping her plan the wedding.\nAssistant: That sounds like a busy spring for you.\nPriya: It is, but a good kind of busy."
+    },
+    {
+      "id": "priya-s2",
+      "persona": "Priya Nair",
+      "session_index": 2,
+      "text": "Priya: Training update: I signed up for a half marathon in October, so I'm running four mornings a week now.\nAssistant: That's a big goal, Priya. How is the training going?\nPriya: Slowly but surely. I also joined a climbing gym — I've been doing rock climbing twice a week, which helps my legs more than I expected.\nAssistant: Any dietary restrictions your training plan should know about?\nPriya: Yes, important one: I'm allergic to peanuts. Even a small amount of peanuts sends me to urgent care, so I read every label.\nAssistant: Noted. How do you get to your training sessions?\nPriya: I drive my blue Honda Civic. It's old and the air conditioning is temperamental, but it gets me there.\nAssistant: Sounds like a full schedule.\nPriya: It keeps me out of trouble, mostly."
+    },
+    {
+      "id": "priya-s3",
+      "persona": "Priya Nair",
+      "session_index": 3,
+      "text": "Priya: Big news — I moved! I left Texas last month and I'm now living in Denver, Colorado.\nAssistant: Congratulations, Priya! How are you settling into the new city?\nPriya: Denver is a beautiful city. Biscuit adores the snow, which I did not expect from a Texas dog.\nAssistant: Have you picked up anything new there?\nPriya: I started taking a pottery class on Thursday evenings. Last week I made a very lopsided bowl and I'm weirdly proud of it.\nAssistant: Any other plans in the new city?\nPriya: Mostly exploring neighborhoods and finding a good running route before winter really arrives.\nPriya: I also started volunteering at an animal shelter on Sundays, walking the dogs who are waiting for adoption.\nAssistant: Sounds like the move agrees with you.\nPriya: It really does."
+    },
+    {
+      "id": "priya-s4",
+      "persona": "Priya Nair",
+      "session_index": 4,
+      "text": "Priya: Car update: I finally traded in my old car and bought a silver Subaru Outback. The all-wheel drive will help with Colorado winters.\nAssistant: A sensible upgrade, Priya. Any travel plans with it?\nPriya: Actually yes — I'm planning a trip to Kyoto in the spring. I've been saving for two years and I want to see the cherry blossoms.\nAssistant: Wonderful. How is the pottery going?\nPriya: I made a whole set of mugs in my Thursday class. Glazing is harder than it looks.\nAssistant: And Biscuit?\nPriya: Biscuit has claimed the passenger seat of the Outback as his personal throne.\nAssistant: As is his right.\nPriya: Exactly."
+    },
+    {
+      "id": "marcus-s1",
+      "persona": "Marcus Bell",
+      "session_index": 1,
+      "text": "Marcus: Hey, I'm Marcus Bell. I live in Chicago and I work as a firefighter with Engine Company 18.\nAssistant: Welcome, Marcus. How long have you been with the department?\nMarcus: Eleven years. Before that I was in the Army for four.\nAssistant: Do you have a dog? You mentioned one before.\nMarcus: I do — a black Labrador named Pepper. She rides along to the station on my days off and the whole crew spoils her.\nAssistant: Any hobbies outside work?\nMarcus: I play an acoustic guitar most evenings. Nothing fancy, mostly old blues songs. My phone plan is with Verizon, which matters because the station gets terrible reception on some carriers.\nAssistant: A firefighter, a guitarist, and a dog person.\nMarcus: That about sums me up."
+    },
+    {
+      "id": "marcus-s2",
+      "persona": "Marcus Bell",
+      "session_index": 2,
+      "text": "Marcus: I've started learning French this month. There's a trip next year I want to be ready for, and I refuse to be the tourist pointing at menus.\nAssistant: Bon courage, Marcus! How are the lessons going?\nMarcus: Slow. The pronunciation is humbling. In other news, I coach a Little League baseball team on weekends — twelve very energetic nine-year-olds.\nAssistant: That is a lot of energy. Do you have any downtime rituals?\nMarcus: I bake sourdough bread every Sunday morning. My starter is named Clint Eastwood, for no reason I can defend.\nAssistant: And the gym?\nMarcus: I joined a CrossFit gym near the station. The 6 a.m. workouts are brutal but they keep me honest.\nAssistant: French, baseball, bread, and burpees.\nMarcus: My calendar is a cry for help, honestly."
+    },
+    {
+      "id": "marcus-s3",
+      "persona": "Marcus Bell",
+      "session_index": 3,
+      "text": "Marcus: Quick phone update: I switched my phone plan to T-Mobile last week. The reception at the station is finally decent.\nAssistant: Glad to hear it, Marcus. What else is new?\nMarcus: I bought an old motorcycle — a 1968 Triumph I'm restoring in my garage. Right now it's mostly a pile of parts and optimism.\nAssistant: A restoration project! How is Pepper taking the garage time?\nMarcus: She supervises from a dog bed in the corner and judges my mechanical skills.\nAssistant: Any progress on the French?\nMarcus: I can now order coffee and apologize for my French, in French. Progress.\nAssistant: That's the most important sentence in any language.\nMarcus: Agreed."
+    },
+    {
+      "id": "marcus-s4",
+      "persona": "Marcus Bell",
+      "session_index": 4,
+      "text": "Marcus: Gym change: I left my old gym and joined a boxing gym downtown. Turns out I like hitting a heavy bag more than doing burpees.\nAssistant: A new chapter, Marcus. Any big plans coming up?\nMarcus: Yes! I finally booked the trip — I'm going to Paris in the fall. Two weeks, and I've already mapped out every bakery I want to visit.\nAssistant: Your sourdough research continues abroad.\nMarcus: Exactly. Pepper will stay with my neighbor, who she loves more than me, so no guilt there.\nAssistant: And the Triumph?\nMarcus: It runs! Roughly. It starts, which I'm counting as a victory.\nAssistant: Paris, boxing, and a running Triumph.\nMarcus: A good year."
+    },
+    {
+      "id": "tomoko-s1",
+      "persona": "Tomoko Abe",
+      "session_index": 1,
+      "text": "Tomoko: Hello, I'm Tomoko Abe. I live in San Francisco, and I grew up in Nara, in Japan.\nAssistant: Welcome, Tomoko. What do you do for work?\nTomoko: I'm a graphic designer at Northwind Studio, a small studio near the waterfront. We mostly do branding for restaurants.\nAssistant: Do you have any pets?\nTomoko: I have a tabby cat named Miso. She is fourteen pounds of pure confidence and she sits on my keyboard during video calls.\nAssistant: How do you spend your Sundays?\nTomoko: I volunteer at a food bank on Sundays, packing boxes for the morning distribution. It has become the anchor of my week.\nAssistant: That is a lovely routine.\nTomoko: It keeps me grounded."
+    },
+    {
+      "id": "tomoko-s2",
+      "persona": "Tomoko Abe",
+      "session_index": 2,
+      "text": "Tomoko: I took my film photography camera out this weekend — I shoot film photography, mostly street scenes around the Mission.\nAssistant: Wonderful, Tomoko. Do you develop the film yourself?\nTomoko: Not yet, but I want to learn. My brother Kenji lives in Osaka, and he keeps sending me photos he took there so we can compare cities.\nAssistant: A sibling photography exchange. What else fills your weekends?\nTomoko: I grow shiso and tomatoes on my balcony. The shiso is thriving; the tomatoes are an ongoing negotiation.\nAssistant: Any other projects?\nTomoko: I'm scanning my grandfather's old negatives. Some of them are from the 1960s and they're beautiful.\nAssistant: That sounds like a treasure.\nTomoko: It really is."
+    },
+    {
+      "id": "tomoko-s3",
+      "persona": "Tomoko Abe",
+      "session_index": 3,
+      "text": "Tomoko: Work news: I left my old studio and started a new job at Harbor Press, a publishing company. I'm an art director there now, designing book covers.\nAssistant: Congratulations, Tomoko! How is the new role?\nTomoko: Busy and wonderful. Designing covers means I read manuscripts on my commute, which I love.\nAssistant: Any new activities this season?\nTomoko: I joined a community choir that rehearses on Tuesday nights. I'm an alto, and our director is very patient with us.\nAssistant: And Miso?\nTomoko: Miso has strong opinions about my singing practice. She leaves the room.\nAssistant: Critics everywhere.\nTomoko: The harshest one weighs fourteen pounds."
+    },
+    {
+      "id": "tomoko-s4",
+      "persona": "Tomoko Abe",
+      "session_index": 4,
+      "text": "Tomoko: I moved across the bay last month — I now live in Berkeley, in a one-bedroom apartment with much better light for my plants.\nAssistant: A big change, Tomoko. How is the new neighborhood?\nTomoko: Quiet and leafy. The commute to the office is longer, but the morning train ride is good reading time.\nAssistant: Are you teaching anything these days?\nTomoko: Yes — I teach a photography workshop on Saturdays at the community arts center. Beginners, mostly, and I love their questions.\nAssistant: And the choir?\nTomoko: Still singing on Tuesdays. We have a concert in December.\nAssistant: Berkeley suits you.\nTomoko: I think it does."
+    },
+    {
+      "id": "diego-s1",
+      "persona": "Diego Fuentes",
+      "session_index": 1,
+      "text": "Diego: Hi, I'm Diego Fuentes. I live in Miami, and I'm a high school math teacher — algebra and geometry, mostly.\nAssistant: Welcome, Diego. How long have you been teaching?\nDiego: Eight years. My grandmother lives in Havana, and she's the one who taught me to love numbers when I was a kid.\nAssistant: Do you have any pets?\nDiego: I have an orange cat named Oliver. He is enormous, unbothered, and convinced that my laptop is a heating pad.\nAssistant: How do you get around the city?\nDiego: I drive a red Mazda hatchback. And on Saturdays I play soccer with a recreational league at the park — I've been on the same team for five years.\nAssistant: Teacher, cat owner, soccer player.\nDiego: That's the whole resume."
+    },
+    {
+      "id": "diego-s2",
+      "persona": "Diego Fuentes",
+      "session_index": 2,
+      "text": "Diego: I've been learning Portuguese for a few months now. There's a trip next year I'm preparing for, and I want to actually talk to people when I get there.\nAssistant: Boa sorte, Diego! How are the lessons?\nDiego: The vocabulary is fine; the nasal vowels are defeating me. At school, I also run a chess club on Wednesday afternoons — my students are ruthlessly good.\nAssistant: Any music in your life?\nDiego: I play bass guitar in a small jazz band with two friends from college. We rehearse on Fridays and play maybe three gigs a year.\nAssistant: And Oliver?\nDiego: Oliver attends every rehearsal and sleeps through all of them.\nAssistant: The calmest audience in Miami.\nDiego: By far."
+    },
+    {
+      "id": "diego-s3",
+      "persona": "Diego Fuentes",
+      "session_index": 3,
+      "text": "Diego: Car news: I sold my old hatchback and bought a green Jeep Wrangler. I have wanted one since I was sixteen.\nAssistant: Congratulations, Diego! Any plans for it?\nDiego: Beach drives, mostly. At school I've started mentoring a robotics team — we meet after class twice a week and we're building a robot for the regional competition.\nAssistant: From algebra to robots.\nDiego: The students keep me on my toes. The robot, less so — it currently only drives in circles.\nAssistant: How is the Portuguese coming?\nDiego: I can hold a five-minute conversation now, as long as nobody talks back too fast.\nAssistant: Progress is progress.\nDiego: That's my motto this year."
+    },
+    {
+      "id": "diego-s4",
+      "persona": "Diego Fuentes",
+      "session_index": 4,
+      "text": "Diego: I hung up my cleats this season and I've taken up surfing instead. Saturday mornings at the beach, falling off a board repeatedly.\nAssistant: A new sport, Diego! How is it going?\nDiego: Humbling, but the ocean is a good teacher. Bigger news: I booked the trip — I'm flying to Lisbon in July for two weeks.\nAssistant: Your Portuguese will get a real workout.\nDiego: That's the plan. The jazz band is on pause while our drummer travels, so my Fridays are free for once.\nAssistant: And Oliver?\nDiego: Oliver will stay with my sister, who spoils him even more than I do.\nAssistant: Surfing, Lisbon, and a spoiled cat.\nDiego: A good summer ahead."
+    }
+  ],
+  "questions": [
+    {
+      "id": "q01",
+      "persona": "Priya Nair",
+      "category": "single-hop",
+      "question": "What is Priya Nair's job?",
+      "gold_facts": [
+        "pediatric nurse"
+      ],
+      "source_session": "priya-s1"
+    },
+    {
+      "id": "q02",
+      "persona": "Priya Nair",
+      "category": "single-hop",
+      "question": "What is the name of Priya Nair's sister?",
+      "gold_facts": [
+        "Ananya"
+      ],
+      "source_session": "priya-s1"
+    },
+    {
+      "id": "q03",
+      "persona": "Priya Nair",
+      "category": "single-hop",
+      "question": "What class does Priya Nair take on Thursday evenings?",
+      "gold_facts": [
+        "pottery class"
+      ],
+      "source_session": "priya-s3"
+    },
+    {
+      "id": "q04",
+      "persona": "Priya Nair",
+      "category": "single-hop",
+      "question": "Where is Priya Nair planning to travel in the spring?",
+      "gold_facts": [
+        "Kyoto"
+      ],
+      "source_session": "priya-s4"
+    },
+    {
+      "id": "q05",
+      "persona": "Priya Nair",
+      "category": "cross-session",
+      "question": "What food is Priya Nair allergic to?",
+      "gold_facts": [
+        "peanuts"
+      ],
+      "source_session": "priya-s2"
+    },
+    {
+      "id": "q06",
+      "persona": "Priya Nair",
+      "category": "cross-session",
+      "question": "What race distance is Priya Nair training for?",
+      "gold_facts": [
+        "half marathon"
+      ],
+      "source_session": "priya-s2"
+    },
+    {
+      "id": "q07",
+      "persona": "Priya Nair",
+      "category": "temporal-update",
+      "question": "What city does Priya Nair live in now?",
+      "gold_facts": [
+        "Denver"
+      ],
+      "source_session": "priya-s3",
+      "superseded_fact": "Austin"
+    },
+    {
+      "id": "q08",
+      "persona": "Priya Nair",
+      "category": "temporal-update",
+      "question": "What car does Priya Nair drive now?",
+      "gold_facts": [
+        "silver Subaru Outback"
+      ],
+      "source_session": "priya-s4",
+      "superseded_fact": "blue Honda Civic"
+    },
+    {
+      "id": "q09",
+      "persona": "Priya Nair",
+      "category": "distractor-resistance",
+      "question": "What kind of dog does Priya Nair have, and what is its name?",
+      "gold_facts": [
+        "golden retriever named Biscuit"
+      ],
+      "source_session": "priya-s1",
+      "distractor_fact": "black Labrador named Pepper",
+      "distractor_session": "marcus-s1"
+    },
+    {
+      "id": "q10",
+      "persona": "Priya Nair",
+      "category": "distractor-resistance",
+      "question": "Where does Priya Nair volunteer on Sundays?",
+      "gold_facts": [
+        "animal shelter"
+      ],
+      "source_session": "priya-s3",
+      "distractor_fact": "food bank",
+      "distractor_session": "tomoko-s1"
+    },
+    {
+      "id": "q11",
+      "persona": "Marcus Bell",
+      "category": "single-hop",
+      "question": "What is Marcus Bell's job?",
+      "gold_facts": [
+        "firefighter"
+      ],
+      "source_session": "marcus-s1"
+    },
+    {
+      "id": "q12",
+      "persona": "Marcus Bell",
+      "category": "single-hop",
+      "question": "What instrument does Marcus Bell play?",
+      "gold_facts": [
+        "acoustic guitar"
+      ],
+      "source_session": "marcus-s1"
+    },
+    {
+      "id": "q13",
+      "persona": "Marcus Bell",
+      "category": "single-hop",
+      "question": "Where is Marcus Bell traveling in the fall?",
+      "gold_facts": [
+        "Paris"
+      ],
+      "source_session": "marcus-s4"
+    },
+    {
+      "id": "q14",
+      "persona": "Marcus Bell",
+      "category": "cross-session",
+      "question": "What youth team does Marcus Bell coach on weekends?",
+      "gold_facts": [
+        "Little League baseball"
+      ],
+      "source_session": "marcus-s2"
+    },
+    {
+      "id": "q15",
+      "persona": "Marcus Bell",
+      "category": "cross-session",
+      "question": "What does Marcus Bell bake every Sunday morning?",
+      "gold_facts": [
+        "sourdough bread"
+      ],
+      "source_session": "marcus-s2"
+    },
+    {
+      "id": "q16",
+      "persona": "Marcus Bell",
+      "category": "cross-session",
+      "question": "What is Marcus Bell restoring in his garage?",
+      "gold_facts": [
+        "motorcycle"
+      ],
+      "source_session": "marcus-s3"
+    },
+    {
+      "id": "q17",
+      "persona": "Marcus Bell",
+      "category": "temporal-update",
+      "question": "Which phone carrier does Marcus Bell use now?",
+      "gold_facts": [
+        "T-Mobile"
+      ],
+      "source_session": "marcus-s3",
+      "superseded_fact": "Verizon"
+    },
+    {
+      "id": "q18",
+      "persona": "Marcus Bell",
+      "category": "temporal-update",
+      "question": "What kind of gym does Marcus Bell go to now?",
+      "gold_facts": [
+        "boxing gym"
+      ],
+      "source_session": "marcus-s4",
+      "superseded_fact": "CrossFit gym"
+    },
+    {
+      "id": "q19",
+      "persona": "Marcus Bell",
+      "category": "distractor-resistance",
+      "question": "What kind of dog does Marcus Bell have, and what is its name?",
+      "gold_facts": [
+        "black Labrador named Pepper"
+      ],
+      "source_session": "marcus-s1",
+      "distractor_fact": "golden retriever named Biscuit",
+      "distractor_session": "priya-s1"
+    },
+    {
+      "id": "q20",
+      "persona": "Marcus Bell",
+      "category": "distractor-resistance",
+      "question": "What language is Marcus Bell learning?",
+      "gold_facts": [
+        "French"
+      ],
+      "source_session": "marcus-s2",
+      "distractor_fact": "Portuguese",
+      "distractor_session": "diego-s2"
+    },
+    {
+      "id": "q21",
+      "persona": "Tomoko Abe",
+      "category": "single-hop",
+      "question": "Where did Tomoko Abe grow up?",
+      "gold_facts": [
+        "Nara"
+      ],
+      "source_session": "tomoko-s1"
+    },
+    {
+      "id": "q22",
+      "persona": "Tomoko Abe",
+      "category": "single-hop",
+      "question": "What kind of photography does Tomoko Abe shoot?",
+      "gold_facts": [
+        "film photography"
+      ],
+      "source_session": "tomoko-s2"
+    },
+    {
+      "id": "q23",
+      "persona": "Tomoko Abe",
+      "category": "single-hop",
+      "question": "What does Tomoko Abe teach on Saturdays?",
+      "gold_facts": [
+        "photography workshop"
+      ],
+      "source_session": "tomoko-s4"
+    },
+    {
+      "id": "q24",
+      "persona": "Tomoko Abe",
+      "category": "cross-session",
+      "question": "What city does Tomoko Abe's brother Kenji live in?",
+      "gold_facts": [
+        "Osaka"
+      ],
+      "source_session": "tomoko-s2"
+    },
+    {
+      "id": "q25",
+      "persona": "Tomoko Abe",
+      "category": "cross-session",
+      "question": "What does Tomoko Abe grow on her balcony?",
+      "gold_facts": [
+        "shiso"
+      ],
+      "source_session": "tomoko-s2"
+    },
+    {
+      "id": "q26",
+      "persona": "Tomoko Abe",
+      "category": "cross-session",
+      "question": "What choir did Tomoko Abe join?",
+      "gold_facts": [
+        "community choir"
+      ],
+      "source_session": "tomoko-s3"
+    },
+    {
+      "id": "q27",
+      "persona": "Tomoko Abe",
+      "category": "temporal-update",
+      "question": "Where does Tomoko Abe work now?",
+      "gold_facts": [
+        "Harbor Press"
+      ],
+      "source_session": "tomoko-s3",
+      "superseded_fact": "Northwind Studio"
+    },
+    {
+      "id": "q28",
+      "persona": "Tomoko Abe",
+      "category": "temporal-update",
+      "question": "What city does Tomoko Abe live in now?",
+      "gold_facts": [
+        "Berkeley"
+      ],
+      "source_session": "tomoko-s4",
+      "superseded_fact": "San Francisco"
+    },
+    {
+      "id": "q29",
+      "persona": "Tomoko Abe",
+      "category": "distractor-resistance",
+      "question": "What kind of cat does Tomoko Abe have, and what is its name?",
+      "gold_facts": [
+        "tabby cat named Miso"
+      ],
+      "source_session": "tomoko-s1",
+      "distractor_fact": "orange cat named Oliver",
+      "distractor_session": "diego-s1"
+    },
+    {
+      "id": "q30",
+      "persona": "Tomoko Abe",
+      "category": "distractor-resistance",
+      "question": "Where does Tomoko Abe volunteer on Sundays?",
+      "gold_facts": [
+        "food bank"
+      ],
+      "source_session": "tomoko-s1",
+      "distractor_fact": "animal shelter",
+      "distractor_session": "priya-s3"
+    },
+    {
+      "id": "q31",
+      "persona": "Diego Fuentes",
+      "category": "single-hop",
+      "question": "What is Diego Fuentes's job?",
+      "gold_facts": [
+        "high school math teacher"
+      ],
+      "source_session": "diego-s1"
+    },
+    {
+      "id": "q32",
+      "persona": "Diego Fuentes",
+      "category": "single-hop",
+      "question": "What instrument does Diego Fuentes play in his jazz band?",
+      "gold_facts": [
+        "bass guitar"
+      ],
+      "source_session": "diego-s2"
+    },
+    {
+      "id": "q33",
+      "persona": "Diego Fuentes",
+      "category": "single-hop",
+      "question": "Where is Diego Fuentes flying in July?",
+      "gold_facts": [
+        "Lisbon"
+      ],
+      "source_session": "diego-s4"
+    },
+    {
+      "id": "q34",
+      "persona": "Diego Fuentes",
+      "category": "single-hop",
+      "question": "What school team does Diego Fuentes mentor?",
+      "gold_facts": [
+        "robotics team"
+      ],
+      "source_session": "diego-s3"
+    },
+    {
+      "id": "q35",
+      "persona": "Diego Fuentes",
+      "category": "cross-session",
+      "question": "What club does Diego Fuentes run at school on Wednesdays?",
+      "gold_facts": [
+        "chess club"
+      ],
+      "source_session": "diego-s2"
+    },
+    {
+      "id": "q36",
+      "persona": "Diego Fuentes",
+      "category": "cross-session",
+      "question": "What city does Diego Fuentes's grandmother live in?",
+      "gold_facts": [
+        "Havana"
+      ],
+      "source_session": "diego-s1"
+    },
+    {
+      "id": "q37",
+      "persona": "Diego Fuentes",
+      "category": "temporal-update",
+      "question": "What car does Diego Fuentes drive now?",
+      "gold_facts": [
+        "green Jeep Wrangler"
+      ],
+      "source_session": "diego-s3",
+      "superseded_fact": "red Mazda hatchback"
+    },
+    {
+      "id": "q38",
+      "persona": "Diego Fuentes",
+      "category": "temporal-update",
+      "question": "What sport does Diego Fuentes play now?",
+      "gold_facts": [
+        "surfing"
+      ],
+      "source_session": "diego-s4",
+      "superseded_fact": "soccer"
+    },
+    {
+      "id": "q39",
+      "persona": "Diego Fuentes",
+      "category": "distractor-resistance",
+      "question": "What kind of cat does Diego Fuentes have, and what is its name?",
+      "gold_facts": [
+        "orange cat named Oliver"
+      ],
+      "source_session": "diego-s1",
+      "distractor_fact": "tabby cat named Miso",
+      "distractor_session": "tomoko-s1"
+    },
+    {
+      "id": "q40",
+      "persona": "Diego Fuentes",
+      "category": "distractor-resistance",
+      "question": "What language is Diego Fuentes learning?",
+      "gold_facts": [
+        "Portuguese"
+      ],
+      "source_session": "diego-s2",
+      "distractor_fact": "French",
+      "distractor_session": "marcus-s2"
+    }
+  ]
+}
