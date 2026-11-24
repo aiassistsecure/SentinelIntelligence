@@ -23,6 +23,7 @@
     si gaia-export-traces <path> [--out FILE] [--otlp-endpoint URL]  (SI-124: OBS-1 observability export — the journal mapped onto OpenTelemetry spans as OTLP/JSON, deterministic ids, read-only on the bundle; nothing is sent anywhere unless --otlp-endpoint is passed)
     si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
     si gaia-eval <config> [--out DIR]  (SI-123: EVAL-1 public eval harness v0 — C-2 capture of the existing conformance task set from a served candidate, graded in a separate grader process; writes results.json + summary.md with the D-C1 aggregate)
+    si gaia-demo [--out DIR] [--keep]  (SI-126: DEMO-1 scripted constitution demo — three proposals priced by the real gate on a throwaway miniature bundle: a benign self-write ADMITted, a constitution-weakening self-write REJECTed, a consequential tool intent ESCALATEd; then the journal is exported (SI-122) and verified offline. No model, no network, no GPU)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -813,6 +814,26 @@ def cmd_gaia_eval(args) -> int:
     return execute(args)
 
 
+def cmd_gaia_demo(args) -> int:
+    """`si gaia-demo` (SI-126, DEMO-1): the scripted
+    constitution demo — the project's front door. Builds a
+    throwaway miniature bundle and runs three scripted
+    proposals through the REAL gate + journal machinery:
+    a benign self-write (ADMIT via the SI-17 measured
+    admission path), a constitution-weakening self-write
+    (REJECT on the gate's constitution check), and a
+    consequential shell_exec intent under an
+    execute-escalates tool policy (ESCALATE via the B-1
+    shadow act; nothing executes). Every verdict printed
+    is the gate's own; any mismatch with the script fails
+    the demo loudly. The demo journal is then exported
+    (SI-122) and the export verified offline. No model,
+    no network, no GPU. The implementation lives in
+    si.gaia.demo; this is its wiring."""
+    from si.gaia.demo import execute_demo
+    return execute_demo(args)
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -1464,6 +1485,45 @@ def build_parser() -> argparse.ArgumentParser:
                            "record, results and summary "
                            "(default: <config dir>/si-eval-run)")
     pgev.set_defaults(func=cmd_gaia_eval)
+
+    pgdemo = sub.add_parser("gaia-demo", help="SI-126/DEMO-1: "
+                                              "the scripted "
+                                              "constitution "
+                                              "demo — three "
+                                              "proposals "
+                                              "priced by the "
+                                              "real gate on "
+                                              "a throwaway "
+                                              "miniature "
+                                              "bundle (a "
+                                              "benign "
+                                              "self-write "
+                                              "ADMITted, a "
+                                              "constitution-"
+                                              "weakening "
+                                              "self-write "
+                                              "REJECTed, a "
+                                              "consequential "
+                                              "tool intent "
+                                              "ESCALATEd), "
+                                              "then the "
+                                              "journal "
+                                              "exported "
+                                              "(SI-122) and "
+                                              "verified "
+                                              "offline. No "
+                                              "model, no "
+                                              "network, no "
+                                              "GPU.")
+    pgdemo.add_argument("--out", default=None,
+                        help="write the demo bundle and "
+                             "demo-export.json into DIR and "
+                             "keep both")
+    pgdemo.add_argument("--keep", action="store_true",
+                        help="keep the temp work dir "
+                             "(bundle + export) instead of "
+                             "cleaning the bundle up")
+    pgdemo.set_defaults(func=cmd_gaia_demo)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "
