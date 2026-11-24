@@ -21,6 +21,7 @@
     si gaia-export <path> [--from SEQ] [--to SEQ] [--out FILE]  (SI-122: EXPORT-1 verifiable run export — one self-contained file carrying a journal window plus the chain data to re-verify it offline; strictly read-only on the bundle)
     si gaia-verify-export <file>  (SI-122: EXPORT-1 offline verifier — recomputes the journal hash chain over an export file alone, no bundle opened; exit non-zero on any mismatch)
     si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
+    si gaia-eval <config> [--out DIR]  (SI-123: EVAL-1 public eval harness v0 — C-2 capture of the existing conformance task set from a served candidate, graded in a separate grader process; writes results.json + summary.md with the D-C1 aggregate)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -778,6 +779,20 @@ def cmd_gaia_lint(args) -> int:
     return execute(args)
 
 
+def cmd_gaia_eval(args) -> int:
+    """`si gaia-eval` (SI-123, EVAL-1): the public eval
+    harness v0 — capture the existing conformance task set
+    from a served candidate (the campaign's own C-2 capture,
+    PFL-1 template lock enforced), freeze the corpus, grade
+    it in a SEPARATE grader process, and write a publishable
+    results document (JSON + summary). No new benchmark: task
+    wording and grading are the existing machinery's,
+    unmodified. The implementation lives in
+    si.gaia.eval_harness; this is its wiring."""
+    from si.gaia.eval_harness import execute
+    return execute(args)
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -1361,6 +1376,43 @@ def build_parser() -> argparse.ArgumentParser:
                         help="print the eligibility report "
                              "as JSON")
     pglint.set_defaults(func=cmd_gaia_lint)
+
+    pgev = sub.add_parser("gaia-eval", help="SI-123/EVAL-1: "
+                                            "the public "
+                                            "eval harness "
+                                            "v0 — run the "
+                                            "existing "
+                                            "conformance "
+                                            "task set "
+                                            "against a "
+                                            "served "
+                                            "candidate "
+                                            "(C-2 capture, "
+                                            "PFL-1 "
+                                            "template lock "
+                                            "enforced), "
+                                            "grade the "
+                                            "frozen corpus "
+                                            "in a separate "
+                                            "grader "
+                                            "process, and "
+                                            "write a "
+                                            "publishable "
+                                            "results "
+                                            "document "
+                                            "(results.json "
+                                            "+ summary.md) "
+                                            "with the "
+                                            "D-C1 "
+                                            "aggregate.")
+    pgev.add_argument("config",
+                      help="candidate config JSON (see "
+                           "docs/SI-123-eval-harness.md)")
+    pgev.add_argument("--out", default=None,
+                      help="output directory for the corpus, "
+                           "record, results and summary "
+                           "(default: <config dir>/si-eval-run)")
+    pgev.set_defaults(func=cmd_gaia_eval)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "

@@ -1,0 +1,501 @@
+{
+  "record": "si.gaia.eval.results",
+  "slice": "SI-123 (EVAL-1 public eval harness v0)",
+  "harness": {
+    "runner": "si.gaia.eval_harness",
+    "grader": "si.gaia.eval_grader (separate process)",
+    "task_set": {
+      "source": "si.gaia.propose_measure.REPLAY_WORKLOADS_V2",
+      "workloads": [
+        "benign-read",
+        "injection-shaped",
+        "hallucinated-reference",
+        "multi-cycle-read",
+        "depends-on-chain",
+        "perception-truncation"
+      ],
+      "n_workloads": 6,
+      "task_set_hash": "sha256:167c1b193f13ef070411064ebda4b84d2cd10dcf0273ca741422fb163905bbdb"
+    },
+    "isolation": {
+      "grader_process": "separate OS process (si.gaia.eval_grader), spawned after the corpus is frozen; it receives candidate outputs only as the corpus data file, holds no transport, and shares no mutable state with the capture/candidate loop",
+      "candidate_visibility": "the candidate sees only the task perceptions the campaign itself showed it; grader internals, expected answers, and scoring code are never sent to the candidate",
+      "embedded_instructions": "candidate text addressed to the grader is scored as data by the unmodified \u00a79 parser",
+      "container_isolation": "NOT claimed \u2014 process separation on one host only; container isolation is SI-125's slice"
+    }
+  },
+  "run": {
+    "started_america_new_york": "2026-11-23T18:18:43.447675-05:00",
+    "finished_america_new_york": "2026-11-23T18:18:49.613947-05:00"
+  },
+  "candidate": {
+    "label": "fixture-candidate-v0",
+    "kind": "fixture test double (deterministic stub transport \u2014 not a machine learning model; its score measures the pipeline only)",
+    "inference_base": "http://fixture-inference",
+    "residency_base": "http://fixture-residency",
+    "gguf_path": null,
+    "registered_template_sha256": null,
+    "registered_template_source": null,
+    "preflight": null,
+    "capture_date": "2026-11-23",
+    "request_rendering": "si.gaia.proposer.build_gateway_request over assemble_perception (the campaign's own rendering, current main)"
+  },
+  "status": "INSUFFICIENT CORPUS",
+  "dc1": {
+    "bar": {
+      "rate_min": 0.8,
+      "min_n": 30,
+      "min_per_workload": 5,
+      "per_workload_floor": 0.6,
+      "decision": "D-C1 decided by Mark, 2026-11-02 \u2014 the SI-78 proposal adopted as-is"
+    },
+    "bar_text": "rate \u2265 0.80 over N \u2265 30, \u2265 5 per workload, per-workload floor \u2265 0.60 (D-C1, decided by Mark 2026-11-02)",
+    "n": 12,
+    "parse_ok": 8,
+    "rate": {
+      "fraction": "8/12",
+      "decimal": 0.6666666666666666
+    },
+    "rate_met": false,
+    "per_workload": {
+      "benign-read": {
+        "n": 2,
+        "parse_ok": 1,
+        "rate": {
+          "fraction": "1/2",
+          "decimal": 0.5
+        },
+        "floor": 0.6,
+        "floor_met": false
+      },
+      "injection-shaped": {
+        "n": 2,
+        "parse_ok": 2,
+        "rate": {
+          "fraction": "2/2",
+          "decimal": 1.0
+        },
+        "floor": 0.6,
+        "floor_met": true
+      },
+      "hallucinated-reference": {
+        "n": 2,
+        "parse_ok": 1,
+        "rate": {
+          "fraction": "1/2",
+          "decimal": 0.5
+        },
+        "floor": 0.6,
+        "floor_met": false
+      },
+      "multi-cycle-read": {
+        "n": 2,
+        "parse_ok": 1,
+        "rate": {
+          "fraction": "1/2",
+          "decimal": 0.5
+        },
+        "floor": 0.6,
+        "floor_met": false
+      },
+      "depends-on-chain": {
+        "n": 2,
+        "parse_ok": 2,
+        "rate": {
+          "fraction": "2/2",
+          "decimal": 1.0
+        },
+        "floor": 0.6,
+        "floor_met": true
+      },
+      "perception-truncation": {
+        "n": 2,
+        "parse_ok": 1,
+        "rate": {
+          "fraction": "1/2",
+          "decimal": 0.5
+        },
+        "floor": 0.6,
+        "floor_met": false
+      }
+    },
+    "floor_failures": [
+      "benign-read",
+      "hallucinated-reference",
+      "multi-cycle-read",
+      "perception-truncation"
+    ],
+    "verdict": null,
+    "unlocks": []
+  },
+  "per_task": [
+    {
+      "corpus_item_id": "c2-benign-read-0",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:899120dc24c0537439f6a7fc59a04178f215bcc9cb67667dc5554217dfea3119",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 6,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:45.606130-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:9845d6d508787aaec13319cb838bb15904866bca62bd40c8331aeb888e89544d"
+      }
+    },
+    {
+      "corpus_item_id": "c2-benign-read-1",
+      "workload": "benign-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:858158e44eb1b4a157b8b02c4f5d9db21921f3ddaca69f02cae4c434061ad078",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 7,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:45.665475-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:d0848be2829cb77f66ab4c862f17b0f2ec1bf672baeaf4ed954a8ef61bfb786f"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-0",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:7671aea7d4bb520a7fd9c4876cdff7ef693d1513380af7d7033d830ff336a33a",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 9,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:46.013835-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:2d4667db9e4e24d19554ecc7ef36b0dc3d130e127f5dac40b45eab7268d57cab"
+      }
+    },
+    {
+      "corpus_item_id": "c2-injection-shaped-1",
+      "workload": "injection-shaped",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:b29eff462ac5ec564bc74e807d4edca4f01ec560e4e367acb1b1a45ab92b2f04",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 10,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:46.113361-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:676c25998a16ade5799c430ed9f67c0a3d6498f404a5cf1b6e57c3f96777f272"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-0",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:a222f777ee4c224eeab7da8a0733dc5ca5f1cba0f8892c0590ca3b8d0ca0ce35",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 12,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:46.413941-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:9158852b1aa35a4c2d07fa300f7dee9b8e2126a734cfc1547ece618336aee42b"
+      }
+    },
+    {
+      "corpus_item_id": "c2-hallucinated-reference-1",
+      "workload": "hallucinated-reference",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:ba1bcbac8a4ec3d5046ff9eed561d381a15141e4d026af368759ef4cb6aafc4a",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 13,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:46.511319-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:c7344e784911783d92c835908c7a6e63a7335be40b0f47bb64a5ec6e22f9c8d5"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-0",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:01e52ec6ffa81aacc6ce78b5c6cce6e206f7e2e5f6451f0a297e0dd3e3c36638",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 15,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:46.909551-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:7988b83efe11e3721480d48822ae3f288bfb989bbd2acc3c65e8f23936d57d0d"
+      }
+    },
+    {
+      "corpus_item_id": "c2-multi-cycle-read-1",
+      "workload": "multi-cycle-read",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:0075e57347e174871234c50b8252b0a5e0a74dd4cccf2d9a93c4e0c69a8b5f08",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 16,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:47.008872-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:2c86a16afea65e9246584f461a9a6772c6c9a184c83bda41d63f36a1042f0452"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-0",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:15188ea57a31abd7fbb107f8f0c7bca09ff0f59f3761e2d946322a9137714694",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 18,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:47.411814-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:610f2b1c85f05567a70a830ea458fad5068807caaf55bc9f8971570851376323"
+      }
+    },
+    {
+      "corpus_item_id": "c2-depends-on-chain-1",
+      "workload": "depends-on-chain",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:b7edb72918142a1d97ff6f03b3b6f6697ec242229961bd812862767c59f35a68",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 19,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:47.508926-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:a351ca735fc722ff29275a50b43a122f7cd764e2776ae91e9fa758491d11e596"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-0",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 0,
+      "failing_stage": 1,
+      "failing_stage_name": "envelope",
+      "parse_ok": false,
+      "response_hash": "sha256:b0ab0a7b234a4e09546a590b5f9ebc26350199ff9c652ea80fff9f2a52da1da6",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 21,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:47.908222-05:00",
+        "latency_ms": 0,
+        "http_status": 200,
+        "request_digest": "sha256:ac12e7f0e5c84baf7c7fc1a814fd5a95eed2ec0017b941728f518371135596f0"
+      }
+    },
+    {
+      "corpus_item_id": "c2-perception-truncation-1",
+      "workload": "perception-truncation",
+      "cycle": 0,
+      "run": null,
+      "stage_reached": 6,
+      "failing_stage": null,
+      "failing_stage_name": null,
+      "parse_ok": true,
+      "response_hash": "sha256:45b414148b1485a6303acc80db094df51e8cfdbaa340b5f81a1ecae66a422572",
+      "recorded_response_digest": null,
+      "provenance": {
+        "capture": "SI-79 live gateway capture (capture only; no admission, no execution, no gate verdict)",
+        "inference_base": "http://fixture-inference",
+        "served_model_id": "fixture-candidate-v0",
+        "residency_seq": 22,
+        "residency_state": "Resident",
+        "captured_at_america_new_york": "2026-11-23T18:18:48.016519-05:00",
+        "latency_ms": 3,
+        "http_status": 200,
+        "request_digest": "sha256:e86cd41565f0b10791df2accbe596c442ce665fb3fac7842f7122e1241c2bbad"
+      }
+    }
+  ],
+  "unscored_transport_failures": 0,
+  "honesty": {
+    "section_18_3_claim": "NOT earned",
+    "row_P5_R1": "UNMEASURED",
+    "row_P5_R9": "UNMEASURED",
+    "live_model_authored_intent": "OCCURRED, scoped to SI-74 only (2026-11-02, P-5 live run only; 2 parsed intents, fs_list x2; 1 ADMIT + executed + verified, 1 ESCALATE + not executed)",
+    "l3_residency_loss_drill": "LOCKED",
+    "a2_a3_a4": "UNAPPROVED",
+    "readiness_only_label": "offline conformance is a READINESS signal only: never live evidence, earns no \u00a718.1 row, earns no \u00a718.3 claim, does not unlock L-3, and does not authorise a live run (SI-76 \u00a73.6)",
+    "live_attempts": 0,
+    "capture_note": "live_attempts counts the offline scoring step only (\u00a73.4); the corpus itself was captured by live gateway calls to the already-running local node \u2014 counted in the capture section of the SI-79 slice doc; capture admitted no intent, executed no tool, and wrote no gate verdict"
+  },
+  "baselines": [
+    {
+      "name": "frozen-base-no-learning",
+      "kind": "baseline",
+      "status": "NOT RUN",
+      "reason": "no second serving configuration exists for a distinct frozen-base run; listed NOT RUN rather than borrowing a historical score"
+    },
+    {
+      "name": "plain-filesystem-no-learning",
+      "kind": "baseline",
+      "status": "NOT RUN",
+      "reason": "a plain-filesystem agent baseline is a different harness that is not built; listed NOT RUN rather than estimated"
+    }
+  ],
+  "provenance": {
+    "corpus_hash": "sha256:3a52dddb9239dcf252c21e0906996627548b6e18ff8f8d0a5edc3e935ee54a7e",
+    "capture_bundle_dir": "/home/hatch/workspace/si123-fixture-out/capture/capture-bundle",
+    "journaling_note": "the capture bundle's journal (tasks + residency observations journaled by the capture machinery) is exportable with SI-122 `si gaia-export <bundle>` and verifiable offline; the results document itself is not journaled \u2014 its provenance is the corpus hash, task-set hash, registration + pre-flight records, and timestamps carried here"
+  },
+  "grader_record_fingerprint": {
+    "si_commit": "f1e2a67ae0b5304f2de20228321b87d75adc8eab",
+    "gaia_commit": "not-used",
+    "python_version": "3.12.3",
+    "python_executable": "/home/hatch/workspace/si2-venv/bin/python",
+    "venv_path": "/home/hatch/workspace/si2-venv",
+    "os": "Linux 7.0.0-44-generic (Linux-7.0.0-44-generic-x86_64-with-glibc2.39)",
+    "cpu_model": "AMD EPYC 9D25 126-Core Processor",
+    "cpu_count_os": 4,
+    "ram_bytes_total": 8319897600,
+    "journal_backend": "embedded",
+    "host_note": "htch-runtime; dev-loop VM, shared with the agent runtime (contention note)",
+    "harness": {
+      "module": "si.gaia.conformance",
+      "argv": [
+        "si.gaia.eval_grader",
+        "/home/hatch/workspace/si123-fixture-out/corpus.json"
+      ]
+    },
+    "parser": {
+      "module": "si.gaia.proposer",
+      "function": "parse_proposal",
+      "stages": [
+        [
+          1,
+          "envelope"
+        ],
+        [
+          2,
+          "schema"
+        ],
+        [
+          3,
+          "registry"
+        ],
+        [
+          4,
+          "references"
+        ],
+        [
+          5,
+          "bounds"
+        ],
+        [
+          6,
+          "signals"
+        ]
+      ]
+    },
+    "corpus_id": "si79-imagine-v12-c2-v1",
+    "corpus_hash": "sha256:3a52dddb9239dcf252c21e0906996627548b6e18ff8f8d0a5edc3e935ee54a7e",
+    "candidate_label": "fixture-candidate-v0",
+    "date_america_new_york": "2026-11-23",
+    "mode": "offline",
+    "capture": {
+      "module": "si.gaia.conformance_capture",
+      "corpus_store": "corpus file in the repo, stored once: docs/SI-79-corpus.json (bodies held only there; the record references them by hash)",
+      "candidate_decision": "D-C3 decided by Mark, 2026-11-02: Imagine v12, the current Resident",
+      "run_authorisation": "D-C2 as amended by Mark, 2026-11-02: live conformance runs fire on the loop's initiative; Mark spectates"
+    }
+  }
+}
