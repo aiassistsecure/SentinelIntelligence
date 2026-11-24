@@ -21,6 +21,25 @@ a mind grown, not built. A trainable model inside a **self-writing file**.
   self-write is validated before it lands. Ungated self-modification is
   self-corruption with extra steps.
 
+## Try it
+
+One command runs the gate end-to-end — a benign self-write admitted, a
+constitution-weakening self-write rejected, a consequential tool intent
+escalated, all journaled and then exported as a file you can verify
+offline:
+
+```bash
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt && pip install -e .
+si gaia-demo
+si gaia-verify-export ./gaia-demo-export.json   # the demo's closing proof
+```
+
+No model, no network, no GPU — the demo runs the real gate and journal
+machinery on a throwaway miniature bundle. See
+[docs/SI-126-demo.md](docs/SI-126-demo.md) for what each beat proves
+and what it does not.
+
 ## Bootstrap
 
 SI-0 seeds from a competent mind, never from random: a distilled 8B
