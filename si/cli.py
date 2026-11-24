@@ -20,6 +20,7 @@
     si gaia-mcp <path>  (SI-121: MCP-1 Gaia MCP server — stdio JSON-RPC, stdlib only; two read-only tools plus gaia_submit_intent in escalate-only shadow form: verdict journaled, never executed)
     si gaia-export <path> [--from SEQ] [--to SEQ] [--out FILE]  (SI-122: EXPORT-1 verifiable run export — one self-contained file carrying a journal window plus the chain data to re-verify it offline; strictly read-only on the bundle)
     si gaia-verify-export <file>  (SI-122: EXPORT-1 offline verifier — recomputes the journal hash chain over an export file alone, no bundle opened; exit non-zero on any mismatch)
+    si gaia-export-traces <path> [--out FILE] [--otlp-endpoint URL]  (SI-124: OBS-1 observability export — the journal mapped onto OpenTelemetry spans as OTLP/JSON, deterministic ids, read-only on the bundle; nothing is sent anywhere unless --otlp-endpoint is passed)
     si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
     si gaia-eval <config> [--out DIR]  (SI-123: EVAL-1 public eval harness v0 — C-2 capture of the existing conformance task set from a served candidate, graded in a separate grader process; writes results.json + summary.md with the D-C1 aggregate)
     si amend-constitution <path> --from-file F --reason R --operator NAME
@@ -765,6 +766,25 @@ def cmd_gaia_verify_export(args) -> int:
     return execute_verify(args)
 
 
+def cmd_gaia_export_traces(args) -> int:
+    """`si gaia-export-traces` (SI-124, OBS-1): map a
+    bundle's journal onto OpenTelemetry spans and emit
+    the standard OTLP/JSON payload — one trace per
+    journaled task plus one journal-scope trace,
+    deterministic trace/span ids derived from the
+    manifest id and entry hashes, append-time point
+    spans (no invented durations). Strictly read-only
+    on the bundle (chain verified first, fail closed).
+    Nothing is sent anywhere unless --otlp-endpoint is
+    passed; with the flag, the same payload bytes are
+    POSTed to that OTLP endpoint (Langfuse's OTLP
+    endpoint is the named target). The implementation
+    lives in si.gaia.trace_export; this is its wiring.
+    """
+    from si.gaia.trace_export import execute_export_traces
+    return execute_export_traces(args)
+
+
 def cmd_gaia_lint(args) -> int:
     """`si gaia-lint` (SI-119, RDL-1; SI-111 §2): an
     offline grade of a candidate corpus against the
@@ -1333,6 +1353,37 @@ def build_parser() -> argparse.ArgumentParser:
                                  "mismatch).")
     pgvexp.add_argument("file", help="the export file")
     pgvexp.set_defaults(func=cmd_gaia_verify_export)
+
+    pgtrc = sub.add_parser("gaia-export-traces",
+                           help="SI-124/OBS-1: map the "
+                                "bundle's journal onto "
+                                "OpenTelemetry spans "
+                                "and emit OTLP/JSON — "
+                                "one trace per journaled "
+                                "task plus one journal-"
+                                "scope trace, determin-"
+                                "istic ids, append-time "
+                                "point spans (no "
+                                "invented durations). "
+                                "Strictly read-only on "
+                                "the bundle (chain "
+                                "verified first, fail "
+                                "closed). Nothing is "
+                                "sent anywhere unless "
+                                "--otlp-endpoint is "
+                                "passed; with it, the "
+                                "same payload is POSTed "
+                                "to that OTLP endpoint "
+                                "(e.g. Langfuse).")
+    pgtrc.add_argument("path", help="bundle directory")
+    pgtrc.add_argument("--out", default=None,
+                       help="write the payload to FILE "
+                            "(default: stdout)")
+    pgtrc.add_argument("--otlp-endpoint", default=None,
+                       help="POST the payload to this "
+                            "OTLP endpoint URL (default: "
+                            "no network, export only)")
+    pgtrc.set_defaults(func=cmd_gaia_export_traces)
 
     pglint = sub.add_parser("gaia-lint", help="SI-119/"
                                               "RDL-1: an "
