@@ -24,6 +24,7 @@
     si gaia-lint <corpus> [--reference-set FILE] [--json]  (SI-119: RDL-1 reference-discipline linter — offline grade of a candidate corpus; grades data, never live conformance)
     si gaia-eval <config> [--out DIR]  (SI-123: EVAL-1 public eval harness v0 — C-2 capture of the existing conformance task set from a served candidate, graded in a separate grader process; writes results.json + summary.md with the D-C1 aggregate)
     si gaia-demo [--out DIR] [--keep]  (SI-126: DEMO-1 scripted constitution demo — three proposals priced by the real gate on a throwaway miniature bundle: a benign self-write ADMITted, a constitution-weakening self-write REJECTed, a consequential tool intent ESCALATEd; then the journal is exported (SI-122) and verified offline. No model, no network, no GPU)
+    si gaia-agent-card [--url URL] [--out FILE]  (SI-129: A2A Agent Card — print/write the discovery-only well-known JSON whose skills are derived 1:1 from the live Gaia tool registry; no A2A task endpoints are claimed, because none exist)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -834,6 +835,17 @@ def cmd_gaia_demo(args) -> int:
     return execute_demo(args)
 
 
+def cmd_gaia_agent_card(args) -> int:
+    """`si gaia-agent-card` (SI-129): the A2A Agent Card —
+    discovery-only well-known JSON whose skills are derived
+    1:1 from the live Gaia tool registry. No bundle is opened
+    and nothing is journaled; no A2A JSON-RPC task endpoints
+    exist and the card claims none. The implementation lives
+    in si.gaia.agent_card; this is its wiring."""
+    from si.gaia.agent_card import execute
+    return execute(args)
+
+
 def cmd_gaia_serve(args) -> int:
     """`si gaia-serve` (SI-46/B-5, RFC §12.5(a)): serve the Gaia
     service adapter for a bundle — POST /tasks runs a submitted
@@ -1524,6 +1536,27 @@ def build_parser() -> argparse.ArgumentParser:
                              "(bundle + export) instead of "
                              "cleaning the bundle up")
     pgdemo.set_defaults(func=cmd_gaia_demo)
+
+    pgcard = sub.add_parser("gaia-agent-card", help="SI-129: "
+                                                   "the A2A Agent "
+                                                   "Card — discovery-"
+                                                   "only well-known "
+                                                   "JSON whose skills "
+                                                   "are derived 1:1 "
+                                                   "from the live Gaia "
+                                                   "tool registry; no "
+                                                   "A2A task endpoints "
+                                                   "are claimed, "
+                                                   "because none exist")
+    pgcard.add_argument("--url", default=None,
+                        help="base URL of the Gaia service to "
+                             "advertise as the card's url field "
+                             "(default: the gaia-serve localhost "
+                             "default)")
+    pgcard.add_argument("--out", default=None,
+                        help="write the card JSON to FILE "
+                             "instead of stdout")
+    pgcard.set_defaults(func=cmd_gaia_agent_card)
 
     pam = sub.add_parser("amend-constitution",
                          help="OPERATOR-ONLY: replace the gate constitution "
