@@ -25,6 +25,7 @@
     si gaia-eval <config> [--out DIR]  (SI-123: EVAL-1 public eval harness v0 — C-2 capture of the existing conformance task set from a served candidate, graded in a separate grader process; writes results.json + summary.md with the D-C1 aggregate)
     si gaia-demo [--out DIR] [--keep]  (SI-126: DEMO-1 scripted constitution demo — three proposals priced by the real gate on a throwaway miniature bundle: a benign self-write ADMITted, a constitution-weakening self-write REJECTed, a consequential tool intent ESCALATEd; then the journal is exported (SI-122) and verified offline. No model, no network, no GPU)
     si gaia-agent-card [--url URL] [--out FILE]  (SI-129: A2A Agent Card — print/write the discovery-only well-known JSON whose skills are derived 1:1 from the live Gaia tool registry; no A2A task endpoints are claimed, because none exist)
+    si gaia-membench [--fixture FILE] [--out DIR] [--k N]  (SI-130: MEMBENCH-1 memory benchmark slice v0 — a self-authored synthetic fixture (4 fictional personas x 4 sessions, 40 questions) retrieved from two stores (the SI journal vs a plain-filesystem directory) by one SHARED keyword ranker; retrieval-only top-k session recall, no model, no judge; NOT LoCoMo and not comparable to published LoCoMo figures)
     si amend-constitution <path> --from-file F --reason R --operator NAME
     si admit-transformer-delta <path> --record F --blob F --operator NAME --reason R [--parents a,b] [--source-seqs 1,2] [--intent-reason R]
 
@@ -835,6 +836,22 @@ def cmd_gaia_demo(args) -> int:
     return execute_demo(args)
 
 
+def cmd_gaia_membench(args) -> int:
+    """`si gaia-membench` (SI-130, MEMBENCH-1): the memory
+    benchmark slice v0 — a self-authored synthetic fixture
+    (4 fictional personas x 4 sessions, 40 questions) stored
+    in two stores (a throwaway journal bundle vs a directory
+    of plain .txt files) and retrieved by one SHARED keyword
+    ranker; graded as top-k session recall against gold fact
+    strings. Retrieval-only: no model, no judge, no text
+    search added to the journal. NOT LoCoMo and not
+    comparable to published LoCoMo figures. The
+    implementation lives in si.gaia.membench; this is its
+    wiring."""
+    from si.gaia.membench import execute
+    return execute(args)
+
+
 def cmd_gaia_agent_card(args) -> int:
     """`si gaia-agent-card` (SI-129): the A2A Agent Card —
     discovery-only well-known JSON whose skills are derived
@@ -1536,6 +1553,46 @@ def build_parser() -> argparse.ArgumentParser:
                              "(bundle + export) instead of "
                              "cleaning the bundle up")
     pgdemo.set_defaults(func=cmd_gaia_demo)
+
+    pgmemb = sub.add_parser("gaia-membench", help="SI-130/MEMBENCH-1: "
+                                                  "the memory "
+                                                  "benchmark slice "
+                                                  "v0 — a "
+                                                  "self-authored "
+                                                  "synthetic "
+                                                  "fixture (4 "
+                                                  "fictional "
+                                                  "personas x 4 "
+                                                  "sessions, 40 "
+                                                  "questions) "
+                                                  "retrieved from "
+                                                  "two stores "
+                                                  "(the SI journal "
+                                                  "vs a plain-"
+                                                  "filesystem "
+                                                  "directory) by "
+                                                  "one SHARED "
+                                                  "keyword ranker; "
+                                                  "retrieval-only "
+                                                  "top-k session "
+                                                  "recall, no "
+                                                  "model, no "
+                                                  "judge; NOT "
+                                                  "LoCoMo and not "
+                                                  "comparable to "
+                                                  "published "
+                                                  "LoCoMo figures.")
+    pgmemb.add_argument("--fixture", default=None,
+                        help="fixture JSON to run (default: the "
+                             "fixture shipped with si.gaia.membench)")
+    pgmemb.add_argument("--out", default=None,
+                        help="output directory for results.json "
+                             "and summary.md (default: print the "
+                             "headline only, write nothing)")
+    pgmemb.add_argument("--k", type=int, default=3,
+                        help="retrieval depth: top-k sessions per "
+                             "question (default: 3)")
+    pgmemb.set_defaults(func=cmd_gaia_membench)
 
     pgcard = sub.add_parser("gaia-agent-card", help="SI-129: "
                                                    "the A2A Agent "

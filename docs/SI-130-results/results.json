@@ -1,0 +1,1133 @@
+{
+  "record": "si.gaia.membench.results",
+  "slice": "SI-130 (MEMBENCH-1 memory benchmark slice v0)",
+  "run": {
+    "started_america_new_york": "2026-11-24T00:15:27.224046-05:00",
+    "finished_america_new_york": "2026-11-24T00:15:28.542492-05:00"
+  },
+  "fixture": {
+    "sessions": 16,
+    "questions": 40,
+    "personas": 4,
+    "per_category": {
+      "single-hop": 14,
+      "cross-session": 10,
+      "temporal-update": 8,
+      "distractor-resistance": 8
+    },
+    "fixture_sha256": "sha256:392ffd9e80332d5ed37a940fb831b1cfe576f13b1a7445a708d22323755eb4c8"
+  },
+  "k": 3,
+  "systems": {
+    "journal": {
+      "hits": 40,
+      "n": 40,
+      "rate": 1.0,
+      "per_category": {
+        "single-hop": {
+          "hits": 14,
+          "n": 14,
+          "rate": 1.0
+        },
+        "cross-session": {
+          "hits": 10,
+          "n": 10,
+          "rate": 1.0
+        },
+        "temporal-update": {
+          "hits": 8,
+          "n": 8,
+          "rate": 1.0
+        },
+        "distractor-resistance": {
+          "hits": 8,
+          "n": 8,
+          "rate": 1.0
+        }
+      }
+    },
+    "filesystem": {
+      "hits": 40,
+      "n": 40,
+      "rate": 1.0,
+      "per_category": {
+        "single-hop": {
+          "hits": 14,
+          "n": 14,
+          "rate": 1.0
+        },
+        "cross-session": {
+          "hits": 10,
+          "n": 10,
+          "rate": 1.0
+        },
+        "temporal-update": {
+          "hits": 8,
+          "n": 8,
+          "rate": 1.0
+        },
+        "distractor-resistance": {
+          "hits": 8,
+          "n": 8,
+          "rate": 1.0
+        }
+      }
+    }
+  },
+  "per_question": [
+    {
+      "id": "q01",
+      "category": "single-hop",
+      "persona": "Priya Nair",
+      "source_session": "priya-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "priya-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "priya-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q02",
+      "category": "single-hop",
+      "persona": "Priya Nair",
+      "source_session": "priya-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "priya-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "priya-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q03",
+      "category": "single-hop",
+      "persona": "Priya Nair",
+      "source_session": "priya-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s3",
+          "priya-s4",
+          "priya-s1"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s3",
+          "priya-s4",
+          "priya-s1"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q04",
+      "category": "single-hop",
+      "persona": "Priya Nair",
+      "source_session": "priya-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s4",
+          "priya-s1",
+          "priya-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s4",
+          "priya-s1",
+          "priya-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q05",
+      "category": "cross-session",
+      "persona": "Priya Nair",
+      "source_session": "priya-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "priya-s1",
+          "priya-s2",
+          "priya-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "priya-s1",
+          "priya-s2",
+          "priya-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q06",
+      "category": "cross-session",
+      "persona": "Priya Nair",
+      "source_session": "priya-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s2",
+          "priya-s1",
+          "priya-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s2",
+          "priya-s1",
+          "priya-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q07",
+      "category": "temporal-update",
+      "persona": "Priya Nair",
+      "source_session": "priya-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "diego-s1"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "diego-s1"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q08",
+      "category": "temporal-update",
+      "persona": "Priya Nair",
+      "source_session": "priya-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s4",
+          "priya-s1",
+          "priya-s2"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s4",
+          "priya-s1",
+          "priya-s2"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q09",
+      "category": "distractor-resistance",
+      "persona": "Priya Nair",
+      "source_session": "priya-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "priya-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "priya-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q10",
+      "category": "distractor-resistance",
+      "persona": "Priya Nair",
+      "source_session": "priya-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "tomoko-s1"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "priya-s1",
+          "priya-s3",
+          "tomoko-s1"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q11",
+      "category": "single-hop",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s2",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s2",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q12",
+      "category": "single-hop",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s2",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s2",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q13",
+      "category": "single-hop",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s4",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s4",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q14",
+      "category": "cross-session",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s2",
+          "marcus-s1",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s2",
+          "marcus-s1",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q15",
+      "category": "cross-session",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s2",
+          "marcus-s1",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s2",
+          "marcus-s1",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q16",
+      "category": "cross-session",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s3",
+          "marcus-s1",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s3",
+          "marcus-s1",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q17",
+      "category": "temporal-update",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s3",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s3",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q18",
+      "category": "temporal-update",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s4",
+          "marcus-s1",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s4",
+          "marcus-s1",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q19",
+      "category": "distractor-resistance",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s3",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s3",
+          "marcus-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q20",
+      "category": "distractor-resistance",
+      "persona": "Marcus Bell",
+      "source_session": "marcus-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s2",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "marcus-s1",
+          "marcus-s2",
+          "marcus-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q21",
+      "category": "single-hop",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q22",
+      "category": "single-hop",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s2",
+          "tomoko-s1",
+          "tomoko-s4"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s2",
+          "tomoko-s1",
+          "tomoko-s4"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q23",
+      "category": "single-hop",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s4",
+          "tomoko-s1",
+          "tomoko-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s4",
+          "tomoko-s1",
+          "tomoko-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q24",
+      "category": "cross-session",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s4"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s4"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q25",
+      "category": "cross-session",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s2",
+          "tomoko-s1",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s2",
+          "tomoko-s1",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q26",
+      "category": "cross-session",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s3",
+          "tomoko-s4"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s3",
+          "tomoko-s4"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q27",
+      "category": "temporal-update",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s3",
+          "tomoko-s2"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s3",
+          "tomoko-s2"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q28",
+      "category": "temporal-update",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s4",
+          "diego-s1"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s4",
+          "diego-s1"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q29",
+      "category": "distractor-resistance",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q30",
+      "category": "distractor-resistance",
+      "persona": "Tomoko Abe",
+      "source_session": "tomoko-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "tomoko-s1",
+          "tomoko-s2",
+          "tomoko-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q31",
+      "category": "single-hop",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q32",
+      "category": "single-hop",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s2",
+          "diego-s1",
+          "diego-s4"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s2",
+          "diego-s1",
+          "diego-s4"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q33",
+      "category": "single-hop",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s4",
+          "diego-s1",
+          "diego-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s4",
+          "diego-s1",
+          "diego-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q34",
+      "category": "single-hop",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s3",
+          "diego-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s3",
+          "diego-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q35",
+      "category": "cross-session",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s2",
+          "diego-s1",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s2",
+          "diego-s1",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q36",
+      "category": "cross-session",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q37",
+      "category": "temporal-update",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s3",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s3",
+          "priya-s4"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s3",
+          "priya-s4"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q38",
+      "category": "temporal-update",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s4",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s4"
+        ],
+        "distractor_retrieved": true
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s4"
+        ],
+        "distractor_retrieved": true
+      }
+    },
+    {
+      "id": "q39",
+      "category": "distractor-resistance",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s1",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s1",
+          "diego-s4",
+          "diego-s2"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": true,
+        "retrieved": [
+          "diego-s1",
+          "diego-s4",
+          "diego-s2"
+        ],
+        "distractor_retrieved": false
+      }
+    },
+    {
+      "id": "q40",
+      "category": "distractor-resistance",
+      "persona": "Diego Fuentes",
+      "source_session": "diego-s2",
+      "journal": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      },
+      "filesystem": {
+        "hit": true,
+        "gold_in_top1": false,
+        "retrieved": [
+          "diego-s1",
+          "diego-s2",
+          "diego-s3"
+        ],
+        "distractor_retrieved": false
+      }
+    }
+  ],
+  "honesty": [
+    "Self-authored synthetic slice, small N: 4 fictional personas, 16 sessions, 40 questions, all written for this slice. Nothing here is a sample of real conversations.",
+    "NOT LoCoMo and NOT comparable to published LoCoMo figures. Published memory-benchmark numbers (Mem0, Zep, Letta, and others) are mutually contested and there is no neutral leaderboard; do not place a rate from this slice next to one of theirs.",
+    "Retrieval-only: the measurement is top-k session recall (does a gold fact string appear in a retrieved session text). It is not end-to-end QA \u2014 no model reads the retrieved sessions and no answer is generated or judged.",
+    "No model is involved in v0: no inference, no embeddings, no learned ranker, no judge.",
+    "The ranking function is SHARED and identical for both systems by design (keyword overlap, defined in si.gaia.membench); what differs is the store \u2014 a directory of plain .txt files vs the SI journal.",
+    "The journal has no native text search: its backend offers exact-match find only, and this slice adds none. The journal retriever fetches all session records by exact-match kind and ranks their payloads in memory with the shared scorer.",
+    "This closes SI-123's 'plain-filesystem baseline: NOT RUN' line for the memory-retrieval domain only. It says nothing about the SI-123 conformance domain."
+  ],
+  "methods": {
+    "journal": "Sessions are stored in a throwaway .si bundle (init_bundle, journal_backend='embedded') via journal.record_experience('membench_session', {persona, session_index, text}, ''). Retrieval fetches every session record with one exact-match backend.find('experiences', filter={'kind': 'membench_session'}) and ranks the record payloads with the shared scorer. The bundle is deleted after the run.",
+    "filesystem": "Sessions are materialized as one <session-id>.txt file per session in a fresh directory. Retrieval reads every file back from disk and ranks the contents with the shared scorer. The directory is deleted after the run.",
+    "ranking": "SHARED, identical for both systems: lowercase the question and the session text, strip punctuation, drop the fixed stopword set defined in si.gaia.membench; score each session as the tuple (distinct matched query tokens, total matched occurrences); sort by score descending; ties break by the session's order in the fixture. Top-k of that order is the retrieval."
+  }
+}
